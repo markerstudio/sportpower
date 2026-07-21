@@ -38,7 +38,31 @@ const ICONS = {
   menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
   check: '<path d="M4.5 12.5 10 18 19.5 6.5"/>',
   gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  clipboard: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a3 3 0 0 1 6 0M8.5 10.5h7M8.5 14h7M8.5 17.5h4"/>',
+  snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M12 3l-2 2.2M12 3l2 2.2M12 21l-2-2.2M12 21l2-2.2M4.2 7.5l3 .4M4.2 16.5l3-.4M19.8 7.5l-3 .4M19.8 16.5l-3-.4"/>',
+  wa: '<path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5z"/><path d="M9 8.8c.3-.7.8-.7 1.1-.1l.6 1.2c.2.4 0 .8-.3 1.1-.4.4-.3.8.1 1.3.6.8 1.3 1.4 2.2 1.8.5.2.9.2 1.2-.2.3-.4.7-.5 1.1-.2l1.1.7"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/>',
 };
+
+/* شريط تقدم بنِسَب ملونة */
+function progressBar(pct) {
+  const p = Math.max(0, Math.min(Number(pct) || 0, 120));
+  const tone = p >= 80 ? 'var(--accent)' : p >= 50 ? 'var(--status-warning)' : 'var(--status-danger)';
+  return el('div', { class: 'bar', title: p + '%' },
+    el('span', { class: 'bar__fill', style: `width:${Math.min(p, 100)}%;background:${tone}` }),
+    el('b', {}, p + '%'));
+}
+
+/* رابط واتساب مع تعويض الاسم في القالب */
+function waLink(phone, countryCode, message, name) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  else if (digits.startsWith('0')) digits = (countryCode || '970') + digits.slice(1);
+  const text = (message || '').split('{الاسم}').join(name || '');
+  return `https://wa.me/${digits}${text ? '?text=' + encodeURIComponent(text) : ''}`;
+}
 
 function icon(name, cls) {
   const s = el('span', { class: 'ic' + (cls ? ' ' + cls : '') });
@@ -89,7 +113,11 @@ function field(label, input) {
 }
 
 function input(attrs) { return el('input', { class: 'field__input', ...attrs }); }
-function textarea(attrs) { return el('textarea', { class: 'field__textarea', ...attrs }); }
+function textarea(attrs = {}) {
+  const t = el('textarea', { class: 'field__textarea', ...attrs });
+  if (attrs.value !== undefined) t.value = attrs.value; // خاصية لا سمة
+  return t;
+}
 function select(options, attrs = {}) {
   const s = el('select', { class: 'field__select', ...attrs });
   options.forEach(([value, label]) => s.append(el('option', { value }, label)));
@@ -283,6 +311,8 @@ const thisMonthISO = () => todayISO().slice(0, 7);
 
 function statusTag(status, expiring) {
   if (status === 'expired') return el('span', { class: 'tag tag--danger' }, 'منتهٍ');
+  if (status === 'frozen') return el('span', { class: 'tag tag--info' }, 'مجمّد');
+  if (status === 'cancelled') return el('span', { class: 'tag tag--neutral' }, 'ملغى');
   if (expiring) return el('span', { class: 'tag tag--warning' }, 'قريب من الانتهاء');
   return el('span', { class: 'tag tag--accent' }, 'فعّال');
 }

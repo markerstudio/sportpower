@@ -139,6 +139,9 @@ async function viewTrainerDash(root) {
       kpiTile(k.persons, 'أشخاص دربتهم', 'users'),
       kpiTile(k.uniqueTrainees, 'متدربون فريدون', 'user', 'blue')));
 
+    // المتابعة اليومية: سجل اليوم + مهامي (KPI)
+    await renderTrainerOps(container);
+
     container.append(el('div', { class: 'grid-2eq' },
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'جدول اليوم',

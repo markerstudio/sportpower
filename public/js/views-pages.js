@@ -146,13 +146,27 @@ async function viewSubscriptions(root) {
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل الاشتراكات'),
-      pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة'],
+      pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة', ''],
         subs.sort((a, b) => (a.status === 'expired') - (b.status === 'expired')),
-        (s) => [byName(s.traineeId),
-          el('span', { class: 'num' }, String(s.totalSessions)),
-          el('span', { class: 'num' }, String(s.usedSessions)),
-          el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
-          fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring)],
+        (s) => {
+          const act = async (action, label) => {
+            if (!confirm(`${label} اشتراك ${byName(s.traineeId)}؟`)) return;
+            try { await API.post(`/api/subscriptions/${s.id}/action`, { action }); toast('تم — وسُجّل الحدث في المتابعة اليومية.'); render(); }
+            catch (ex) { toast(ex.message, true); }
+          };
+          return [byName(s.traineeId),
+            el('span', { class: 'num' }, String(s.totalSessions)),
+            el('span', { class: 'num' }, String(s.usedSessions)),
+            el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
+            fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
+            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+              s.status === 'frozen'
+                ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('unfreeze', 'فك تجميد') }, 'فك التجميد')
+                : s.status === 'active' ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('freeze', 'تجميد') }, 'تجميد') : el('span'),
+              ['active', 'frozen'].includes(s.status)
+                ? el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: () => act('cancel', 'إلغاء') }, 'إلغاء')
+                : el('span'))];
+        },
         { pageSize: 15, searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
 
     container.append(el('div', { class: 'card' },
@@ -600,9 +614,10 @@ async function viewReports(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [report, branches] = await Promise.all([
+    const [report, branches, kpis] = await Promise.all([
       API.get(`/api/reports/monthly?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
+      API.get('/api/kpi?month=' + state.month).catch(() => []),
     ]);
     container.innerHTML = '';
 
@@ -617,19 +632,35 @@ async function viewReports(root) {
       }, 'تصدير Excel (CSV)'),
       el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'تصدير PDF / طباعة')));
 
+    const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `تقرير المدربين — ${report.month} (إجمالي الحصص: ${report.totalSessions})`),
-      dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب'],
-        report.trainers.map((t) => [t.trainer, t.branch || '—',
-          el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
-          el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours))]))));
+      dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'إنجاز المهام', 'KPI'],
+        report.trainers.map((t) => {
+          const k = kpiOf(t.trainer);
+          return [t.trainer, t.branch || '—',
+            el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
+            el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours)),
+            t.tasksPct !== null && t.tasksPct !== undefined ? progressBar(t.tasksPct) : '—',
+            k.kpi !== null && k.kpi !== undefined
+              ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, k.kpi + '%')
+              : '—'];
+        }))));
 
+    const delta = (cur, prevVal, money) => {
+      const d = cur - prevVal;
+      const txt = (d > 0 ? '+' : '') + (money ? fmtMoney(d) : d);
+      return el('span', { class: 'tag ' + (d > 0 ? 'tag--accent' : d < 0 ? 'tag--danger' : 'tag--neutral') }, txt);
+    };
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `تقرير الفروع — ${report.month}`),
-      dataTable(['الفرع', 'عدد الحصص', 'ساعات التدريب', 'متدربون فعالون', 'التحصيل'],
+      el('h3', { class: 'card__title' }, `تقرير الفروع — ${report.month} (مقارنة بـ ${report.prevMonth})`),
+      dataTable(['الفرع', 'الحصص', 'ساعات', 'فعالون', 'التحصيل', 'الغيابات', 'نسبة الحضور', 'الحصص ±', 'التحصيل ±'],
         report.branches.map((b) => [b.branch,
           el('span', { class: 'num' }, String(b.sessions)), el('span', { class: 'num' }, String(b.hours)),
-          el('span', { class: 'num' }, String(b.activeTrainees)), fmtMoney(b.collected)]))));
+          el('span', { class: 'num' }, String(b.activeTrainees)), fmtMoney(b.collected),
+          el('span', { class: 'num', style: b.missed ? 'color:var(--status-danger)' : '' }, String(b.missed)),
+          b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
+          delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true)]))));
 
     container.append(el('div', { class: 'alert alert--info' },
       'ملاحظة الاحتساب: إذا درّب المدرب شخصين في نفس الساعة تُحسب ساعة تدريب واحدة، بينما يُحسب عدد الأشخاص حسب العدد الفعلي — وتُخصم حصة من كل متدرب.'));

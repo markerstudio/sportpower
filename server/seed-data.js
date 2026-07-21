@@ -18,6 +18,8 @@ const MEALS = [
   { id: 10, name: 'ستيك لحم مع بطاطا مشوية', type: 'lunch', goal: 'muscle', calories: 640, protein: 48, carbs: 45, fat: 26, ingredients: 'ستيك 220غ، بطاطا 200غ، هليون، زبدة قليلة', preparation: 'يُشوى الستيك حسب الرغبة وتُشوى البطاطا بالفرن 25 دقيقة.', image: null, createdBy: null },
 ];
 
+const DEFAULT_FROZEN_MSG = 'مرحبًا {الاسم} 👋 اشتقنالك في سبورت باور! جسمك بيستناك يرجع أقوى — رجعتك علينا: أول أسبوع بعد التجميد مجانًا. متى بنشوفك؟ 💪';
+
 const BRANCHES = [
   { id: 1, name: 'فرع بيت ساحور', address: 'بيت ساحور، فلسطين', phone: '02-2770000' },
   { id: 2, name: 'فرع بيت لحم', address: 'بيت لحم، فلسطين', phone: '02-2740000' },
@@ -36,7 +38,8 @@ function productionSeed(hash) {
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],
-    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS' }],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970' }],
+    trainerLogs: [], tasks: [], targets: [], frozen: [], subEvents: [],
   };
 }
 
@@ -166,7 +169,60 @@ function demoSeed(hash) {
     { id: 2, userId: 1, text: 'اشتراك يوسف نجار يوشك على الانتهاء (متبقي حصة واحدة).', date: TODAY, read: false, type: 'subscription' },
   ];
 
-  return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [], settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS' }] };
+  /* ---------- بيانات التشغيل والمتابعة ---------- */
+  // مواعيد فائتة لفادي (غياب مرتين ← تنبيه للإدارة والمدرب)
+  addAppt(2, 12, 1, prevMonth(26), '17:00', 60, 'missed', 'لم يحضر');
+  addAppt(2, 12, 1, thisMonth(Math.max(1, d - 3)), '17:00', 60, 'missed', 'لم يحضر ولم يعتذر');
+
+  const trainerLogs = [
+    { id: 1, trainerId: 2, date: TODAY, checkIn: '09:00', checkOut: null, workHours: null, goalsCreated: 2, stories: 3, reels: 1, notes: '' },
+    { id: 2, trainerId: 3, date: TODAY, checkIn: '08:30', checkOut: null, workHours: null, goalsCreated: 1, stories: 2, reels: 0, notes: '' },
+    { id: 3, trainerId: 2, date: iso(Y, M, Math.max(1, d - 1)), checkIn: '09:00', checkOut: '17:00', workHours: 8, goalsCreated: 3, stories: 4, reels: 1, notes: 'يوم ممتاز' },
+  ];
+
+  const MONTH = TODAY.slice(0, 7);
+  const tasks = [
+    { id: 1, trainerId: 2, title: 'نشر 3 ستوريات تمارين', type: 'daily', date: TODAY, month: MONTH, status: 'done', createdBy: 1 },
+    { id: 2, trainerId: 2, title: 'متابعة أوزان متدربي الأسبوع', type: 'daily', date: TODAY, month: MONTH, status: 'pending', createdBy: 1 },
+    { id: 3, trainerId: 3, title: 'تصوير ريلز تمرين HIIT', type: 'daily', date: TODAY, month: MONTH, status: 'pending', createdBy: 1 },
+    { id: 4, trainerId: 2, title: 'إنشاء 10 أهداف تدريبية جديدة', type: 'monthly', date: null, month: MONTH, status: 'done', createdBy: 1 },
+    { id: 5, trainerId: 3, title: 'تحديث برامج متدربي الفرع', type: 'monthly', date: null, month: MONTH, status: 'pending', createdBy: 1 },
+    { id: 6, trainerId: 4, title: 'جلسات تقييم مرونة لكل المتدربين', type: 'monthly', date: null, month: MONTH, status: 'pending', createdBy: 1 },
+  ];
+
+  // أهداف مطابقة لملف المتابعة: 80 فعّال و70,000 تحصيل لفرع بيت لحم + أهداف مدربين
+  const YEAR = TODAY.slice(0, 4);
+  const targets = [
+    { id: 1, scope: 'branch', refId: 2, metric: 'revenue', period: MONTH, value: 70000 },
+    { id: 2, scope: 'branch', refId: 2, metric: 'activeTrainees', period: MONTH, value: 80 },
+    { id: 3, scope: 'branch', refId: 1, metric: 'revenue', period: MONTH, value: 60000 },
+    { id: 4, scope: 'company', refId: null, metric: 'revenue', period: YEAR, value: 1500000 },
+    { id: 5, scope: 'company', refId: null, metric: 'newSubs', period: YEAR + (Number(TODAY.slice(5,7)) <= 6 ? '-H1' : '-H2'), value: 250 },
+    { id: 6, scope: 'trainer', refId: 2, metric: 'sessions', period: MONTH, value: 40 },
+    { id: 7, scope: 'trainer', refId: 2, metric: 'uniqueTrainees', period: MONTH, value: 15 },
+    { id: 8, scope: 'trainer', refId: 3, metric: 'sessions', period: MONTH, value: 35 },
+    { id: 9, scope: 'trainer', refId: 4, metric: 'sessions', period: MONTH, value: 30 },
+  ];
+
+  const frozen = [
+    { id: 1, name: 'سامر جرايسة', phone: '0598111222', birthDate: '1992-03-14', branchId: 2, branchText: null, lastSubDate: prevMonth(2), freezeDate: prevMonth(20), reason: 'سفر', status: 'pending', lastContact: null, note: '', importedAt: TODAY },
+    { id: 2, name: 'هالة قمصية', phone: '0598333444', birthDate: '1988-11-02', branchId: 2, branchText: null, lastSubDate: prevMonth(10), freezeDate: prevMonth(25), reason: 'إصابة خفيفة', status: 'contacted', lastContact: thisMonth(Math.max(1, d - 2)), note: 'وعدت بالعودة الشهر القادم', importedAt: TODAY },
+    { id: 3, name: 'جورج حزبون', phone: '0599555666', birthDate: '1995-06-21', branchId: 1, branchText: null, lastSubDate: prevMonth(5), freezeDate: prevMonth(28), reason: 'ضغط عمل', status: 'no-reply', lastContact: thisMonth(Math.max(1, d - 1)), note: '', importedAt: TODAY },
+  ];
+
+  // أحداث الاشتراكات (لأرقام لوحة المتابعة اليومية)
+  const subEvents = [];
+  let evId = 1;
+  subscriptions.forEach((s) => {
+    const prior = subscriptions.some((x) => x.traineeId === s.traineeId && x.startDate < s.startDate);
+    subEvents.push({ id: evId++, subscriptionId: s.id, traineeId: s.traineeId, branchId: s.branchId, type: prior ? 'renewal' : 'new', date: s.startDate });
+  });
+  subEvents.push({ id: evId++, subscriptionId: 6, traineeId: 15, branchId: 2, type: 'freeze', date: TODAY });
+  subEvents.push({ id: evId++, subscriptionId: 5, traineeId: 14, branchId: 2, type: 'renewal', date: TODAY });
+
+  return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970' }],
+    trainerLogs, tasks, targets, frozen, subEvents };
 }
 
 module.exports = { demoSeed, productionSeed };

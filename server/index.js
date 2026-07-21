@@ -120,13 +120,23 @@ app.get('/api/config', h(async (req, res) => {
   });
 }));
 
+app.get('/api/settings', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  res.json(await getSettings());
+}));
+
 app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
-  const { currency } = req.body || {};
-  if (!CURRENCIES.includes(currency)) return res.status(400).json({ error: 'عملة غير مدعومة — المتاح: شيكل ILS، دينار JOD، دولار USD.' });
+  const patch = {};
+  if (req.body.currency !== undefined) {
+    if (!CURRENCIES.includes(req.body.currency)) return res.status(400).json({ error: 'عملة غير مدعومة — المتاح: شيكل ILS، دينار JOD، دولار USD.' });
+    patch.currency = req.body.currency;
+  }
+  if (req.body.frozenMessage !== undefined) patch.frozenMessage = String(req.body.frozenMessage).slice(0, 1000);
+  if (req.body.waCountryCode !== undefined) patch.waCountryCode = String(req.body.waCountryCode).replace(/\D/g, '').slice(0, 4);
+  if (!Object.keys(patch).length) return res.status(400).json({ error: 'لا شيء لتعديله.' });
   const rows = await Store.all('settings');
   const saved = rows[0]
-    ? await Store.update('settings', rows[0].id, { currency })
-    : await Store.insert('settings', { currency });
+    ? await Store.update('settings', rows[0].id, patch)
+    : await Store.insert('settings', { currency: 'ILS', ...patch });
   res.json(saved);
 }));
 
@@ -187,6 +197,8 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const thisMonthStr = () => todayStr().slice(0, 7);
 
 function subStatus(sub) {
+  if (sub.status === 'frozen') return 'frozen';
+  if (sub.status === 'cancelled') return 'cancelled';
   const remaining = sub.totalSessions - sub.usedSessions;
   if (remaining <= 0 || sub.endDate < todayStr()) return 'expired';
   return 'active';
@@ -339,13 +351,39 @@ app.post('/api/subscriptions', auth, requireRole('admin'), h(async (req, res) =>
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!totalSessions || !price || !startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
+  const prior = (await Store.all('subscriptions')).some((s) => s.traineeId === trainee.id);
   const sub = await Store.insert('subscriptions', {
     traineeId: trainee.id, branchId: trainee.branchId,
     totalSessions: Number(totalSessions), usedSessions: 0, price: Number(price),
     startDate, endDate, status: 'active',
   });
+  // سجل الحدث لِلوحة المتابعة اليومية (جديد أم تجديد)
+  await Store.insert('subEvents', {
+    subscriptionId: sub.id, traineeId: trainee.id, branchId: trainee.branchId,
+    type: prior ? 'renewal' : 'new', date: todayStr(),
+  });
   await notify(trainee.id, `تم تفعيل اشتراك جديد: ${sub.totalSessions} حصة حتى ${sub.endDate}.`, 'subscription');
   res.json(sub);
+}));
+
+/* تجميد / فك تجميد / إلغاء اشتراك — مع تسجيل الحدث */
+app.post('/api/subscriptions/:id/action', auth, requireRole('admin'), h(async (req, res) => {
+  const sub = await Store.get('subscriptions', req.params.id);
+  if (!sub) return res.status(404).json({ error: 'الاشتراك غير موجود.' });
+  const { action } = req.body || {};
+  const map = { freeze: 'frozen', unfreeze: 'active', cancel: 'cancelled' };
+  if (!map[action]) return res.status(400).json({ error: 'الإجراء: freeze أو unfreeze أو cancel.' });
+  if (action === 'freeze' && subStatus(sub) !== 'active') return res.status(400).json({ error: 'لا يُجمَّد إلا اشتراك فعّال.' });
+  if (action === 'unfreeze' && sub.status !== 'frozen') return res.status(400).json({ error: 'الاشتراك ليس مجمّدًا.' });
+
+  const updated = await Store.update('subscriptions', sub.id, { status: map[action] });
+  await Store.insert('subEvents', {
+    subscriptionId: sub.id, traineeId: sub.traineeId, branchId: sub.branchId,
+    type: action, date: todayStr(),
+  });
+  const labels = { freeze: 'تم تجميد اشتراكك — تواصل معنا للعودة متى أحببت!', unfreeze: 'تم تفعيل اشتراكك من جديد — أهلًا بعودتك!', cancel: 'تم إلغاء اشتراكك.' };
+  await notify(sub.traineeId, labels[action], 'subscription');
+  res.json({ ...updated, status: subStatus(updated) });
 }));
 
 /* ============================================================
@@ -791,35 +829,56 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
 /* ============================================================
    التقارير الشهرية + التصدير
    ============================================================ */
+function prevMonthOf(month) {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
 async function buildMonthlyReport(month, branch) {
-  const { sessions, subscriptions, payments, users, branches } = await Store.load(
-    'sessions', 'subscriptions', 'payments', 'users', 'branches');
+  const { sessions, subscriptions, payments, users, branches, appointments, tasks } = await Store.load(
+    'sessions', 'subscriptions', 'payments', 'users', 'branches', 'appointments', 'tasks');
   const inBranch = (x) => !branch || x.branchId === branch;
   const monthSessions = sessions.filter((s) => monthOf(s.date) === month && inBranch(s));
+  const nowIso = new Date().toISOString().slice(0, 16);
+  const isMissed = (a) => a.status === 'missed' || (a.status === 'scheduled' && (a.date + 'T' + a.time) < nowIso);
 
   const trainers = users.filter((u) => u.role === 'trainer' && inBranch(u)).map((t) => {
     const ts = monthSessions.filter((s) => s.trainerId === t.id);
+    const myTasks = tasks.filter((x) => x.trainerId === t.id
+      && ((x.type === 'daily' && monthOf(x.date) === month) || (x.type === 'monthly' && x.month === month)));
     return {
       trainer: t.name, branch: (branches.find((b) => b.id === t.branchId) || {}).name,
       sessions: ts.length, persons: ts.length,
       uniqueTrainees: new Set(ts.map((s) => s.traineeId)).size,
       hours: trainerHours(ts),
+      tasksPct: myTasks.length ? Math.round((myTasks.filter((x) => x.status === 'done').length / myTasks.length) * 100) : null,
     };
   });
 
-  const branchRows = branches.filter((b) => !branch || b.id === branch).map((b) => {
-    const bs = monthSessions.filter((s) => s.branchId === b.id);
+  const buildBranchRow = (b, m) => {
+    const bs = sessions.filter((s) => monthOf(s.date) === m && s.branchId === b.id);
     const subIds = subscriptions.filter((s) => s.branchId === b.id).map((s) => s.id);
-    const pays = payments.filter((p) => subIds.includes(p.subscriptionId) && monthOf(p.date) === month);
+    const pays = payments.filter((p) => subIds.includes(p.subscriptionId) && monthOf(p.date) === m);
+    const appts = appointments.filter((a) => monthOf(a.date) === m && a.branchId === b.id && a.date <= todayStr());
+    const missed = appts.filter(isMissed).length;
     return {
-      branch: b.name, sessions: bs.length,
-      hours: trainerHours(bs),
+      branch: b.name, sessions: bs.length, hours: trainerHours(bs),
       activeTrainees: new Set(subscriptions.filter((s) => s.branchId === b.id && subStatus(s) === 'active').map((s) => s.traineeId)).size,
       collected: pays.reduce((s, p) => s + p.amount, 0),
+      missed,
+      attendancePct: (bs.length + missed) ? Math.round((bs.length / (bs.length + missed)) * 100) : null,
     };
+  };
+
+  const scoped = branches.filter((b) => !branch || b.id === branch);
+  const prev = prevMonthOf(month);
+  const branchRows = scoped.map((b) => {
+    const cur = buildBranchRow(b, month);
+    const before = buildBranchRow(b, prev);
+    return { ...cur, prevSessions: before.sessions, prevCollected: before.collected };
   });
 
-  return { month, trainers, branches: branchRows, totalSessions: monthSessions.length };
+  return { month, prevMonth: prev, trainers, branches: branchRows, totalSessions: monthSessions.length };
 }
 
 app.get('/api/reports/monthly', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -836,16 +895,19 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   const lines = [];
   lines.push(`تقرير شهر ${month}`);
   lines.push('');
-  lines.push('المدرب,الفرع,عدد الحصص,عدد الأشخاص,متدربون فريدون,ساعات التدريب');
-  r.trainers.forEach((t) => lines.push(`${t.trainer},${t.branch},${t.sessions},${t.persons},${t.uniqueTrainees},${t.hours}`));
+  lines.push('المدرب,الفرع,عدد الحصص,عدد الأشخاص,متدربون فريدون,ساعات التدريب,إنجاز المهام %');
+  r.trainers.forEach((t) => lines.push(`${t.trainer},${t.branch},${t.sessions},${t.persons},${t.uniqueTrainees},${t.hours},${t.tasksPct ?? '-'}`));
   lines.push('');
-  lines.push('الفرع,عدد الحصص,ساعات التدريب,متدربون فعالون,التحصيل');
-  r.branches.forEach((b) => lines.push(`${b.branch},${b.sessions},${b.hours},${b.activeTrainees},${b.collected}`));
+  lines.push(`الفرع,عدد الحصص,ساعات التدريب,متدربون فعالون,التحصيل,الغيابات,نسبة الحضور %,حصص ${r.prevMonth},تحصيل ${r.prevMonth}`);
+  r.branches.forEach((b) => lines.push(`${b.branch},${b.sessions},${b.hours},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevSessions},${b.prevCollected}`));
   const csv = '﻿' + lines.join('\r\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="sportpower-report-${month}.csv"`);
   res.send(csv);
 }));
+
+/* وحدة التشغيل: متابعة يومية، مهام، أهداف وKPI، مجمّدون */
+require('./ops')(app, { auth, requireRole, h, notify, subStatus });
 
 /* ============================================================ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير موجود.' }));
