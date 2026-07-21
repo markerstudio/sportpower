@@ -1,0 +1,197 @@
+/* ============================================================
+   SportPower (سبورت باور) — Design tokens
+   Ported from the SportPower Design System project.
+   Core palette (Brand Book p.26):
+     Fuel Green   #79BE43 — CTAs, highlights, energy
+     Power Petrol #153131 — headers, dark backgrounds, type
+     Core Blue    #3772FF — action elements, anchors
+     Base Grey    #E7E7E7 — neutral surface
+   Arabic site: Cairo is the primary family (exact brand match);
+   Rubik covers Latin/numeric glyphs (Erbaum substitute).
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@200..1000&family=Rubik:ital,wght@0,300..900;1,300..900&display=swap');
+
+:root {
+  /* --- Raw brand colors --- */
+  --sp-fuel-green: #79BE43;
+  --sp-power-petrol: #153131;
+  --sp-core-blue: #3772FF;
+  --sp-base-grey: #E7E7E7;
+
+  /* --- Fuel Green scale --- */
+  --green-100: #eaf6e0;
+  --green-200: #cfeab4;
+  --green-300: #aeda82;
+  --green-400: #92cb5f;
+  --green-500: #79be43; /* brand */
+  --green-600: #64a336;
+  --green-700: #4e7f2b;
+  --green-800: #3b5f22;
+
+  /* --- Power Petrol scale --- */
+  --petrol-900: #0c1e1e;
+  --petrol-800: #102828;
+  --petrol-700: #153131; /* brand */
+  --petrol-600: #1e4443;
+  --petrol-500: #2b5a58;
+  --petrol-400: #47726f;
+  --petrol-300: #7a9a97;
+
+  /* --- Core Blue scale --- */
+  --blue-100: #e2ebff;
+  --blue-300: #93b2ff;
+  --blue-500: #3772ff; /* brand */
+  --blue-600: #285fe0;
+  --blue-700: #1e4bb8;
+
+  /* --- Neutral / grey scale --- */
+  --grey-000: #ffffff;
+  --grey-050: #f6f6f6;
+  --grey-100: #ededed;
+  --grey-150: #e7e7e7; /* Base Grey brand */
+  --grey-200: #d8d8d8;
+  --grey-300: #bdbdbd;
+  --grey-400: #969696;
+  --grey-500: #6f6f6f;
+  --grey-600: #4c4c4c;
+  --grey-700: #333333;
+  --grey-900: #141414;
+
+  /* --- Semantic status --- */
+  --status-success: #79be43;
+  --status-warning: #f2a93b;
+  --status-danger: #e0483a;
+  --status-info: #3772ff;
+
+  /* --- Families: Arabic-first --- */
+  --font-arabic: 'Cairo', system-ui, sans-serif;
+  --font-display: 'Cairo', 'Rubik', system-ui, sans-serif;
+  --font-body: 'Cairo', 'Rubik', system-ui, sans-serif;
+  --font-latin: 'Rubik', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+
+  /* --- Weights --- */
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+  --weight-black: 900;
+
+  /* --- Type scale --- */
+  --text-2xs: 0.6875rem;
+  --text-xs:  0.75rem;
+  --text-sm:  0.875rem;
+  --text-base:1rem;
+  --text-lg:  1.125rem;
+  --text-xl:  1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --text-4xl: 3rem;
+  --text-5xl: 4rem;
+  --text-6xl: 5.5rem;
+
+  /* --- Line heights (Arabic display needs a bit more air than Latin 0.95) --- */
+  --leading-tight: 1.15;
+  --leading-snug: 1.25;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.8;
+
+  /* --- Letter spacing: NEVER track Arabic script; caps tracking is Latin-only --- */
+  --tracking-normal: 0;
+  --tracking-caps: 0.08em;
+
+  /* --- Spacing (4px grid) --- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+
+  /* --- Radius: sharp & athletic --- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* --- Shadows (cool petrol-tinted) --- */
+  --shadow-sm: 0 1px 2px rgba(21, 49, 49, 0.08);
+  --shadow-md: 0 4px 12px rgba(21, 49, 49, 0.10);
+  --shadow-lg: 0 12px 32px rgba(21, 49, 49, 0.14);
+  --shadow-accent: 0 8px 24px rgba(121, 190, 67, 0.35);
+
+  /* --- Motion: crisp, athletic --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 360ms;
+
+  /* --- Layout --- */
+  --container-max: 1200px;
+  --container-narrow: 720px;
+
+  /* ============================================================
+     Semantic aliases — LIGHT MODE (default)
+     ============================================================ */
+  --bg-page: var(--grey-050);
+  --bg-surface: var(--grey-000);
+  --bg-surface-alt: var(--grey-100);
+  --bg-inverse: var(--petrol-700);
+  --bg-muted: var(--grey-150);
+
+  --text-strong: var(--petrol-700);
+  --text-body: var(--petrol-600);
+  --text-muted: var(--grey-500);
+  --text-inverse: var(--grey-000);
+  --text-on-accent: var(--petrol-900);
+
+  --accent: var(--green-500);
+  --accent-hover: var(--green-600);
+  --accent-press: var(--green-700);
+  --accent-soft: var(--green-100);
+
+  --action: var(--blue-500);
+  --action-hover: var(--blue-600);
+
+  --border-subtle: var(--grey-200);
+  --border-strong: var(--petrol-700);
+  --border-accent: var(--green-500);
+
+  --focus-ring: var(--blue-500);
+}
+
+/* ============================================================
+   Semantic aliases — DARK MODE (petrol-first, per brand book p.25)
+   ============================================================ */
+[data-theme="dark"] {
+  --bg-page: var(--petrol-900);
+  --bg-surface: var(--petrol-700);
+  --bg-surface-alt: var(--petrol-600);
+  --bg-inverse: var(--grey-000);
+  --bg-muted: var(--petrol-800);
+
+  --text-strong: var(--grey-000);
+  --text-body: #d6e0df;
+  --text-muted: var(--petrol-300);
+  --text-inverse: var(--petrol-900);
+  --text-on-accent: var(--petrol-900);
+
+  --accent: var(--green-500);
+  --accent-hover: var(--green-400);
+  --accent-press: var(--green-300);
+  --accent-soft: var(--petrol-600);
+
+  --action: var(--blue-500);
+  --action-hover: var(--blue-300);
+
+  --border-subtle: var(--petrol-500);
+  --border-strong: var(--green-500);
+  --border-accent: var(--green-500);
+
+  --focus-ring: var(--green-400);
+}

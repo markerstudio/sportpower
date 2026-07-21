@@ -1,0 +1,17 @@
+{
+  "name": "sportpower-system",
+  "version": "1.0.0",
+  "description": "نظام سبورت باور الداخلي — إدارة الفروع والمدربين والمتدربين والاشتراكات",
+  "private": true,
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "seed": "node -e \"require('./server/db').reseed(); console.log('Database reseeded.')\""
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "optionalDependencies": {
+    "tesseract.js": "^5.1.1"
+  }
+}
