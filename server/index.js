@@ -336,6 +336,83 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
 }));
 
 /* ============================================================
+   Onboarding — تسجيل زبون جديد بخطوة واحدة:
+   حساب + اشتراك + دفعة أولى + أول موعد (اختياريان)
+   ============================================================ */
+app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const { name, phone, birthDate, branchId, goal, subscription, payment, appointment } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم المتدرب مطلوب.' });
+  if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'رقم الجوال مطلوب (يُستخدم لاسم المستخدم وواتساب).' });
+  if (!subscription || !subscription.totalSessions || !subscription.price || !subscription.startDate || !subscription.endDate) {
+    return res.status(400).json({ error: 'بيانات الاشتراك (الحصص والقيمة والتواريخ) مطلوبة.' });
+  }
+  if (payment && Number(payment.amount) > Number(subscription.price)) {
+    return res.status(400).json({ error: 'الدفعة الأولى أكبر من قيمة الاشتراك.' });
+  }
+  let trainer = null;
+  if (appointment && appointment.trainerId) {
+    trainer = await Store.get('users', Number(appointment.trainerId));
+    if (!trainer || trainer.role !== 'trainer') return res.status(400).json({ error: 'مدرب الموعد الأول غير موجود.' });
+    if (!appointment.date || !appointment.time) return res.status(400).json({ error: 'تاريخ وساعة الموعد الأول مطلوبان.' });
+  }
+
+  // اسم مستخدم من رقم الجوال + كلمة مرور تلقائية تُعرض مرة واحدة
+  const users = await Store.all('users');
+  const digits = String(phone).replace(/\D/g, '');
+  let username = digits || 'client';
+  while (users.some((u) => u.username === username)) {
+    username = (digits || 'client') + '-' + crypto.randomBytes(2).toString('hex');
+  }
+  const password = 'sp-' + crypto.randomBytes(4).toString('hex');
+
+  const result = await Store.transaction(async (tx) => {
+    const user = await tx.insert('users', {
+      username, password: Store.hashPassword(password), role: 'trainee',
+      name: String(name).trim(), phone: String(phone).trim(),
+      birthDate: birthDate || null, branchId: Number(branchId) || null,
+      goal: goal || 'loss', joinedAt: todayStr(), mustChangePassword: true,
+    });
+    const sub = await tx.insert('subscriptions', {
+      traineeId: user.id, branchId: user.branchId,
+      totalSessions: Number(subscription.totalSessions), usedSessions: 0,
+      price: Number(subscription.price),
+      startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
+    });
+    await tx.insert('subEvents', {
+      subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
+    });
+    let pay = null;
+    if (payment && Number(payment.amount) > 0) {
+      pay = await tx.insert('payments', {
+        subscriptionId: sub.id, traineeId: user.id,
+        amount: Number(payment.amount), date: todayStr(),
+        method: payment.method || 'كاش', note: 'دفعة الاشتراك عند التسجيل', createdBy: req.user.id,
+      });
+    }
+    let appt = null;
+    if (trainer) {
+      appt = await tx.insert('appointments', {
+        trainerId: trainer.id, traineeId: user.id, branchId: user.branchId,
+        date: appointment.date, time: appointment.time,
+        duration: Number(appointment.duration) || 60, status: 'scheduled', note: 'أول حصة — Onboarding',
+      });
+    }
+    return { user, sub, pay, appt };
+  });
+
+  await notify(result.user.id, `أهلًا بك في سبورت باور! اشتراكك: ${result.sub.totalSessions} حصة حتى ${result.sub.endDate}.`, 'subscription');
+  if (result.appt && trainer) {
+    await notify(trainer.id, `متدرب جديد: ${result.user.name} — أول حصة يوم ${result.appt.date} الساعة ${result.appt.time}.`, 'appointment');
+  }
+
+  res.json({
+    user: publicUser(result.user),
+    credentials: { username, password },
+    subscription: result.sub, payment: result.pay, appointment: result.appt,
+  });
+}));
+
+/* ============================================================
    الاشتراكات
    ============================================================ */
 app.get('/api/subscriptions', auth, h(async (req, res) => {

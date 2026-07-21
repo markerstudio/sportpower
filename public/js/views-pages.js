@@ -121,6 +121,99 @@ async function openApptModal(onDone, trainers, trainees, existing) {
 }
 
 /* ============================================================
+   Onboarding — تسجيل زبون جديد بخطوة واحدة
+   ============================================================ */
+async function openOnboardModal(onDone) {
+  const [branches, trainers] = await Promise.all([
+    API.get('/api/branches'),
+    API.get('/api/users?role=trainer'),
+  ]);
+
+  const nameIn = input({ placeholder: 'الاسم الكامل *' });
+  const phoneIn = input({ placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end' });
+  const birthIn = input({ type: 'date' });
+  const branchSel = select(branches.map((b) => [b.id, b.name]));
+  const goalSel = select(Object.entries(GOAL_LABELS));
+
+  const totalSel = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
+  const priceIn = input({ type: 'number', min: 0, value: 1200 });
+  const startIn = input({ type: 'date', value: todayISO() });
+  const endDefault = new Date(); endDefault.setMonth(endDefault.getMonth() + 1);
+  const endIn = input({ type: 'date', value: endDefault.toISOString().slice(0, 10) });
+
+  const payIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا إن لم يدفع الآن' });
+  const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']]);
+
+  const apptTrainerSel = select([['', 'بدون موعد الآن'], ...trainers.map((t) => [t.id, t.name])]);
+  const apptDate = input({ type: 'date', value: todayISO() });
+  const apptTime = input({ type: 'time', value: '17:00' });
+
+  const section = (title) => el('div', { class: 'span-2 sidebar__caption', style: 'padding:6px 0 0' }, title);
+  const body = el('div');
+  const close = modal('تسجيل زبون جديد — Onboarding', [body], { wide: true });
+
+  function showForm() {
+    body.innerHTML = '';
+    body.append(el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type=submit]');
+        btn.disabled = true;
+        try {
+          const res = await API.post('/api/onboard', {
+            name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
+            branchId: Number(branchSel.value), goal: goalSel.value,
+            subscription: { totalSessions: Number(totalSel.value), price: Number(priceIn.value), startDate: startIn.value, endDate: endIn.value },
+            payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value } : null,
+            appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
+          });
+          showSuccess(res);
+        } catch (ex) { toast(ex.message, true); btn.disabled = false; }
+      },
+    },
+      section('١ — بيانات المتدرب'),
+      field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
+      field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
+      el('div', { class: 'span-2' }, field('الهدف', goalSel)),
+      section('٢ — الاشتراك'),
+      field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
+      field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
+      section('٣ — الدفعة الأولى (اختياري)'),
+      field('المبلغ المدفوع الآن', payIn), field('طريقة الدفع', methodSel),
+      section('٤ — أول حصة (اختياري)'),
+      el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px' },
+        field('المدرب', apptTrainerSel), field('التاريخ', apptDate), field('الساعة', apptTime)),
+      el('div', { class: 'span-2' },
+        el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'إنشاء الحساب وتفعيل الاشتراك'))));
+  }
+
+  function showSuccess(res) {
+    const creds = `بيانات دخولك لنظام سبورت باور:\nالرابط: ${location.origin}\nاسم المستخدم: ${res.credentials.username}\nكلمة المرور: ${res.credentials.password}\n(سيُطلب منك تغييرها عند أول دخول)`;
+    const waMsg = `أهلًا ${res.user.name} 💪 تم تفعيل اشتراكك في سبورت باور: ${res.subscription.totalSessions} حصة حتى ${res.subscription.endDate}.\n\n${creds}`;
+    body.innerHTML = '';
+    body.append(
+      el('div', { class: 'alert alert--info' }, `✅ تم تسجيل «${res.user.name}» وتفعيل اشتراكه${res.payment ? ' وتسجيل دفعته' : ''}${res.appointment ? ' وحجز أول حصة' : ''}.`),
+      el('div', { class: 'card', style: 'box-shadow:none;border:1.5px dashed var(--app-line)' },
+        el('h3', { class: 'card__title' }, 'بيانات الدخول — تظهر مرة واحدة فقط'),
+        el('div', { style: 'font-family:var(--font-mono);direction:ltr;text-align:left;font-size:14px;line-height:2' },
+          `المستخدم: ${res.credentials.username}`, el('br'), `كلمة المرور: ${res.credentials.password}`)),
+      el('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
+        el('a', {
+          class: 'btn btn--accent', target: '_blank',
+          href: waLink(res.user.phone, OPS_SETTINGS.waCountryCode || '970', waMsg, res.user.name),
+        }, 'إرسال البيانات واتساب'),
+        el('button', {
+          class: 'btn btn--outline',
+          onclick: (e) => { navigator.clipboard.writeText(creds).then(() => toast('نُسخت بيانات الدخول.')); },
+        }, 'نسخ البيانات'),
+        el('button', { class: 'btn btn--ghost', onclick: () => { close(); onDone && onDone(); } }, 'إغلاق')));
+  }
+
+  showForm();
+}
+
+/* ============================================================
    إدارة الاشتراكات والحصص
    ============================================================ */
 async function viewSubscriptions(root) {
@@ -141,7 +234,8 @@ async function viewSubscriptions(root) {
 
     container.append(el('div', { class: 'card filters' },
       el('div', { style: 'flex:1' }),
-      el('button', { class: 'btn btn--accent', onclick: () => openSubModal(render, trainees) }, '+ اشتراك جديد / تجديد'),
+      el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
+      el('button', { class: 'btn btn--outline', onclick: () => openSubModal(render, trainees) }, 'تجديد اشتراك لمتدرب حالي'),
       el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة')));
 
     container.append(el('div', { class: 'card' },
@@ -763,7 +857,9 @@ async function viewSettings(root) {
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `المستخدمون (${users.length})`,
-        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openUserModal(render, branches, users) }, '+ مستخدم جديد')),
+        el('div', { style: 'display:flex;gap:8px' },
+          el('button', { class: 'btn btn--accent btn--sm', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
+          el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserModal(render, branches, users) }, '+ موظف/مستخدم'))),
       el('div', { class: 'filters', style: 'margin-bottom:12px' },
         el('div', { class: 'field', style: 'flex:1;min-width:200px' }, el('label', { class: 'field__label' }, 'بحث'), searchIn),
         field('الدور', roleSel)),
