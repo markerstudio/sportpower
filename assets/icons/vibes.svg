@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none" stroke="#79BE43" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <!-- اجواء — dumbbell + hearts -->
+  <rect x="34" y="66" width="14" height="44" rx="5"/>
+  <rect x="112" y="66" width="14" height="44" rx="5"/>
+  <rect x="18" y="76" width="10" height="24" rx="4"/>
+  <rect x="132" y="76" width="10" height="24" rx="4"/>
+  <path d="M48 88h64"/>
+  <path d="M62 42c0-6 5-10 10-10s9 4 9 9c0-5 4-9 9-9s10 4 10 10c0 10-19 20-19 20s-19-10-19-20z"/>
+  <path d="M112 28c0-3.5 3-6 6-6s5.5 2.3 5.5 5.3c0-3 2.5-5.3 5.5-5.3s6 2.5 6 6c0 6-11.5 12-11.5 12s-11.5-6-11.5-12z" stroke-width="5.5"/>
+</svg>

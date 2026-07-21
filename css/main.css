@@ -1,0 +1,632 @@
+/* ============================================================
+   SportPower — الموقع العربي (RTL)
+   Components ported from components/core + ui_kits/website
+   of the SportPower Design System.
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  color: var(--text-body);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; }
+
+.container {
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding-inline: var(--space-6);
+}
+
+/* ---------- Buttons (components/core/Button) ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  line-height: 1.4;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+.btn { white-space: nowrap; }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+.btn--sm { padding: 6px 16px; font-size: var(--text-sm); }
+.btn--md { padding: 10px 24px; font-size: var(--text-base); }
+.btn--lg { padding: 14px 32px; font-size: var(--text-lg); }
+.btn--full { width: 100%; }
+
+.btn--accent {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 2px solid var(--accent);
+}
+.btn--accent:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn--accent:active { background: var(--accent-press); border-color: var(--accent-press); }
+
+.btn--petrol {
+  background: var(--petrol-700);
+  color: var(--grey-000);
+  border: 2px solid var(--petrol-700);
+}
+.btn--petrol:hover { background: var(--petrol-600); border-color: var(--petrol-600); }
+
+.btn--outline {
+  background: transparent;
+  color: var(--text-strong);
+  border: 2px solid var(--border-strong);
+}
+.btn--outline:hover { color: var(--accent-hover); border-color: var(--accent-hover); }
+
+.btn--outline-light {
+  background: transparent;
+  color: #fff;
+  border: 2px solid var(--petrol-400);
+}
+.btn--outline-light:hover { color: var(--accent); border-color: var(--accent); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--accent-hover);
+  border: 2px solid transparent;
+}
+.btn--ghost:hover { color: var(--accent-press); }
+
+/* ---------- Tag / pill (components/core/Tag) ---------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-xs);
+  padding: 4px 14px;
+  border-radius: var(--radius-pill);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.tag--accent { background: var(--accent-soft); color: var(--green-700); }
+.tag--accent-solid { background: var(--green-100); color: var(--green-800); }
+.tag--petrol { background: var(--petrol-700); color: var(--grey-000); box-shadow: inset 0 0 0 1px var(--petrol-500); }
+.tag--neutral { background: var(--grey-100); color: var(--text-body); }
+
+[data-theme="dark"] .tag--accent { background: var(--petrol-600); color: var(--green-300); }
+[data-theme="dark"] .tag--neutral { background: var(--petrol-600); color: #d6e0df; }
+
+/* ---------- Cards (components/core/Card) ---------- */
+.card {
+  position: relative;
+  background: var(--bg-surface);
+  color: var(--text-body);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.card--accent-bar::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0; bottom: 0;
+  width: 4px;
+  background: var(--accent);
+}
+
+/* ---------- Icon badge (components/core/IconBadge) ---------- */
+.icon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px; height: 76px;
+  background: var(--petrol-700);
+  border-radius: var(--radius-lg);
+  flex: none;
+  overflow: hidden;
+}
+.icon-badge img { width: 74%; height: 74%; object-fit: contain; }
+
+/* ---------- Stat (ui_kits hero/feedback stats) ---------- */
+.stat__value {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: 2.5rem;
+  line-height: 1.1;
+  color: var(--accent);
+}
+.stat__value--white { color: #fff; }
+.stat__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
+  color: var(--petrol-300);
+  margin-top: 4px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--petrol-700);
+  border: 1px solid var(--petrol-600);
+}
+
+/* ---------- Inputs (components/core/Input) ---------- */
+.field { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.field__label {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
+  color: var(--text-strong);
+}
+.field__input, .field__select {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--text-strong);
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 2px solid var(--border-subtle);
+  outline: none;
+  width: 100%;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.field__input:focus, .field__select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(121, 190, 67, 0.25);
+}
+.field--error .field__input { border-color: var(--status-danger); }
+.field__hint { font-size: var(--text-xs); color: var(--text-muted); }
+.field--error .field__hint { color: var(--status-danger); }
+
+/* ---------- Section headers ---------- */
+.eyebrow {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
+  color: var(--accent-hover);
+}
+.section-title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: clamp(1.75rem, 4vw, 2.75rem);
+  line-height: var(--leading-tight);
+  color: var(--text-strong);
+  margin: 8px 0 0;
+}
+.on-dark .eyebrow { color: var(--accent); }
+.on-dark .section-title { color: #fff; }
+
+/* ============================================================
+   Header (ui_kits/website/Header)
+   ============================================================ */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--petrol-700);
+  border-bottom: 1px solid var(--petrol-600);
+}
+.site-header__inner {
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding: 14px var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+.site-header__logo { height: 34px; display: block; }
+.site-nav { display: flex; gap: 26px; }
+.site-nav a {
+  color: #d6e0df;
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-weight: var(--weight-medium);
+  font-size: 15px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.site-nav a:hover { color: var(--accent); }
+.site-header__actions {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--petrol-500);
+  color: #d6e0df;
+  border-radius: var(--radius-md);
+  width: 36px; height: 36px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+.nav-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--petrol-500);
+  color: #fff;
+  border-radius: var(--radius-md);
+  width: 40px; height: 36px;
+  cursor: pointer;
+  font-size: 18px;
+}
+
+/* ============================================================
+   Hero (ui_kits/website/Hero) — petrol, oversized layered mark
+   ============================================================ */
+.hero {
+  background: var(--petrol-700);
+  color: #fff;
+  overflow: hidden;
+  position: relative;
+}
+.hero__mark {
+  position: absolute;
+  inset-inline-end: -60px;
+  top: 50%;
+  transform: translateY(-50%) scaleX(-1);
+  height: 520px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.hero__inner {
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding: 88px var(--space-6) 72px;
+  position: relative;
+}
+.hero__content { max-width: 680px; }
+.hero__tags { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.hero__title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: clamp(2.4rem, 6.5vw, 4.25rem);
+  line-height: 1.12;
+  margin: 0;
+  color: #fff;
+}
+.hero__title em { font-style: normal; color: var(--accent); }
+.hero__lead {
+  font-size: var(--text-lg);
+  line-height: var(--leading-relaxed);
+  color: #d6e0df;
+  max-width: 560px;
+  margin: 20px 0 32px;
+}
+.hero__cta { display: flex; gap: 14px; flex-wrap: wrap; }
+.hero__stats { display: flex; gap: 48px; margin-top: 52px; flex-wrap: wrap; }
+
+/* ============================================================
+   Pillars (structured system — من المقترح)
+   ============================================================ */
+.pillars { padding: 80px 0; }
+.pillars__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-5);
+  margin-top: 40px;
+}
+.pillar { padding: var(--space-5); }
+.pillar h3 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+  color: var(--text-strong);
+  margin: 16px 0 8px;
+}
+.pillar p { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
+.pillar .icon-badge { width: 56px; height: 56px; border-radius: var(--radius-md); }
+
+/* ============================================================
+   Programs (ui_kits/website/Programs)
+   ============================================================ */
+.programs { padding: 80px 0 88px; }
+.programs__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-bottom: 40px;
+  flex-wrap: wrap;
+}
+.programs__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+.program-card { display: flex; flex-direction: column; padding: 0; }
+.program-card__head {
+  background: var(--petrol-700);
+  padding: 24px 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.program-card__body {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.program-card__title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: var(--text-xl);
+  color: var(--text-strong);
+  margin: 0;
+}
+.program-card__desc {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-muted);
+  margin: 10px 0 20px;
+  flex: 1;
+}
+.program-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.program-card__len {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* ============================================================
+   Steps — «ابدأ من حيث أنت» (النظام في ٣ خطوات)
+   ============================================================ */
+.steps { padding: 80px 0; background: var(--bg-muted); }
+[data-theme="dark"] .steps { background: var(--petrol-800); }
+.steps__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  margin-top: 40px;
+  counter-reset: step;
+}
+.step { padding: var(--space-6) var(--space-5); }
+.step__num {
+  font-family: var(--font-latin);
+  font-weight: var(--weight-black);
+  font-size: var(--text-4xl);
+  line-height: 1;
+  color: var(--accent);
+}
+.step h3 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+  color: var(--text-strong);
+  margin: 12px 0 8px;
+}
+.step p { font-size: var(--text-sm); color: var(--text-muted); margin: 0; }
+
+/* ============================================================
+   Branches — «ثلاثة فروع. رسالة صحية واحدة.»
+   ============================================================ */
+.branches { padding: 80px 0; }
+.branches__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  margin-top: 40px;
+}
+.branch { padding: var(--space-5); }
+.branch h3 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
+  color: var(--text-strong);
+  margin: 0 0 6px;
+}
+.branch p { font-size: var(--text-sm); color: var(--text-muted); margin: 0 0 14px; }
+
+/* ============================================================
+   Feedback (ui_kits/website/Feedback) — petrol section
+   ============================================================ */
+.feedback {
+  background: var(--petrol-700);
+  padding: 88px 0;
+  color: #fff;
+}
+.feedback__head { text-align: center; margin-bottom: 48px; }
+.feedback__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+}
+.review {
+  background: var(--petrol-600);
+  border: 1px solid var(--petrol-500);
+  border-radius: var(--radius-lg);
+  padding: 26px;
+}
+.review__stars { color: var(--accent); font-size: 18px; letter-spacing: 3px; margin-bottom: 12px; }
+.review__text { font-size: var(--text-sm); line-height: var(--leading-relaxed); color: #d6e0df; margin: 0 0 20px; }
+.review__foot { display: flex; align-items: center; justify-content: space-between; }
+.review__name { font-family: var(--font-display); font-weight: var(--weight-bold); font-size: 15px; color: #fff; }
+.feedback .tag--accent { background: var(--petrol-700); color: var(--green-300); box-shadow: inset 0 0 0 1px var(--petrol-500); }
+.feedback__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-top: 40px;
+}
+
+/* ============================================================
+   Join CTA (ui_kits/website/JoinCTA) — full-bleed Fuel Green
+   ============================================================ */
+.join-cta { background: var(--sp-fuel-green); padding: 80px 0; }
+.join-cta__inner { max-width: 900px; margin-inline: auto; text-align: center; padding-inline: var(--space-6); }
+.join-cta h2 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  line-height: 1.15;
+  color: var(--petrol-900);
+  margin: 0;
+}
+.join-cta p {
+  font-size: var(--text-lg);
+  color: var(--petrol-700);
+  font-weight: var(--weight-medium);
+  margin: 18px 0 32px;
+}
+
+/* ============================================================
+   Join modal (ui_kits/website/JoinModal)
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 30, 30, 0.6);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+.modal-overlay.is-open { display: flex; }
+.modal {
+  width: 440px;
+  max-width: 100%;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+.modal__head {
+  background: var(--petrol-700);
+  padding: 22px 28px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.modal__head img { height: 32px; }
+.modal__title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-black);
+  font-size: var(--text-xl);
+  color: #fff;
+  flex: 1;
+}
+.modal__close {
+  background: transparent;
+  border: none;
+  color: var(--petrol-300);
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+}
+.modal__close:hover { color: #fff; }
+.modal__body { padding: 28px; }
+.modal__form { display: flex; flex-direction: column; gap: 16px; }
+.modal__note { font-size: var(--text-xs); color: var(--text-muted); text-align: center; margin: 0; }
+.modal__success p { font-size: var(--text-base); line-height: var(--leading-relaxed); color: var(--text-body); margin-top: 0; }
+.modal__success { display: none; }
+.modal.is-done .modal__form-wrap { display: none; }
+.modal.is-done .modal__success { display: block; }
+
+/* ============================================================
+   Footer (ui_kits/website/Footer) — petrol-900
+   ============================================================ */
+.site-footer {
+  background: var(--petrol-900);
+  color: #d6e0df;
+  padding: 56px 0 32px;
+}
+.site-footer__grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 40px;
+}
+.site-footer__logo { height: 36px; margin-bottom: 16px; }
+.site-footer__about {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--petrol-300);
+  max-width: 300px;
+  margin: 0;
+}
+.site-footer__col h4 {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+.site-footer__col a {
+  display: block;
+  font-size: var(--text-sm);
+  color: #d6e0df;
+  text-decoration: none;
+  margin-bottom: 10px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.site-footer__col a:hover { color: var(--accent); }
+.site-footer__bottom {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--petrol-700);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--petrol-300);
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 960px) {
+  .pillars__grid { grid-template-columns: repeat(2, 1fr); }
+  .programs__grid, .steps__grid, .branches__grid, .feedback__grid { grid-template-columns: 1fr; }
+  .feedback__stats { grid-template-columns: repeat(2, 1fr); }
+  .site-footer__grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 720px) {
+  .site-nav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    inset-inline: 0;
+    background: var(--petrol-700);
+    border-bottom: 1px solid var(--petrol-600);
+    flex-direction: column;
+    padding: var(--space-4) var(--space-6);
+    gap: var(--space-4);
+  }
+  .site-nav.is-open { display: flex; }
+  .nav-toggle { display: block; }
+  .site-header__login { display: none; }
+  .hero__mark { height: 320px; opacity: 0.08; }
+  .hero__stats { gap: 28px; }
+  .pillars__grid { grid-template-columns: 1fr; }
+  .site-footer__grid { grid-template-columns: 1fr; }
+}
