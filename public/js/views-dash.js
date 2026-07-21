@@ -44,6 +44,10 @@ function viewLogin(root) {
       demoBox.className = 'login-demo';
       demoBox.innerHTML = '<b>حسابات تجريبية:</b><br>الإدارة: <code>admin / admin123</code><br>مدرب: <code>omar / 123456</code> · محاسب: <code>rana / 123456</code><br>متدرب: <code>ahmad / 123456</code> · تغذية: <code>nour / 123456</code>';
     }
+    if (cfg.volatile) {
+      demoBox.prepend(el('div', { class: 'alert alert--warning', style: 'margin-bottom:10px' },
+        '⚠️ قاعدة البيانات غير متصلة — الجلسات والبيانات مؤقتة وقد تُفقد. اربط Postgres عبر متغير DATABASE_URL ثم أعد النشر.'));
+    }
   });
 }
 

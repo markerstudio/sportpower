@@ -91,7 +91,12 @@ function rateLimited(key, max, windowMs) {
 }
 
 app.get('/api/config', h(async (req, res) => {
-  res.json({ demo: Store.DEMO_MODE, storage: Store.IS_PG ? 'postgres' : 'file' });
+  res.json({
+    demo: Store.DEMO_MODE,
+    storage: Store.IS_PG ? 'postgres' : 'file',
+    // ملف على بيئة لحظية = جلسات وبيانات غير ثابتة — الواجهة تعرض تحذيرًا
+    volatile: !Store.IS_PG && !!process.env.VERCEL,
+  });
 }));
 
 app.get('/api/health', h(async (req, res) => {

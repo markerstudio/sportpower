@@ -68,6 +68,9 @@ class JsonDriver {
   }
 
   save() {
+    // في البيئات اللحظية (serverless) قد تتجمد العملية بعد الرد مباشرة —
+    // نكتب فورًا حتى لا تضيع آخر التعديلات.
+    if (IS_SERVERLESS) return this.persist();
     clearTimeout(this._t);
     this._t = setTimeout(() => this.persist(), 120);
   }
