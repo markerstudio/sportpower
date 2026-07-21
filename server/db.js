@@ -6,7 +6,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+/* على Vercel نظام الملفات للقراءة فقط باستثناء /tmp — البيانات تجريبية وتُعاد
+   تهيئتها عند كل تشغيل بارد. للإنتاج الفعلي انقل التخزين إلى قاعدة بيانات مستضافة. */
+const IS_SERVERLESS = !!process.env.VERCEL;
+const DATA_DIR = IS_SERVERLESS ? '/tmp/sportpower-data' : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 function hash(password) {

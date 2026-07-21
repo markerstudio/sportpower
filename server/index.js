@@ -10,7 +10,7 @@ const DB = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const UPLOADS = path.join(__dirname, '..', 'uploads');
+const UPLOADS = process.env.VERCEL ? '/tmp/sportpower-uploads' : path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOADS, { recursive: true });
 
 app.use(express.json({ limit: '15mb' }));
