@@ -34,6 +34,17 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '15mb' }));
+
+/* ملفات PWA — بأنواع وترويسات صحيحة */
+app.get('/manifest.webmanifest', (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.sendFile(path.join(__dirname, '..', 'public', 'manifest.webmanifest'));
+});
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache'); // ليصل تحديث العامل فورًا
+  res.sendFile(path.join(__dirname, '..', 'public', 'sw.js'));
+});
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 app.use('/marketing', express.static(path.join(__dirname, '..', 'marketing')));

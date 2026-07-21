@@ -1,6 +1,13 @@
 /* تطبيق الوضع المحفوظ مبكرًا قبل الرسم */
 try { if (localStorage.getItem('sp-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) { /* تجاهل */ }
 
+/* تسجيل عامل الخدمة — التثبيت على الشاشة الرئيسية والعمل عند ضعف الاتصال */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* بيئات لا تدعم */ });
+  });
+}
+
 /* عميل الواجهة البرمجية */
 const API = {
   token: localStorage.getItem('sp-token') || null,

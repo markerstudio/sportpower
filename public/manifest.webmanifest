@@ -1,0 +1,32 @@
+{
+  "name": "نظام سبورت باور",
+  "short_name": "سبورت باور",
+  "description": "نظام سبورت باور الداخلي — إدارة الفروع والمدربين والمتدربين والاشتراكات والحصص والتغذية.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "dir": "rtl",
+  "lang": "ar",
+  "theme_color": "#153131",
+  "background_color": "#eef3f2",
+  "categories": ["fitness", "health", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "التقويم والمواعيد",
+      "url": "/#/calendar",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "تسجيل حصة",
+      "url": "/#/subscriptions",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
