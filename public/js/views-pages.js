@@ -138,7 +138,7 @@ async function viewSubscriptions(root) {
 
     const byName = (id) => (trainees.find((t) => t.id === id) || {}).name || '#' + id;
 
-    container.append(el('div', { class: 'filters' },
+    container.append(el('div', { class: 'card filters' },
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openSubModal(render, trainees) }, '+ اشتراك جديد / تجديد'),
       el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة')));
@@ -209,7 +209,7 @@ async function viewBranches(root) {
     const [branches, users] = await Promise.all([API.get('/api/branches'), API.get('/api/users')]);
     container.innerHTML = '';
 
-    container.append(el('div', { class: 'filters' },
+    container.append(el('div', { class: 'card filters' },
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--outline', onclick: () => openBranchModal(render) }, '+ فرع جديد'),
       el('button', { class: 'btn btn--accent', onclick: () => openUserModal(render, branches, users) }, '+ مستخدم جديد')));
@@ -325,7 +325,7 @@ async function viewInbody(root) {
     ? select(trainees.map((t) => [t.id, t.name]), { value: state.trainee, onchange: (e) => { state.trainee = Number(e.target.value); renderList(); } })
     : null;
 
-  const head = el('div', { class: 'filters' });
+  const head = el('div', { class: 'card filters' });
   if (traineeSel) head.append(field('المتدرب', traineeSel));
   if (isStaff) head.append(el('button', { class: 'btn btn--accent', onclick: () => openInbodyModal(renderList, state.trainee, trainees) }, '+ رفع قراءة InBody'));
   container.append(head, listCard);
@@ -575,7 +575,7 @@ async function viewReports(root) {
 
     const monthInput = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
-    container.append(el('div', { class: 'filters' },
+    container.append(el('div', { class: 'card filters' },
       field('الشهر', monthInput), field('الفرع', branchSel),
       el('button', {
         class: 'btn btn--accent',

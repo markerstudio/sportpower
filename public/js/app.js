@@ -6,32 +6,32 @@ function homeRoute(role) {
 
 const NAV = {
   admin: [
-    ['#/admin', 'لوحة التحكم'],
-    ['#/calendar', 'التقويم والمواعيد'],
-    ['#/subscriptions', 'الاشتراكات والحصص'],
-    ['#/branches', 'الفروع والمدربون'],
-    ['#/inbody', 'قراءات InBody'],
-    ['#/meals', 'مكتبة التغذية'],
-    ['#/reports', 'التقارير الشهرية'],
+    ['#/admin', 'لوحة التحكم', 'grid'],
+    ['#/calendar', 'التقويم والمواعيد', 'calendar'],
+    ['#/subscriptions', 'الاشتراكات والحصص', 'card'],
+    ['#/branches', 'الفروع والمدربون', 'building'],
+    ['#/inbody', 'قراءات InBody', 'pulse'],
+    ['#/meals', 'مكتبة التغذية', 'leaf'],
+    ['#/reports', 'التقارير الشهرية', 'chart'],
   ],
   trainer: [
-    ['#/trainer', 'لوحتي'],
-    ['#/calendar', 'مواعيدي'],
-    ['#/trainees', 'متدربيّ'],
-    ['#/inbody', 'قراءات InBody'],
-    ['#/meals', 'مكتبة التغذية'],
+    ['#/trainer', 'لوحتي', 'grid'],
+    ['#/calendar', 'مواعيدي', 'calendar'],
+    ['#/trainees', 'متدربيّ', 'users'],
+    ['#/inbody', 'قراءات InBody', 'pulse'],
+    ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
   accountant: [
-    ['#/accountant', 'اللوحة المالية'],
-    ['#/reports', 'التقارير الشهرية'],
+    ['#/accountant', 'اللوحة المالية', 'wallet'],
+    ['#/reports', 'التقارير الشهرية', 'chart'],
   ],
   trainee: [
-    ['#/me', 'صفحتي'],
-    ['#/meals', 'مكتبة التغذية'],
+    ['#/me', 'صفحتي', 'user'],
+    ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
   nutritionist: [
-    ['#/meals', 'مكتبة التغذية'],
-    ['#/trainees', 'المتدربون'],
+    ['#/meals', 'مكتبة التغذية', 'leaf'],
+    ['#/trainees', 'المتدربون', 'users'],
   ],
 };
 
@@ -47,28 +47,30 @@ async function renderShell(route, renderView) {
   app.innerHTML = '';
 
   const nav = NAV[API.user.role] || [];
+  const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
   const sidebar = el('aside', { class: 'sidebar', id: 'sidebar' },
-    el('div', { class: 'sidebar__logo' }, el('img', { src: '/assets/logo-white.svg', alt: 'سبورت باور' })),
+    el('div', { class: 'sidebar__logo' }, el('img', { src: logoSrc, alt: 'سبورت باور' })),
+    el('div', { class: 'sidebar__caption' }, 'القائمة الرئيسية'),
     el('nav', { class: 'sidebar__nav' },
-      ...nav.map(([href, label]) => el('a', { href, class: route === href ? 'active' : '' }, label))),
-    el('div', { class: 'sidebar__foot' }, 'سبورت باور © 2026', el('br'), 'نظام يبقى معك.'));
+      ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '' }, icon(ic), label))),
+    el('div', { class: 'sidebar__foot' },
+      el('b', {}, 'سبورت باور © 2026'),
+      'جسم أقوى. حياة أصحّ. نظام يبقى معك.'));
 
-  const bellBtn = el('button', { class: 'bell', title: 'الإشعارات', onclick: openNotifications }, '🔔');
+  const bellBtn = el('button', { class: 'iconbtn', title: 'الإشعارات', onclick: openNotifications }, icon('bell'));
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
-      el('button', { class: 'menu-btn', onclick: () => sidebar.classList.toggle('open') }, '☰'),
+      el('button', { class: 'iconbtn menu-btn', onclick: () => sidebar.classList.toggle('open') }, icon('menu')),
       el('div', { class: 'topbar__title' }, TITLES[route] || 'نظام سبورت باور'),
+      el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,
+      el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
       el('div', { class: 'topbar__user' },
         el('span', { class: 'topbar__avatar' }, (API.user.name || '؟').trim().slice(0, 1)),
         el('div', {},
-          el('div', { style: 'font-weight:700;color:var(--text-strong);font-size:13px' }, API.user.name),
-          el('div', { style: 'font-size:11px;color:var(--text-muted)' }, ROLE_LABELS[API.user.role] || API.user.role))),
-      el('button', { class: 'bell', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, '🔑'),
-      el('button', {
-        class: 'btn btn--outline btn--sm',
-        onclick: async () => { await API.logout(); location.hash = '#/login'; },
-      }, 'خروج')),
+          el('div', { style: 'font-weight:700;color:var(--app-ink);font-size:13px' }, API.user.name),
+          el('div', { style: 'font-size:11px;color:var(--app-muted)' }, ROLE_LABELS[API.user.role] || API.user.role))),
+      el('button', { class: 'iconbtn', title: 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
     el('div', { id: 'view' }));
 
   app.append(el('div', { class: 'shell' }, sidebar, main));
@@ -90,6 +92,14 @@ async function renderShell(route, renderView) {
   } catch (e) { /* تجاهل */ }
 
   await renderView(document.getElementById('view'));
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark) document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', 'dark');
+  try { localStorage.setItem('sp-theme', isDark ? 'light' : 'dark'); } catch (e) { /* تجاهل */ }
+  route();
 }
 
 function openPasswordModal() {

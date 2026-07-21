@@ -70,18 +70,19 @@ async function viewAdminDash(root) {
 
     const monthInput = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
-    container.append(el('div', { class: 'filters' }, field('الشهر', monthInput), field('الفرع', branchSel),
+    container.append(el('div', { class: 'card filters' }, field('الشهر', monthInput), field('الفرع', branchSel),
       el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←')));
 
     const k = data.kpis;
+    container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
+      kpiHero(k.sessionsMonth, 'حصة منفذة هذا الشهر', 'dumbbell'),
+      kpiHero(fmtMoney(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
+      kpiHero(k.activeTrainees, 'متدرب فعّال', 'users', 'blue')));
     container.append(el('div', { class: 'kpis' },
-      kpi(k.sessionsToday, 'حصص اليوم'),
-      kpi(k.sessionsMonth, 'حصص هذا الشهر'),
-      kpi(k.activeTrainees, 'متدربون فعالون'),
-      kpi(k.expiring, 'اشتراكات تنتهي قريبًا', 'warn'),
-      kpi(k.expired, 'اشتراكات منتهية', 'danger'),
-      kpi(fmtMoney(k.collectedMonth), 'تحصيل الشهر', 'blue'),
-      kpi(fmtMoney(k.outstanding), 'مستحقات غير محصلة', 'warn')));
+      kpiTile(k.sessionsToday, 'حصص اليوم', 'calendar'),
+      kpiTile(k.expiring, 'تنتهي قريبًا', 'alert', 'warn'),
+      kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger'),
+      kpiTile(fmtMoney(k.outstanding), 'مستحقات غير محصلة', 'card', 'blue')));
 
     // رسم الحصص اليومية
     const days = Object.keys(data.daily).sort();
@@ -104,12 +105,6 @@ async function viewAdminDash(root) {
         data.trainers.map((t) => [t.name, t.specialty || '—',
           el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
           el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours))]))));
-  }
-
-  function kpi(value, label, tone) {
-    return el('div', { class: 'kpi' + (tone ? ' kpi--' + tone : '') },
-      el('div', { class: 'kpi__value' }, String(value)),
-      el('div', { class: 'kpi__label' }, label));
   }
 
   await render();
@@ -135,12 +130,13 @@ async function viewTrainerDash(root) {
     });
 
     const k = data.kpis;
+    container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
+      kpiHero(k.sessionsMonth, 'حصة نفذتها هذا الشهر', 'dumbbell'),
+      kpiHero(k.hours, 'ساعة تدريب', 'clock', 'green')));
     container.append(el('div', { class: 'kpis' },
-      kv(k.today, 'مواعيد اليوم'),
-      kv(k.sessionsMonth, 'حصص هذا الشهر'),
-      kv(k.persons, 'أشخاص دربتهم'),
-      kv(k.uniqueTrainees, 'متدربون فريدون'),
-      kv(k.hours, 'ساعات التدريب')));
+      kpiTile(k.today, 'مواعيد اليوم', 'calendar'),
+      kpiTile(k.persons, 'أشخاص دربتهم', 'users'),
+      kpiTile(k.uniqueTrainees, 'متدربون فريدون', 'user', 'blue')));
 
     container.append(el('div', { class: 'grid-2eq' },
       el('div', { class: 'card' },
@@ -159,10 +155,6 @@ async function viewTrainerDash(root) {
         dataTable(['التاريخ', 'الساعة', 'الأسلوب', 'المدة'],
           data.recentSessions.map((s) => [s.date, s.time, s.style || '—', s.duration + ' د']),
           'لم تسجل حصصًا هذا الشهر بعد.'))));
-  }
-
-  function kv(value, label) {
-    return el('div', { class: 'kpi' }, el('div', { class: 'kpi__value' }, String(value)), el('div', { class: 'kpi__label' }, label));
   }
 
   await render();
@@ -236,17 +228,18 @@ async function viewAccountantDash(root) {
 
     const monthInput = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
-    container.append(el('div', { class: 'filters' },
+    container.append(el('div', { class: 'card filters' },
       field('الشهر', monthInput), field('الفرع', branchSel),
       el('button', { class: 'btn btn--accent', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ دفعة جديدة')));
 
     const k = data.kpis;
+    container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
+      kpiHero(fmtMoney(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
+      kpiHero(fmtMoney(k.outstanding), 'متبقٍ غير محصل', 'alert')));
     container.append(el('div', { class: 'kpis' },
-      el('div', { class: 'kpi kpi--blue' }, el('div', { class: 'kpi__value' }, fmtMoney(k.collectedMonth)), el('div', { class: 'kpi__label' }, 'تحصيل الشهر')),
-      el('div', { class: 'kpi' }, el('div', { class: 'kpi__value' }, String(k.paymentsCount)), el('div', { class: 'kpi__label' }, 'عدد الدفعات')),
-      el('div', { class: 'kpi kpi--warn' }, el('div', { class: 'kpi__value' }, fmtMoney(k.outstanding)), el('div', { class: 'kpi__label' }, 'متبقٍ غير محصل')),
-      el('div', { class: 'kpi' }, el('div', { class: 'kpi__value' }, String(k.renewed)), el('div', { class: 'kpi__label' }, 'اشتراكات مجددة')),
-      el('div', { class: 'kpi kpi--danger' }, el('div', { class: 'kpi__value' }, String(k.expired)), el('div', { class: 'kpi__label' }, 'اشتراكات منتهية'))));
+      kpiTile(k.paymentsCount, 'عدد الدفعات', 'file'),
+      kpiTile(k.renewed, 'اشتراكات مجددة', 'check'),
+      kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger')));
 
     const months = Object.keys(data.byMonth).sort().slice(-6);
     container.append(el('div', { class: 'grid-2' },

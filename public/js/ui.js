@@ -15,6 +15,53 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+/* ---------- أيقونات خطية (stroke 24×24) ---------- */
+const ICONS = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 15.2c2.6.3 4.5 2 4.5 4.3"/>',
+  user: '<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20.5c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5"/>',
+  card: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 10h19M7 15h4"/>',
+  building: '<rect x="4" y="3" width="12" height="18" rx="1.5"/><path d="M16 9h3.5a.5.5 0 0 1 .5.5V21M8 7h1.5M8 11h1.5M8 15h1.5M12 7h1.5M12 11h1.5M12 15h1.5M9 21v-3h4v3"/>',
+  pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
+  leaf: '<path d="M6 20c0-8 4-13 13-14 0 9-4 13-11 13"/><path d="M6 20c2-5 5-8 9-10"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2.5"/>',
+  wallet: '<path d="M20 7H5a2 2 0 0 1 0-4h13v4"/><path d="M4 5v13a2 2 0 0 0 2 2h14V7"/><path d="M16 13.5h2.5"/>',
+  alert: '<path d="M12 3.5 22 20H2L12 3.5z"/><path d="M12 10v4.5M12 17.5v.3"/>',
+  dumbbell: '<rect x="2" y="9.5" width="3" height="5" rx="1"/><rect x="19" y="9.5" width="3" height="5" rx="1"/><rect x="5.5" y="7.5" width="3.5" height="9" rx="1.2"/><rect x="15" y="7.5" width="3.5" height="9" rx="1.2"/><path d="M9 12h6"/>',
+  file: '<path d="M6 2.5h8L19 8v13.5H6V2.5z"/><path d="M13.5 3v5H19M9.5 13h5M9.5 17h5"/>',
+  bell: '<path d="M18 9a6 6 0 0 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9z"/><path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>',
+  key: '<circle cx="8" cy="15" r="4.5"/><path d="M11.5 11.5 20 3M16 7l2.5 2.5M13 10l2 2"/>',
+  logout: '<path d="M14 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H14"/><path d="M10 12h10.5M17 8.5l3.5 3.5-3.5 3.5"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
+  menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
+  check: '<path d="M4.5 12.5 10 18 19.5 6.5"/>',
+};
+
+function icon(name, cls) {
+  const s = el('span', { class: 'ic' + (cls ? ' ' + cls : '') });
+  s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ICONS.grid}</svg>`;
+  return s;
+}
+
+/* بطاقة KPI بطلية (متدرجة بدوائر زخرفية) */
+function kpiHero(value, label, iconName, variant) {
+  return el('div', { class: 'kpi-hero' + (variant ? ' kpi-hero--' + variant : '') },
+    el('span', { class: 'kpi-hero__icon' }, icon(iconName)),
+    el('div', { class: 'kpi-hero__value' }, String(value)),
+    el('div', { class: 'kpi-hero__label' }, label));
+}
+
+/* مربع KPI أبيض بأيقونة ملونة */
+function kpiTile(value, label, iconName, tone) {
+  return el('div', { class: 'kpi' + (tone ? ' kpi--' + tone : '') },
+    el('span', { class: 'kpi__ic' }, icon(iconName)),
+    el('div', {},
+      el('div', { class: 'kpi__value' }, String(value)),
+      el('div', { class: 'kpi__label' }, label)));
+}
+
 function toast(message, isError) {
   const t = el('div', { class: 'toast' + (isError ? ' toast--error' : '') }, message);
   document.getElementById('toast-root').append(t);

@@ -1,3 +1,6 @@
+/* تطبيق الوضع المحفوظ مبكرًا قبل الرسم */
+try { if (localStorage.getItem('sp-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) { /* تجاهل */ }
+
 /* عميل الواجهة البرمجية */
 const API = {
   token: localStorage.getItem('sp-token') || null,
