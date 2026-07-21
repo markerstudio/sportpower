@@ -57,6 +57,7 @@ const auth = h(async (req, res, next) => {
   }
   const user = await Store.get('users', t.userId);
   if (!user) return res.status(401).json({ error: 'المستخدم غير موجود.' });
+  if (user.active === false) return res.status(401).json({ error: 'هذا الحساب معطّل.' });
   // تمديد الجلسة إذا اقترب انتهاؤها
   if (t.expiresAt - Date.now() < TOKEN_TTL_MS / 2) {
     await Store.update('tokens', t.id, { expiresAt: Date.now() + TOKEN_TTL_MS });
@@ -75,7 +76,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, mustChangePassword: !!u.mustChangePassword });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
@@ -134,6 +135,9 @@ app.post('/api/login', h(async (req, res) => {
   const user = users.find((u) => u.username === uname);
   if (!user || !Store.verifyPassword(password || '', user.password)) {
     return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
+  }
+  if (user.active === false) {
+    return res.status(403).json({ error: 'هذا الحساب معطّل — تواصل مع الإدارة.' });
   }
   loginAttempts.delete('user:' + uname);
   const token = crypto.randomBytes(32).toString('hex');
@@ -229,6 +233,25 @@ app.post('/api/branches', auth, requireRole('admin'), h(async (req, res) => {
   res.json(await Store.insert('branches', { name, address: address || '', phone: phone || '' }));
 }));
 
+app.put('/api/branches/:id', auth, requireRole('admin'), h(async (req, res) => {
+  const branch = await Store.get('branches', req.params.id);
+  if (!branch) return res.status(404).json({ error: 'الفرع غير موجود.' });
+  const patch = {};
+  ['name', 'address', 'phone'].forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
+  res.json(await Store.update('branches', branch.id, patch));
+}));
+
+app.delete('/api/branches/:id', auth, requireRole('admin'), h(async (req, res) => {
+  const branch = await Store.get('branches', req.params.id);
+  if (!branch) return res.status(404).json({ error: 'الفرع غير موجود.' });
+  const { users, subscriptions } = await Store.load('users', 'subscriptions');
+  if (users.some((u) => u.branchId === branch.id) || subscriptions.some((s) => s.branchId === branch.id)) {
+    return res.status(400).json({ error: 'لا يمكن حذف فرع مرتبط بمستخدمين أو اشتراكات — انقلهم أولًا.' });
+  }
+  await Store.remove('branches', branch.id);
+  res.json({ ok: true });
+}));
+
 app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutritionist'), h(async (req, res) => {
   let list = (await Store.all('users')).map(publicUser);
   if (req.query.role) list = list.filter((u) => u.role === req.query.role);
@@ -257,7 +280,7 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
   res.json(publicUser(user));
 }));
 
-/* تعديل مستخدم (الإدارة): إعادة إسناد مدرب/فرع/هدف/بيانات أساسية */
+/* تعديل مستخدم (الإدارة): البيانات الأساسية + التفعيل/التعطيل + إعادة تعيين كلمة المرور */
 app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   const user = await Store.get('users', req.params.id);
   if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
@@ -266,18 +289,25 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   });
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
-  if (req.body.trainerId !== undefined) {
-    const trainerId = Number(req.body.trainerId) || null;
-    if (trainerId) {
-      const trainer = await Store.get('users', trainerId);
-      if (!trainer || trainer.role !== 'trainer') return res.status(400).json({ error: 'المدرب غير موجود.' });
+
+  // تفعيل / تعطيل الحساب (يمنع تسجيل الدخول ويُنهي الجلسات)
+  if (req.body.active !== undefined) {
+    if (user.id === req.user.id && req.body.active === false) {
+      return res.status(400).json({ error: 'لا يمكنك تعطيل حسابك الحالي.' });
     }
-    patch.trainerId = trainerId;
+    patch.active = !!req.body.active;
   }
+
+  // إعادة تعيين كلمة المرور من الإدارة
+  if (req.body.password !== undefined) {
+    if (String(req.body.password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+    patch.password = Store.hashPassword(req.body.password);
+    patch.mustChangePassword = user.id !== req.user.id;
+  }
+
   const updated = await Store.update('users', user.id, patch);
-  if (user.role === 'trainee' && patch.trainerId && patch.trainerId !== user.trainerId) {
-    await notify(patch.trainerId, `أُسند إليك متدرب جديد: ${updated.name}.`, 'info');
-    await notify(user.id, 'تم تحديث مدربك المسؤول — اطّلع على مواعيدك القادمة.', 'info');
+  if (patch.active === false || patch.password) {
+    await Store.removeWhere('tokens', (t) => t.userId === user.id);
   }
   res.json(publicUser(updated));
 }));

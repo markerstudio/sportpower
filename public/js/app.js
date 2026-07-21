@@ -13,6 +13,7 @@ const NAV = {
     ['#/inbody', 'قراءات InBody', 'pulse'],
     ['#/meals', 'مكتبة التغذية', 'leaf'],
     ['#/reports', 'التقارير الشهرية', 'chart'],
+    ['#/settings', 'الإعدادات والتحكم', 'gear'],
   ],
   trainer: [
     ['#/trainer', 'لوحتي', 'grid'],
@@ -40,6 +41,7 @@ const TITLES = {
   '#/me': 'صفحتي', '#/calendar': 'التقويم والمواعيد', '#/subscriptions': 'إدارة الاشتراكات والحصص',
   '#/branches': 'الفروع والمدربون', '#/inbody': 'قراءات InBody', '#/meals': 'مكتبة التغذية',
   '#/reports': 'التقارير الشهرية', '#/trainees': 'المتدربون',
+  '#/settings': 'الإعدادات والتحكم',
 };
 
 async function renderShell(route, renderView) {
@@ -180,6 +182,7 @@ async function route() {
     '#/meals': viewMeals,
     '#/reports': guard(['admin', 'accountant'], viewReports),
     '#/trainees': guard(['trainer', 'nutritionist'], viewMyTrainees),
+    '#/settings': guard(['admin'], viewSettings),
   };
 
   const view = routes[hash];

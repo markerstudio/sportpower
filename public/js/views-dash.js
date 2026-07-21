@@ -70,20 +70,9 @@ async function viewAdminDash(root) {
 
     const monthInput = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
-    const currencySel = select(Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} (${c.symbol})`]), {
-      value: ACTIVE_CURRENCY,
-      onchange: async (e) => {
-        try {
-          await API.put('/api/settings', { currency: e.target.value });
-          ACTIVE_CURRENCY = e.target.value;
-          API._config = null;
-          toast('تم تغيير عملة النظام إلى ' + CURRENCIES[ACTIVE_CURRENCY].name + '.');
-          render();
-        } catch (ex) { toast(ex.message, true); e.target.value = ACTIVE_CURRENCY; }
-      },
-    });
-    container.append(el('div', { class: 'card filters' }, field('الشهر', monthInput), field('الفرع', branchSel), field('العملة', currencySel),
-      el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←')));
+    container.append(el('div', { class: 'card filters' }, field('الشهر', monthInput), field('الفرع', branchSel),
+      el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←'),
+      el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/settings'; } }, 'الإعدادات ←')));
 
     const k = data.kpis;
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },

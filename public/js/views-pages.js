@@ -630,6 +630,178 @@ async function viewReports(root) {
   await render();
 }
 
+/* ============================================================
+   الإعدادات والتحكم — كل شيء في تبويب واحد (الإدارة)
+   ============================================================ */
+async function viewSettings(root) {
+  const container = el('div', { class: 'content' });
+  root.append(container);
+  const state = { roleFilter: '', search: '' };
+
+  async function render() {
+    container.innerHTML = '';
+    container.append(spinnerCard());
+    const [branches, users, cfg] = await Promise.all([
+      API.get('/api/branches'),
+      API.get('/api/users'),
+      (API._config = null, API.config()),
+    ]);
+    container.innerHTML = '';
+
+    /* --- 1) الإعدادات العامة --- */
+    const currencySel = select(Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} (${c.symbol})`]), {
+      value: cfg.currency || ACTIVE_CURRENCY,
+      onchange: async (e) => {
+        try {
+          await API.put('/api/settings', { currency: e.target.value });
+          ACTIVE_CURRENCY = e.target.value;
+          API._config = null;
+          toast('تم تغيير عملة النظام إلى ' + CURRENCIES[ACTIVE_CURRENCY].name + '.');
+        } catch (ex) { toast(ex.message, true); e.target.value = ACTIVE_CURRENCY; }
+      },
+    });
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'الإعدادات العامة'),
+      el('div', { class: 'filters' },
+        field('عملة النظام', currencySel),
+        el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:420px' },
+          'تسري العملة على كل المبالغ: الاشتراكات، الدفعات، اللوحات، والتقارير.'))));
+
+    /* --- 2) الفروع --- */
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'الفروع',
+        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openBranchModal(render) }, '+ فرع جديد')),
+      dataTable(['الفرع', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', ''],
+        branches.map((b) => [b.name, b.address || '—', b.phone || '—',
+          String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
+          String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
+          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openBranchEditModal(render, b) }, 'تعديل'),
+            el('button', {
+              class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+              onclick: async () => {
+                if (!confirm(`حذف «${b.name}»؟ لا يُحذف إلا فرع بلا مستخدمين واشتراكات.`)) return;
+                try { await API.del('/api/branches/' + b.id); toast('حُذف الفرع.'); render(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'حذف'))]))));
+
+    /* --- 3) المستخدمون --- */
+    const searchIn = input({ placeholder: 'ابحث بالاسم أو اسم المستخدم…', value: state.search,
+      oninput: debounce(() => { state.search = searchIn.value; renderUsers(); }) });
+    const roleSel = select([['', 'كل الأدوار'], ...Object.entries(ROLE_LABELS)], {
+      value: state.roleFilter, onchange: (e) => { state.roleFilter = e.target.value; renderUsers(); } });
+    const usersWrap = el('div');
+
+    function renderUsers() {
+      let list = users;
+      if (state.roleFilter) list = list.filter((u) => u.role === state.roleFilter);
+      if (state.search) list = list.filter((u) => u.name.includes(state.search) || u.username.includes(state.search.toLowerCase()));
+      usersWrap.innerHTML = '';
+      usersWrap.append(dataTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', ''],
+        list.map((u) => [u.name,
+          el('code', { style: 'direction:ltr;font-family:var(--font-mono);font-size:12px' }, u.username),
+          el('span', { class: 'tag ' + (u.role === 'admin' ? 'tag--petrol' : 'tag--neutral') }, ROLE_LABELS[u.role] || u.role),
+          (branches.find((b) => b.id === u.branchId) || {}).name || '—',
+          u.phone || '—',
+          u.active ? el('span', { class: 'tag tag--accent' }, 'فعّال') : el('span', { class: 'tag tag--danger' }, 'معطّل'),
+          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserEditModal(render, u, branches) }, 'تعديل'),
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
+            u.id !== API.user.id ? el('button', {
+              class: 'btn btn--ghost btn--sm', style: u.active ? 'color:var(--status-danger)' : 'color:var(--accent-hover)',
+              onclick: async () => {
+                try {
+                  await API.put('/api/users/' + u.id, { active: !u.active });
+                  toast(u.active ? 'عُطّل الحساب وأُنهيت جلساته.' : 'فُعّل الحساب.');
+                  render();
+                } catch (ex) { toast(ex.message, true); }
+              },
+            }, u.active ? 'تعطيل' : 'تفعيل') : el('span'))]),
+        'لا مستخدمين مطابقين.'));
+    }
+
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `المستخدمون (${users.length})`,
+        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openUserModal(render, branches, users) }, '+ مستخدم جديد')),
+      el('div', { class: 'filters', style: 'margin-bottom:12px' },
+        el('div', { class: 'field', style: 'flex:1;min-width:200px' }, el('label', { class: 'field__label' }, 'بحث'), searchIn),
+        field('الدور', roleSel)),
+      usersWrap));
+    renderUsers();
+  }
+
+  await render();
+}
+
+function openBranchEditModal(onDone, branch) {
+  const nameIn = input({ value: branch.name });
+  const addrIn = input({ value: branch.address || '' });
+  const phoneIn = input({ value: branch.phone || '', dir: 'ltr', style: 'text-align:end' });
+  const close = modal(`تعديل «${branch.name}»`, [
+    el('form', {
+      style: 'display:flex;flex-direction:column;gap:14px',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/branches/' + branch.id, { name: nameIn.value, address: addrIn.value, phone: phoneIn.value });
+          toast('تم حفظ الفرع.'); close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
+      el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ')),
+  ]);
+}
+
+function openUserEditModal(onDone, user, branches) {
+  const nameIn = input({ value: user.name });
+  const phoneIn = input({ value: user.phone || '', dir: 'ltr', style: 'text-align:end' });
+  const branchSel = select([['', 'بلا فرع'], ...branches.map((b) => [b.id, b.name])], { value: user.branchId || '' });
+  const goalSel = user.role === 'trainee' ? select(Object.entries(GOAL_LABELS), { value: user.goal || 'loss' }) : null;
+  const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
+
+  const close = modal(`تعديل «${user.name}»`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/users/' + user.id, {
+            name: nameIn.value, phone: phoneIn.value, branchId: branchSel.value ? Number(branchSel.value) : null,
+            goal: goalSel ? goalSel.value : undefined,
+            specialty: specIn ? specIn.value : undefined,
+          });
+          toast('تم حفظ التعديلات.'); close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('الاسم الكامل', nameIn),
+      field('الجوال', phoneIn),
+      field('الفرع', branchSel),
+      goalSel ? field('الهدف', goalSel) : (specIn ? field('التخصص', specIn) : el('span')),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
+}
+
+function openResetPasswordModal(user) {
+  const passIn = input({ placeholder: '6 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
+  const close = modal(`إعادة تعيين كلمة مرور «${user.name}»`, [
+    el('form', {
+      style: 'display:flex;flex-direction:column;gap:14px',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/users/' + user.id, { password: passIn.value });
+          toast('أُعيد تعيين كلمة المرور وأُنهيت جلسات المستخدم — سيُطلب منه تغييرها.');
+          close();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('كلمة المرور الجديدة', passIn),
+      el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'إعادة التعيين')),
+  ]);
+}
+
 /* قائمة المتدربين (المدربون بالتناوب — الكل يرى الكل) */
 async function viewMyTrainees(root) {
   const container = el('div', { class: 'content' });

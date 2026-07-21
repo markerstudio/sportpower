@@ -37,6 +37,7 @@ const ICONS = {
   moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
   menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
   check: '<path d="M4.5 12.5 10 18 19.5 6.5"/>',
+  gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"/>',
 };
 
 function icon(name, cls) {
