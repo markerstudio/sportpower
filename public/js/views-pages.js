@@ -220,22 +220,20 @@ async function viewBranches(root) {
       const trainees = users.filter((u) => u.role === 'trainee' && u.branchId === b.id);
       grid.append(el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, b.name, el('span', { class: 'tag tag--petrol' }, `${trainees.length} متدرب`)),
-        el('div', { style: 'font-size:13px;color:var(--text-muted);margin-bottom:12px' }, `${b.address || ''} · ${b.phone || ''}`),
-        el('div', { style: 'font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--accent-hover);margin-bottom:8px' }, 'المدربون'),
+        el('div', { style: 'font-size:13px;color:var(--app-muted);margin-bottom:12px' }, `${b.address || ''} · ${b.phone || ''}`),
+        el('div', { style: 'font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--accent-hover);margin-bottom:8px' }, 'المدربون — بالتناوب على كل المتدربين'),
         trainers.length
-          ? dataTable(['الاسم', 'التخصص', 'المتدربون'],
-            trainers.map((t) => [t.name, t.specialty || '—',
-              String(users.filter((u) => u.role === 'trainee' && u.trainerId === t.id).length)]))
+          ? dataTable(['الاسم', 'التخصص', 'الجوال'],
+            trainers.map((t) => [t.name, t.specialty || '—', t.phone || '—']))
           : el('div', { class: 'empty' }, 'لا مدربين في هذا الفرع.')));
     });
     container.append(grid);
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل المتدربين'),
-      dataTable(['الاسم', 'الجوال', 'الفرع', 'المدرب', 'الهدف', ''],
+      dataTable(['الاسم', 'الجوال', 'الفرع', 'الهدف', ''],
         users.filter((u) => u.role === 'trainee').map((t) => [t.name, t.phone || '—',
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
-          (users.find((u) => u.id === t.trainerId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
@@ -245,9 +243,8 @@ async function viewBranches(root) {
   await render();
 }
 
-/* تعديل متدرب: إعادة إسناد المدرب / الفرع / الهدف */
+/* تعديل متدرب: الفرع / الهدف / الجوال (المدربون بالتناوب — لا إسناد ثابتًا) */
 function openEditTraineeModal(onDone, trainee, users, branches) {
-  const trainerSel = select(users.filter((u) => u.role === 'trainer').map((t) => [t.id, t.name]), { value: trainee.trainerId || '' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), { value: trainee.branchId || '' });
   const goalSel = select(Object.entries(GOAL_LABELS), { value: trainee.goal || 'loss' });
   const phoneIn = input({ value: trainee.phone || '', dir: 'ltr', style: 'text-align:end' });
@@ -259,18 +256,16 @@ function openEditTraineeModal(onDone, trainee, users, branches) {
         e.preventDefault();
         try {
           await API.put('/api/users/' + trainee.id, {
-            trainerId: Number(trainerSel.value), branchId: Number(branchSel.value),
-            goal: goalSel.value, phone: phoneIn.value,
+            branchId: Number(branchSel.value), goal: goalSel.value, phone: phoneIn.value,
           });
-          toast('تم الحفظ — وصل إشعار للمدرب الجديد والمتدرب.');
+          toast('تم حفظ التعديلات.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
-      field('المدرب المسؤول', trainerSel),
       field('الفرع', branchSel),
       field('الهدف', goalSel),
-      field('الجوال', phoneIn),
+      el('div', { class: 'span-2' }, field('الجوال', phoneIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
 }
@@ -301,16 +296,15 @@ function openUserModal(onDone, branches, users) {
   const passIn = input({ placeholder: 'كلمة المرور', dir: 'ltr', style: 'text-align:end' });
   const phoneIn = input({ placeholder: '05XXXXXXXX', dir: 'ltr', style: 'text-align:end' });
   const branchSel = select(branches.map((b) => [b.id, b.name]));
-  const trainerSel = select(users.filter((u) => u.role === 'trainer').map((t) => [t.id, t.name]));
   const goalSel = select([['loss', 'نزول وزن'], ['muscle', 'زيادة عضل'], ['maintain', 'تثبيت وزن']]);
   const specIn = input({ placeholder: 'مثال: قوة وبناء عضل' });
 
-  const traineeFields = el('div', { class: 'form-grid span-2', style: 'display:contents' },
-    field('المدرب المسؤول', trainerSel), field('الهدف', goalSel));
+  /* المدربون بالتناوب — لا يُسند مدرب ثابت للمتدرب */
+  const traineeFields = field('الهدف', goalSel);
   const trainerFields = field('التخصص', specIn);
   trainerFields.style.display = 'none';
   roleSel.addEventListener('change', () => {
-    traineeFields.style.display = roleSel.value === 'trainee' ? 'contents' : 'none';
+    traineeFields.style.display = roleSel.value === 'trainee' ? '' : 'none';
     trainerFields.style.display = roleSel.value === 'trainer' ? '' : 'none';
   });
 
@@ -323,7 +317,6 @@ function openUserModal(onDone, branches, users) {
           await API.post('/api/users', {
             role: roleSel.value, name: nameIn.value, username: userIn.value, password: passIn.value,
             phone: phoneIn.value, branchId: Number(branchSel.value) || null,
-            trainerId: roleSel.value === 'trainee' ? Number(trainerSel.value) : null,
             goal: roleSel.value === 'trainee' ? goalSel.value : null,
             specialty: roleSel.value === 'trainer' ? specIn.value : null,
           });
@@ -637,24 +630,27 @@ async function viewReports(root) {
   await render();
 }
 
-/* قائمة المتدربين للمدرب */
+/* قائمة المتدربين (المدربون بالتناوب — الكل يرى الكل) */
 async function viewMyTrainees(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
   container.append(spinnerCard());
-  const [trainees, subs] = await Promise.all([
+  const [trainees, subs, branches] = await Promise.all([
     API.get('/api/users?role=trainee'),
     API.get('/api/subscriptions'),
+    API.get('/api/branches'),
   ]);
   container.innerHTML = '';
   container.append(el('div', { class: 'card' },
-    el('h3', { class: 'card__title' }, 'متدربيّ'),
-    dataTable(['الاسم', 'الهدف', 'الرصيد المتبقي', 'الحالة', ''],
+    el('h3', { class: 'card__title' }, 'المتدربون'),
+    dataTable(['الاسم', 'الفرع', 'الهدف', 'الرصيد المتبقي', 'الحالة', ''],
       trainees.map((t) => {
         const sub = subs.filter((s) => s.traineeId === t.id && s.status === 'active')[0];
-        return [t.name, GOAL_LABELS[t.goal] || '—',
+        return [t.name,
+          (branches.find((b) => b.id === t.branchId) || {}).name || '—',
+          GOAL_LABELS[t.goal] || '—',
           sub ? `${sub.remaining} من ${sub.totalSessions}` : '—',
           sub ? statusTag(sub.status, sub.expiring) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
           el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←')];
-      }), 'لا متدربين مرتبطين بك.')));
+      }), 'لا متدربين بعد.')));
 }

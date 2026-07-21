@@ -233,9 +233,7 @@ app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutri
   let list = (await Store.all('users')).map(publicUser);
   if (req.query.role) list = list.filter((u) => u.role === req.query.role);
   if (req.query.branch) list = list.filter((u) => u.branchId === Number(req.query.branch));
-  if (req.user.role === 'trainer' && req.query.role === 'trainee') {
-    list = list.filter((u) => u.trainerId === req.user.id);
-  }
+  // المدربون بالتناوب: كل مدرب يرى كل المتدربين
   res.json(list);
 }));
 
@@ -291,10 +289,6 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
   const { subscriptions, users } = await Store.load('subscriptions', 'users');
   let list = subscriptions;
   if (req.user.role === 'trainee') list = list.filter((s) => s.traineeId === req.user.id);
-  if (req.user.role === 'trainer') {
-    const mine = users.filter((u) => u.trainerId === req.user.id).map((u) => u.id);
-    list = list.filter((s) => mine.includes(s.traineeId));
-  }
   if (req.query.branch) list = list.filter((s) => s.branchId === Number(req.query.branch));
   res.json(list.map((s) => ({ ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions })));
 }));
@@ -331,11 +325,10 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!date || !time || !duration) return res.status(400).json({ error: 'التاريخ والساعة والمدة مطلوبة.' });
-  if (req.user.role === 'trainer' && trainee.trainerId !== req.user.id) {
-    return res.status(403).json({ error: 'هذا المتدرب غير مرتبط بك.' });
-  }
 
-  const trainerId = req.user.role === 'trainer' ? req.user.id : (Number(req.body.trainerId) || trainee.trainerId);
+  // المدربون بالتناوب: الحصة تُنسب لمن نفّذها فعليًا
+  const trainerId = req.user.role === 'trainer' ? req.user.id : Number(req.body.trainerId);
+  if (!trainerId) return res.status(400).json({ error: 'اختر المدرب الذي نفّذ الحصة.' });
 
   const subs = (await Store.all('subscriptions'))
     .filter((s) => s.traineeId === trainee.id && subStatus(s) === 'active')
@@ -724,9 +717,9 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const trainee = users.find((u) => u.id === id && u.role === 'trainee');
   if (!trainee) return res.status(404).json({ error: 'المتدرب غير موجود.' });
 
-  const allowed = ['admin', 'accountant', 'nutritionist'].includes(req.user.role)
-    || (req.user.role === 'trainee' && req.user.id === id)
-    || (req.user.role === 'trainer' && trainee.trainerId === req.user.id);
+  // المدربون بالتناوب: أي مدرب يطّلع على ملف أي متدرب
+  const allowed = ['admin', 'accountant', 'nutritionist', 'trainer'].includes(req.user.role)
+    || (req.user.role === 'trainee' && req.user.id === id);
   if (!allowed) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
 
   const subs = subscriptions.filter((s) => s.traineeId === id)
@@ -738,9 +731,11 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const readings = inbody.filter((r) => r.traineeId === id).sort((a, b) => a.date.localeCompare(b.date));
   const plans = mealPlans.filter((p) => p.traineeId === id).map((p) => ({ ...p, meal: meals.find((m) => m.id === p.mealId) }));
 
+  // بنظام التناوب لا مدرب ثابتًا — نعرض آخر مدرب درّبه فعليًا
+  const lastSession = mySessions[0];
   res.json({
     trainee: publicUser(trainee),
-    trainerName: (users.find((u) => u.id === trainee.trainerId) || {}).name,
+    trainerName: lastSession ? (users.find((u) => u.id === lastSession.trainerId) || {}).name : null,
     branchName: (branches.find((b) => b.id === trainee.branchId) || {}).name,
     subscription: current || null,
     subscriptions: subs,

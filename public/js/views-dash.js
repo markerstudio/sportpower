@@ -329,8 +329,9 @@ async function viewTraineePage(root, traineeId) {
     sub ? progressRing(sub.usedSessions, sub.totalSessions) : el('div', { class: 'empty' }, 'لا اشتراك فعّال'),
     el('div', { style: 'flex:1;min-width:230px' },
       el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.4rem;color:var(--text-strong)' }, data.trainee.name),
-      el('div', { style: 'color:var(--text-muted);font-size:13px;margin:4px 0 10px' },
-        `${data.branchName || ''} · المدرب: ${data.trainerName || '—'} · الهدف: ${GOAL_LABELS[data.trainee.goal] || '—'}`),
+      el('div', { style: 'color:var(--app-muted);font-size:13px;margin:4px 0 10px' },
+        `${data.branchName || ''} · الهدف: ${GOAL_LABELS[data.trainee.goal] || '—'}` +
+        (data.trainerName ? ` · آخر مدرب: ${data.trainerName}` : '')),
       sub ? el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px' },
         el('div', {}, `عدد الحصص الكلي: `, el('b', {}, String(sub.totalSessions)),
           ' · المستخدمة: ', el('b', {}, String(sub.usedSessions)),

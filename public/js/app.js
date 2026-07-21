@@ -17,7 +17,7 @@ const NAV = {
   trainer: [
     ['#/trainer', 'لوحتي', 'grid'],
     ['#/calendar', 'مواعيدي', 'calendar'],
-    ['#/trainees', 'متدربيّ', 'users'],
+    ['#/trainees', 'المتدربون', 'users'],
     ['#/inbody', 'قراءات InBody', 'pulse'],
     ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
