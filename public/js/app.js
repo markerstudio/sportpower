@@ -64,6 +64,7 @@ async function renderShell(route, renderView) {
         el('div', {},
           el('div', { style: 'font-weight:700;color:var(--text-strong);font-size:13px' }, API.user.name),
           el('div', { style: 'font-size:11px;color:var(--text-muted)' }, ROLE_LABELS[API.user.role] || API.user.role))),
+      el('button', { class: 'bell', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, '🔑'),
       el('button', {
         class: 'btn btn--outline btn--sm',
         onclick: async () => { await API.logout(); location.hash = '#/login'; },
@@ -71,6 +72,15 @@ async function renderShell(route, renderView) {
     el('div', { id: 'view' }));
 
   app.append(el('div', { class: 'shell' }, sidebar, main));
+
+  // تنبيه أمان: كلمة المرور الافتراضية لم تُغيَّر بعد
+  if (API.user.mustChangePassword) {
+    main.insertBefore(
+      el('div', { class: 'alert alert--warning', style: 'margin:16px 28px 0;justify-content:space-between' },
+        el('span', {}, '⚠️ ما زلت تستخدم كلمة المرور الافتراضية — غيّرها الآن لتأمين الحساب.'),
+        el('button', { class: 'btn btn--accent btn--sm', onclick: openPasswordModal }, 'تغيير كلمة المرور')),
+      document.getElementById('view'));
+  }
 
   // عدّاد الإشعارات
   try {
@@ -80,6 +90,33 @@ async function renderShell(route, renderView) {
   } catch (e) { /* تجاهل */ }
 
   await renderView(document.getElementById('view'));
+}
+
+function openPasswordModal() {
+  const cur = input({ type: 'password', placeholder: 'كلمة المرور الحالية', dir: 'ltr', style: 'text-align:end' });
+  const nxt = input({ type: 'password', placeholder: '8 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
+  const rpt = input({ type: 'password', placeholder: 'تأكيد الجديدة', dir: 'ltr', style: 'text-align:end' });
+  const close = modal('تغيير كلمة المرور', [
+    el('form', {
+      style: 'display:flex;flex-direction:column;gap:14px',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (nxt.value !== rpt.value) { toast('كلمتا المرور غير متطابقتين.', true); return; }
+        try {
+          await API.post('/api/me/password', { current: cur.value, next: nxt.value });
+          API.user.mustChangePassword = false;
+          localStorage.setItem('sp-user', JSON.stringify(API.user));
+          close();
+          toast('تم تغيير كلمة المرور وإنهاء بقية الجلسات.');
+          route();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('كلمة المرور الحالية', cur),
+      field('كلمة المرور الجديدة', nxt),
+      field('تأكيد كلمة المرور الجديدة', rpt),
+      el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ')),
+  ]);
 }
 
 async function openNotifications() {

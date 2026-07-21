@@ -7,6 +7,7 @@ function viewLogin(root) {
   const user = input({ id: 'lu', placeholder: 'اسم المستخدم', autocomplete: 'username', dir: 'ltr', style: 'text-align:end' });
   const pass = input({ id: 'lp', type: 'password', placeholder: '••••••••', autocomplete: 'current-password', dir: 'ltr', style: 'text-align:end' });
   const err = el('div', { style: 'color:var(--status-danger);font-size:13px;min-height:18px' });
+  const demoBox = el('div');
 
   const form = el('form', {
     onsubmit: async (e) => {
@@ -35,7 +36,15 @@ function viewLogin(root) {
         el('h2', {}, 'تسجيل الدخول'),
         el('p', {}, 'كل مستخدم يرى صلاحياته الخاصة فقط.'),
         form,
-        el('div', { class: 'login-demo', html: '<b>حسابات تجريبية:</b><br>الإدارة: <code>admin / admin123</code><br>مدرب: <code>omar / 123456</code> · محاسب: <code>rana / 123456</code><br>متدرب: <code>ahmad / 123456</code> · تغذية: <code>nour / 123456</code>' })))));
+        demoBox))));
+
+  // بيانات الحسابات التجريبية تظهر في وضع العرض فقط
+  API.config().then((cfg) => {
+    if (cfg.demo) {
+      demoBox.className = 'login-demo';
+      demoBox.innerHTML = '<b>حسابات تجريبية:</b><br>الإدارة: <code>admin / admin123</code><br>مدرب: <code>omar / 123456</code> · محاسب: <code>rana / 123456</code><br>متدرب: <code>ahmad / 123456</code> · تغذية: <code>nour / 123456</code>';
+    }
+  });
 }
 
 /* ============================================================

@@ -17,6 +17,15 @@ const API = {
     return data;
   },
 
+  _config: null,
+  async config() {
+    if (!this._config) {
+      try { this._config = await fetch('/api/config').then((r) => r.json()); }
+      catch (e) { this._config = { demo: false }; }
+    }
+    return this._config;
+  },
+
   get(url) { return this.request('GET', url); },
   post(url, body) { return this.request('POST', url, body); },
   put(url, body) { return this.request('PUT', url, body); },

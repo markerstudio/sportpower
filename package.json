@@ -6,10 +6,11 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "seed": "node -e \"require('./server/db').reseed(); console.log('Database reseeded.')\""
+    "seed": "node server/reseed.js"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pg": "^8.22.0"
   },
   "optionalDependencies": {
     "tesseract.js": "^5.1.1"
