@@ -185,7 +185,15 @@ const GOAL_LABELS = { loss: 'نزول وزن', muscle: 'زيادة عضل', main
 const MEAL_TYPES = { breakfast: 'فطور', lunch: 'غداء', dinner: 'عشاء', snack: 'سناك' };
 const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
-const fmtMoney = (n) => Number(n || 0).toLocaleString('en') + ' ر.س';
+/* العملات المدعومة — تُضبط من إعدادات النظام (الإدارة) */
+const CURRENCIES = {
+  ILS: { symbol: '₪', name: 'شيكل' },
+  JOD: { symbol: 'د.أ', name: 'دينار أردني' },
+  USD: { symbol: '$', name: 'دولار' },
+};
+let ACTIVE_CURRENCY = 'ILS';
+const curInfo = () => CURRENCIES[ACTIVE_CURRENCY] || CURRENCIES.ILS;
+const fmtMoney = (n) => Number(n || 0).toLocaleString('en') + ' ' + curInfo().symbol;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonthISO = () => todayISO().slice(0, 7);
 

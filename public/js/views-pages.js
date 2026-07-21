@@ -189,7 +189,7 @@ async function openSubModal(onDone, trainees) {
     },
       el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
       field('عدد الحصص', totalIn),
-      field('القيمة (ر.س)', priceIn),
+      field(`القيمة (${curInfo().name})`, priceIn),
       field('تاريخ البدء', startIn),
       field('تاريخ الانتهاء', endIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تفعيل الاشتراك'))),
@@ -237,10 +237,42 @@ async function viewBranches(root) {
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
           (users.find((u) => u.id === t.trainerId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
-          el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←')]))));
+          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
+            el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))]))));
   }
 
   await render();
+}
+
+/* تعديل متدرب: إعادة إسناد المدرب / الفرع / الهدف */
+function openEditTraineeModal(onDone, trainee, users, branches) {
+  const trainerSel = select(users.filter((u) => u.role === 'trainer').map((t) => [t.id, t.name]), { value: trainee.trainerId || '' });
+  const branchSel = select(branches.map((b) => [b.id, b.name]), { value: trainee.branchId || '' });
+  const goalSel = select(Object.entries(GOAL_LABELS), { value: trainee.goal || 'loss' });
+  const phoneIn = input({ value: trainee.phone || '', dir: 'ltr', style: 'text-align:end' });
+
+  const close = modal(`تعديل «${trainee.name}»`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/users/' + trainee.id, {
+            trainerId: Number(trainerSel.value), branchId: Number(branchSel.value),
+            goal: goalSel.value, phone: phoneIn.value,
+          });
+          toast('تم الحفظ — وصل إشعار للمدرب الجديد والمتدرب.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('المدرب المسؤول', trainerSel),
+      field('الفرع', branchSel),
+      field('الهدف', goalSel),
+      field('الجوال', phoneIn),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
 }
 
 function openBranchModal(onDone) {

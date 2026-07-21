@@ -90,13 +90,32 @@ function rateLimited(key, max, windowMs) {
   return rec.count > max;
 }
 
+const CURRENCIES = ['ILS', 'JOD', 'USD'];
+
+async function getSettings() {
+  const rows = await Store.all('settings');
+  return rows[0] || { currency: 'ILS' };
+}
+
 app.get('/api/config', h(async (req, res) => {
+  const settings = await getSettings();
   res.json({
     demo: Store.DEMO_MODE,
     storage: Store.IS_PG ? 'postgres' : 'file',
+    currency: CURRENCIES.includes(settings.currency) ? settings.currency : 'ILS',
     // ملف على بيئة لحظية = جلسات وبيانات غير ثابتة — الواجهة تعرض تحذيرًا
     volatile: !Store.IS_PG && !!process.env.VERCEL,
   });
+}));
+
+app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
+  const { currency } = req.body || {};
+  if (!CURRENCIES.includes(currency)) return res.status(400).json({ error: 'عملة غير مدعومة — المتاح: شيكل ILS، دينار JOD، دولار USD.' });
+  const rows = await Store.all('settings');
+  const saved = rows[0]
+    ? await Store.update('settings', rows[0].id, { currency })
+    : await Store.insert('settings', { currency });
+  res.json(saved);
 }));
 
 app.get('/api/health', h(async (req, res) => {
@@ -238,6 +257,31 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
     joinedAt: todayStr(),
   });
   res.json(publicUser(user));
+}));
+
+/* تعديل مستخدم (الإدارة): إعادة إسناد مدرب/فرع/هدف/بيانات أساسية */
+app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
+  const user = await Store.get('users', req.params.id);
+  if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
+  const patch = {};
+  ['name', 'phone', 'goal', 'specialty'].forEach((k) => {
+    if (req.body[k] !== undefined) patch[k] = req.body[k];
+  });
+  if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
+  if (req.body.trainerId !== undefined) {
+    const trainerId = Number(req.body.trainerId) || null;
+    if (trainerId) {
+      const trainer = await Store.get('users', trainerId);
+      if (!trainer || trainer.role !== 'trainer') return res.status(400).json({ error: 'المدرب غير موجود.' });
+    }
+    patch.trainerId = trainerId;
+  }
+  const updated = await Store.update('users', user.id, patch);
+  if (user.role === 'trainee' && patch.trainerId && patch.trainerId !== user.trainerId) {
+    await notify(patch.trainerId, `أُسند إليك متدرب جديد: ${updated.name}.`, 'info');
+    await notify(user.id, 'تم تحديث مدربك المسؤول — اطّلع على مواعيدك القادمة.', 'info');
+  }
+  res.json(publicUser(updated));
 }));
 
 /* ============================================================

@@ -36,6 +36,7 @@ function productionSeed(hash) {
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS' }],
   };
 }
 
@@ -165,7 +166,7 @@ function demoSeed(hash) {
     { id: 2, userId: 1, text: 'اشتراك يوسف نجار يوشك على الانتهاء (متبقي حصة واحدة).', date: TODAY, read: false, type: 'subscription' },
   ];
 
-  return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [] };
+  return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [], settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS' }] };
 }
 
 module.exports = { demoSeed, productionSeed };

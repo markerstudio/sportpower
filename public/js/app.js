@@ -46,6 +46,12 @@ async function renderShell(route, renderView) {
   const app = document.getElementById('app');
   app.innerHTML = '';
 
+  // عملة النظام من الإعدادات
+  try {
+    const cfg = await API.config();
+    if (cfg.currency) ACTIVE_CURRENCY = cfg.currency;
+  } catch (e) { /* الافتراضي شيكل */ }
+
   const nav = NAV[API.user.role] || [];
   const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
   const sidebar = el('aside', { class: 'sidebar', id: 'sidebar' },

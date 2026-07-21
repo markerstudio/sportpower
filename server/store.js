@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const seedData = require('./seed-data');
 
 const COLLECTIONS = ['branches', 'users', 'subscriptions', 'payments', 'sessions',
-  'appointments', 'inbody', 'meals', 'mealPlans', 'notifications', 'tokens'];
+  'appointments', 'inbody', 'meals', 'mealPlans', 'notifications', 'tokens', 'settings'];
 const TABLE = Object.fromEntries(COLLECTIONS.map((c) => [c, c.replace(/[A-Z]/g, (ch) => '_' + ch.toLowerCase())]));
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;
@@ -53,8 +53,8 @@ class JsonDriver {
   async init() {
     if (!fs.existsSync(this.file)) await this.reseed();
     else this.db = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-    // ملفات قديمة: tokens ككائن — تحويلها لمصفوفة
-    if (!Array.isArray(this.db.tokens)) this.db.tokens = [];
+    // ملفات قديمة: مجموعات ناقصة أو tokens ككائن
+    for (const col of COLLECTIONS) if (!Array.isArray(this.db[col])) this.db[col] = [];
   }
 
   async reseed() {
