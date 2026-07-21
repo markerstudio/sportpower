@@ -71,13 +71,13 @@ async function viewCalendar(root) {
 function weekStart(d) { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); return x; } // الأحد بداية الأسبوع
 function iso(d) { return d.toISOString().slice(0, 10); }
 
-async function openApptModal(onDone, trainers, trainees, existing) {
+async function openApptModal(onDone, trainers, trainees, existing, prefillTraineeId) {
   const isAdmin = API.user.role === 'admin';
   if (!trainees.length) trainees = await API.get('/api/users?role=trainee');
   const trainerSel = isAdmin
     ? select(trainers.map((t) => [t.id, t.name]), { value: existing ? existing.trainerId : undefined })
     : null;
-  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : '' });
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : (prefillTraineeId || '') });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const timeIn = input({ type: 'time', value: existing ? existing.time : '17:00' });
   const durIn = input({ type: 'number', value: existing ? existing.duration : 60, min: 15, step: 15 });
@@ -243,12 +243,13 @@ async function viewSubscriptions(root) {
       pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة', ''],
         subs.sort((a, b) => (a.status === 'expired') - (b.status === 'expired')),
         (s) => {
+          const nameLink = el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, byName(s.traineeId));
           const act = async (action, label) => {
             if (!confirm(`${label} اشتراك ${byName(s.traineeId)}؟`)) return;
             try { await API.post(`/api/subscriptions/${s.id}/action`, { action }); toast('تم — وسُجّل الحدث في المتابعة اليومية.'); render(); }
             catch (ex) { toast(ex.message, true); }
           };
-          return [byName(s.traineeId),
+          return [nameLink,
             el('span', { class: 'num' }, String(s.totalSessions)),
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
@@ -267,15 +268,17 @@ async function viewSubscriptions(root) {
       el('h3', { class: 'card__title' }, `حصص شهر ${thisMonthISO()}`),
       pagedTable(['التاريخ', 'الساعة', 'المتدرب', 'المدة', 'الأسلوب', 'ملاحظات'],
         sessions.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)),
-        (s) => [s.date, s.time, byName(s.traineeId), s.duration + ' د', s.style || '—', s.notes || '—'],
+        (s) => [s.date, s.time,
+          el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none' }, byName(s.traineeId)),
+          s.duration + ' د', s.style || '—', s.notes || '—'],
         { pageSize: 15, emptyText: 'لا حصص هذا الشهر.', searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
 
   await render();
 }
 
-async function openSubModal(onDone, trainees) {
-  const traineeSel = searchSelect(trainees.map(traineeOption));
+async function openSubModal(onDone, trainees, preselectId) {
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: preselectId || '' });
   const totalIn = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
   const priceIn = input({ type: 'number', value: 1200, min: 0 });
   const startIn = input({ type: 'date', value: todayISO() });
@@ -833,7 +836,9 @@ async function viewSettings(root) {
       usersWrap.innerHTML = '';
       usersWrap.append(pagedTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', ''],
         list,
-        (u) => [u.name,
+        (u) => [u.role === 'trainee'
+            ? el('a', { href: '#/trainee/' + u.id, style: 'color:var(--action);text-decoration:none;font-weight:600' }, u.name)
+            : u.name,
           el('code', { style: 'direction:ltr;font-family:var(--font-mono);font-size:12px' }, u.username),
           el('span', { class: 'tag ' + (u.role === 'admin' ? 'tag--petrol' : 'tag--neutral') }, ROLE_LABELS[u.role] || u.role),
           (branches.find((b) => b.id === u.branchId) || {}).name || '—',

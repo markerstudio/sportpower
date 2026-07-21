@@ -97,7 +97,9 @@ async function viewAdminDash(root) {
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'اشتراكات تحتاج متابعة'),
         dataTable(['المتدرب', 'المتبقي', 'ينتهي في', 'الحالة'],
-          data.expiringList.map((s) => [s.traineeName, `${s.remaining} من ${s.totalSessions}`, s.endDate, statusTag(s.status, s.expiring)]),
+          data.expiringList.map((s) => [
+            el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
+            `${s.remaining} من ${s.totalSessions}`, s.endDate, statusTag(s.status, s.expiring)]),
           'لا توجد اشتراكات قريبة من الانتهاء.'))));
 
     container.append(el('div', { class: 'card' },
@@ -268,7 +270,8 @@ async function viewAccountantDash(root) {
       el('h3', { class: 'card__title' }, 'الاشتراكات — الحالة المالية'),
       pagedTable(['المتدرب', 'قيمة الاشتراك', 'المدفوع', 'المتبقي', 'تاريخ البدء', 'تاريخ الانتهاء', 'الحالة'],
         data.subscriptions,
-        (s) => [s.traineeName, fmtMoney(s.price), fmtMoney(s.paid),
+        (s) => [el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
+          fmtMoney(s.price), fmtMoney(s.paid),
           el('span', { style: s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(s.remaining)),
           s.startDate, s.endDate, statusTag(s.status)],
         { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
@@ -327,13 +330,22 @@ async function viewTraineePage(root, traineeId) {
   container.innerHTML = '';
 
   const sub = data.subscription;
+  const t = data.trainee;
+  const isStaff = ['admin', 'trainer', 'accountant', 'nutritionist'].includes(API.user.role);
+  const infoChip = (label, value) => el('span', { class: 'macro' }, label + ' ', el('b', {}, value || '—'));
+
   const headCard = el('div', { class: 'card', style: 'display:flex;gap:26px;align-items:center;flex-wrap:wrap' },
     sub ? progressRing(sub.usedSessions, sub.totalSessions) : el('div', { class: 'empty' }, 'لا اشتراك فعّال'),
-    el('div', { style: 'flex:1;min-width:230px' },
-      el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.4rem;color:var(--text-strong)' }, data.trainee.name),
+    el('div', { style: 'flex:1;min-width:260px' },
+      el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap' },
+        el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.4rem;color:var(--app-ink)' }, t.name),
+        t.active === false ? el('span', { class: 'tag tag--danger' }, 'حساب معطّل') : ''),
       el('div', { style: 'color:var(--app-muted);font-size:13px;margin:4px 0 10px' },
-        `${data.branchName || ''} · الهدف: ${GOAL_LABELS[data.trainee.goal] || '—'}` +
+        `${data.branchName || ''} · الهدف: ${GOAL_LABELS[t.goal] || '—'}` +
         (data.trainerName ? ` · آخر مدرب: ${data.trainerName}` : '')),
+      el('div', { class: 'macros', style: 'margin-bottom:10px' },
+        infoChip('الجوال', t.phone), infoChip('الميلاد', t.birthDate),
+        infoChip('انضم', t.joinedAt), infoChip('اسم المستخدم', t.username)),
       sub ? el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px' },
         el('div', {}, `عدد الحصص الكلي: `, el('b', {}, String(sub.totalSessions)),
           ' · المستخدمة: ', el('b', {}, String(sub.usedSessions)),
@@ -341,6 +353,85 @@ async function viewTraineePage(root, traineeId) {
         el('div', {}, `تاريخ الاشتراك: ${sub.startDate} — ينتهي: ${sub.endDate} `, statusTag(sub.status, sub.expiring)))
         : el('div', { class: 'alert alert--warning' }, 'لا يوجد اشتراك فعّال — يرجى التجديد.')));
   container.append(headCard);
+
+  /* شريط الإجراءات السريعة للموظفين */
+  if (isStaff) {
+    const refresh = () => { root.innerHTML = ''; viewTraineePage(root, traineeId); };
+    const actions = el('div', { class: 'card filters' });
+    if (['admin', 'trainer'].includes(API.user.role)) {
+      actions.append(
+        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openLogSessionModal(refresh, { traineeId }) }, '+ تسجيل حصة'),
+        el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: async () => {
+            const [trainers, trainees] = await Promise.all([
+              API.user.role === 'admin' ? API.get('/api/users?role=trainer') : Promise.resolve([]),
+              API.get('/api/users?role=trainee')]);
+            openApptModal(refresh, trainers, trainees, null, traineeId);
+          },
+        }, '+ حجز موعد'),
+        el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: async () => openInbodyModal(refresh, traineeId, await API.get('/api/users?role=trainee')),
+        }, '+ قراءة InBody'));
+    }
+    if (API.user.role === 'admin') {
+      actions.append(
+        el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: async () => openSubModal(refresh, await API.get('/api/users?role=trainee'), traineeId),
+        }, 'تجديد الاشتراك'),
+        el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: async () => openEditTraineeModal(refresh, t, [], await API.get('/api/branches')),
+        }, 'تعديل البيانات'));
+    }
+    if (['admin', 'accountant'].includes(API.user.role) && data.payments) {
+      const paidOf = (sid) => data.payments.filter((p) => p.subscriptionId === sid).reduce((s, p) => s + p.amount, 0);
+      const subsForPay = data.subscriptions.filter((s) => s.status !== 'cancelled').map((s) => ({
+        id: s.id, traineeName: t.name, price: s.price, paid: paidOf(s.id), remaining: Math.max(0, s.price - paidOf(s.id)),
+      }));
+      if (subsForPay.length) {
+        actions.append(el('button', { class: 'btn btn--outline btn--sm', onclick: () => openPaymentModal(refresh, subsForPay) }, '+ دفعة جديدة'));
+      }
+    }
+    if (t.phone) {
+      actions.append(el('a', {
+        class: 'btn btn--petrol btn--sm', target: '_blank',
+        href: waLink(t.phone, OPS_SETTINGS.waCountryCode || '970', '', t.name),
+      }, 'واتساب'));
+    }
+    container.append(actions);
+  }
+
+  /* إحصاءات الحضور والمال */
+  const statTiles = el('div', { class: 'kpis' },
+    kpiTile(data.attendance.attended, 'حصة حضرها', 'check'),
+    kpiTile(data.attendance.missed, 'غياب', 'alert', data.attendance.missed >= 2 ? 'danger' : undefined),
+    kpiTile(data.attendance.pct !== null ? data.attendance.pct + '%' : '—', 'نسبة الحضور', 'pulse', 'blue'));
+  if (data.finance) {
+    statTiles.append(
+      kpiTile(fmtMoney(data.finance.totalPaid), 'إجمالي المدفوع', 'wallet'),
+      kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
+  }
+  container.append(statTiles);
+
+  /* تاريخ الاشتراكات + الدفعات */
+  const historyGrid = el('div', { class: 'grid-2eq' });
+  historyGrid.append(el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'تاريخ الاشتراكات'),
+    dataTable(['الحصص', 'المستخدم', 'القيمة', 'من', 'إلى', 'الحالة'],
+      data.subscriptions.slice().reverse().map((s) => [String(s.totalSessions), String(s.usedSessions),
+        fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring)]),
+      'لا اشتراكات بعد.')));
+  if (data.payments) {
+    historyGrid.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'سجل الدفعات'),
+      dataTable(['التاريخ', 'المبلغ', 'الطريقة', 'ملاحظة'],
+        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount), p.method, p.note || '—']),
+        'لا دفعات مسجلة.')));
+  }
+  container.append(historyGrid);
 
   // مواعيد + ملاحظات
   container.append(el('div', { class: 'grid-2eq' },

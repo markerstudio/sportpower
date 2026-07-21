@@ -87,7 +87,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
@@ -864,11 +864,11 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
   });
 }));
 
-/* صفحة المتدرب — نظرة شاملة */
+/* ملف المتدرب — نظرة شاملة */
 app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const id = Number(req.params.id);
-  const { users, subscriptions, sessions, appointments, inbody, mealPlans, meals, branches } = await Store.load(
-    'users', 'subscriptions', 'sessions', 'appointments', 'inbody', 'mealPlans', 'meals', 'branches');
+  const { users, subscriptions, sessions, appointments, inbody, mealPlans, meals, branches, payments } = await Store.load(
+    'users', 'subscriptions', 'sessions', 'appointments', 'inbody', 'mealPlans', 'meals', 'branches', 'payments');
 
   const trainee = users.find((u) => u.id === id && u.role === 'trainee');
   if (!trainee) return res.status(404).json({ error: 'المتدرب غير موجود.' });
@@ -889,6 +889,27 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
 
   // بنظام التناوب لا مدرب ثابتًا — نعرض آخر مدرب درّبه فعليًا
   const lastSession = mySessions[0];
+  // الحضور والغياب
+  const nowIso = new Date().toISOString().slice(0, 16);
+  const isMissedA = (a) => a.status === 'missed' || (a.status === 'scheduled' && (a.date + 'T' + a.time) < nowIso);
+  const myAppts = appointments.filter((a) => a.traineeId === id);
+  const missedCount = myAppts.filter(isMissedA).length;
+  const attendance = {
+    attended: mySessions.length,
+    missed: missedCount,
+    pct: (mySessions.length + missedCount) ? Math.round((mySessions.length / (mySessions.length + missedCount)) * 100) : null,
+  };
+
+  // البيانات المالية — للإدارة والمحاسب فقط
+  const canSeeMoney = ['admin', 'accountant'].includes(req.user.role);
+  const subIds = subs.map((s) => s.id);
+  const myPayments = canSeeMoney ? payments.filter((p) => subIds.includes(p.subscriptionId)) : null;
+  const finance = canSeeMoney ? {
+    totalDue: subs.filter((s) => s.status !== 'cancelled').reduce((t, s) => t + s.price, 0),
+    totalPaid: payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0),
+  } : null;
+  if (finance) finance.remaining = Math.max(0, finance.totalDue - finance.totalPaid);
+
   res.json({
     trainee: publicUser(trainee),
     trainerName: lastSession ? (users.find((u) => u.id === lastSession.trainerId) || {}).name : null,
@@ -900,6 +921,9 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     inbody: readings,
     mealPlans: plans,
     notes: mySessions.filter((s) => s.notes).slice(0, 6).map((s) => ({ date: s.date, note: s.notes })),
+    attendance,
+    payments: myPayments,
+    finance,
   });
 }));
 

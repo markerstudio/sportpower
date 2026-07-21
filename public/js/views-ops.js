@@ -53,7 +53,9 @@ async function viewDaily(root) {
       const list = el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, '⚠️ متدربون بحاجة لتواصل (غياب متكرر)'),
         dataTable(['المتدرب', 'مرات الغياب', 'مدربو حصصه', 'الجوال', ''],
-          data.absentees.map((a) => [a.name, el('b', { class: 'num', style: 'color:var(--status-danger)' }, String(a.missed)),
+          data.absentees.map((a) => [
+            el('a', { href: '#/trainee/' + a.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, a.name),
+            el('b', { class: 'num', style: 'color:var(--status-danger)' }, String(a.missed)),
             a.trainers.join('، ') || '—', a.phone || '—',
             a.phone ? el('a', {
               class: 'btn btn--accent btn--sm', target: '_blank',
