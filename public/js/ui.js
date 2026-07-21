@@ -97,6 +97,89 @@ function select(options, attrs = {}) {
   return s;
 }
 
+/* منتقٍ قابل للبحث (للأعداد الكبيرة من المتدربين) — اكتب للبحث */
+let _dlSeq = 0;
+function searchSelect(options, attrs = {}) {
+  const id = 'sp-dl-' + (++_dlSeq);
+  const dl = el('datalist', { id });
+  const byLabel = new Map();
+  options.forEach(([value, label]) => {
+    byLabel.set(String(label), String(value));
+    dl.append(el('option', { value: label }));
+  });
+  const inp = el('input', {
+    class: 'field__input', list: id, autocomplete: 'off',
+    placeholder: attrs.placeholder || `اكتب للبحث… (${options.length})`,
+  });
+  if (attrs.value !== undefined && attrs.value !== null && attrs.value !== '') {
+    const found = options.find(([v]) => String(v) === String(attrs.value));
+    if (found) inp.value = found[1];
+  }
+  const wrap = el('div', { style: 'width:100%' }, inp, dl);
+  Object.defineProperty(wrap, 'value', {
+    get() { return byLabel.get(inp.value.trim()) || ''; },
+    set(v) {
+      const found = options.find(([val]) => String(val) === String(v));
+      inp.value = found ? found[1] : '';
+    },
+  });
+  if (attrs.onchange) inp.addEventListener('change', () => attrs.onchange({ target: wrap }));
+  return wrap;
+}
+
+/* تسمية موحّدة للمتدرب داخل المنتقيات: الاسم — الجوال (لتمييز التشابه) */
+const traineeOption = (t) => [t.id, t.phone ? `${t.name} — ${t.phone}` : `${t.name} — ${t.username}`];
+
+/* جدول مع بحث وترقيم صفحات — للقوائم الكبيرة */
+function pagedTable(headers, data, rowRender, opts = {}) {
+  const pageSize = opts.pageSize || 15;
+  let page = 0;
+  let query = '';
+  const wrap = el('div');
+  const body = el('div');
+  const bar = el('div', { class: 'pt-bar' });
+  const info = el('span', { class: 'pt-info' });
+  const nav = el('div', { class: 'pt-nav' });
+
+  let searchIn = null;
+  if (opts.searchText) {
+    searchIn = input({
+      placeholder: opts.searchPlaceholder || 'بحث…',
+      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; draw(); }, 250),
+    });
+    wrap.append(el('div', { style: 'max-width:320px;margin-bottom:12px' }, searchIn));
+  }
+  wrap.append(body, bar);
+
+  function draw() {
+    const filtered = query ? data.filter((d) => (opts.searchText(d) || '').includes(query)) : data;
+    const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (page >= pages) page = pages - 1;
+    const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
+
+    body.innerHTML = '';
+    body.append(dataTable(headers, slice.map(rowRender), opts.emptyText));
+
+    bar.innerHTML = '';
+    info.textContent = filtered.length
+      ? `${filtered.length.toLocaleString('en')} سجل` + (pages > 1 ? ` · صفحة ${page + 1} من ${pages}` : '')
+      : '';
+    bar.append(info);
+    if (pages > 1) {
+      nav.innerHTML = '';
+      nav.append(
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page === 0 || null, onclick: () => { page--; draw(); } }, 'السابق'),
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page >= pages - 1 || null, onclick: () => { page++; draw(); } }, 'التالي'));
+      bar.append(nav);
+    }
+  }
+
+  draw();
+  return wrap;
+}
+
+function debounce(fn, ms = 300) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
+
 function dataTable(headers, rows, emptyText) {
   if (!rows.length) return el('div', { class: 'empty' }, emptyText || 'لا توجد بيانات.');
   return el('div', { class: 'table-wrap' },

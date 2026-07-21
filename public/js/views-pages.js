@@ -77,7 +77,7 @@ async function openApptModal(onDone, trainers, trainees, existing) {
   const trainerSel = isAdmin
     ? select(trainers.map((t) => [t.id, t.name]), { value: existing ? existing.trainerId : undefined })
     : null;
-  const traineeSel = select(trainees.map((t) => [t.id, t.name]), { value: existing ? existing.traineeId : undefined });
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : '' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const timeIn = input({ type: 'time', value: existing ? existing.time : '17:00' });
   const durIn = input({ type: 'number', value: existing ? existing.duration : 60, min: 15, step: 15 });
@@ -89,6 +89,7 @@ async function openApptModal(onDone, trainers, trainees, existing) {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           const body = {
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
@@ -145,27 +146,28 @@ async function viewSubscriptions(root) {
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل الاشتراكات'),
-      dataTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة'],
-        subs.sort((a, b) => (a.status === 'expired') - (b.status === 'expired'))
-          .map((s) => [byName(s.traineeId),
-            el('span', { class: 'num' }, String(s.totalSessions)),
-            el('span', { class: 'num' }, String(s.usedSessions)),
-            el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
-            fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring)]))));
+      pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة'],
+        subs.sort((a, b) => (a.status === 'expired') - (b.status === 'expired')),
+        (s) => [byName(s.traineeId),
+          el('span', { class: 'num' }, String(s.totalSessions)),
+          el('span', { class: 'num' }, String(s.usedSessions)),
+          el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
+          fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring)],
+        { pageSize: 15, searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `حصص شهر ${thisMonthISO()}`),
-      dataTable(['التاريخ', 'الساعة', 'المتدرب', 'المدة', 'الأسلوب', 'ملاحظات'],
-        sessions.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time))
-          .map((s) => [s.date, s.time, byName(s.traineeId), s.duration + ' د', s.style || '—', s.notes || '—']),
-        'لا حصص هذا الشهر.')));
+      pagedTable(['التاريخ', 'الساعة', 'المتدرب', 'المدة', 'الأسلوب', 'ملاحظات'],
+        sessions.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)),
+        (s) => [s.date, s.time, byName(s.traineeId), s.duration + ' د', s.style || '—', s.notes || '—'],
+        { pageSize: 15, emptyText: 'لا حصص هذا الشهر.', searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
 
   await render();
 }
 
 async function openSubModal(onDone, trainees) {
-  const traineeSel = select(trainees.map((t) => [t.id, t.name]));
+  const traineeSel = searchSelect(trainees.map(traineeOption));
   const totalIn = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
   const priceIn = input({ type: 'number', value: 1200, min: 0 });
   const startIn = input({ type: 'date', value: todayISO() });
@@ -177,6 +179,7 @@ async function openSubModal(onDone, trainees) {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           await API.post('/api/subscriptions', {
             traineeId: Number(traineeSel.value), totalSessions: Number(totalIn.value),
@@ -231,13 +234,15 @@ async function viewBranches(root) {
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل المتدربين'),
-      dataTable(['الاسم', 'الجوال', 'الفرع', 'الهدف', ''],
-        users.filter((u) => u.role === 'trainee').map((t) => [t.name, t.phone || '—',
+      pagedTable(['الاسم', 'الجوال', 'الفرع', 'الهدف', ''],
+        users.filter((u) => u.role === 'trainee'),
+        (t) => [t.name, t.phone || '—',
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
-            el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))]))));
+            el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))],
+        { pageSize: 15, searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' })));
   }
 
   await render();
@@ -347,7 +352,10 @@ async function viewInbody(root) {
 
   const listCard = el('div', { class: 'card' });
   const traineeSel = trainees.length
-    ? select(trainees.map((t) => [t.id, t.name]), { value: state.trainee, onchange: (e) => { state.trainee = Number(e.target.value); renderList(); } })
+    ? searchSelect(trainees.map(traineeOption), {
+      value: state.trainee,
+      onchange: (e) => { if (e.target.value) { state.trainee = Number(e.target.value); renderList(); } },
+    })
     : null;
 
   const head = el('div', { class: 'card filters' });
@@ -380,7 +388,7 @@ async function viewInbody(root) {
 }
 
 function openInbodyModal(onDone, traineeId, trainees) {
-  const traineeSel = select(trainees.map((t) => [t.id, t.name]), { value: traineeId });
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: traineeId });
   const dateIn = input({ type: 'date', value: todayISO() });
   const fileIn = input({ type: 'file', accept: 'image/*' });
   const preview = el('div', { style: 'display:none;text-align:center' });
@@ -427,6 +435,7 @@ function openInbodyModal(onDone, traineeId, trainees) {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           await API.post('/api/inbody', {
             traineeId: Number(traineeSel.value), date: dateIn.value,
@@ -514,8 +523,6 @@ async function viewMeals(root) {
   await render();
 }
 
-function debounce(fn, ms = 350) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
-
 function openMealModal(onDone) {
   const nameIn = input({ placeholder: 'اسم الوجبة' });
   const typeSel = select(Object.entries(MEAL_TYPES));
@@ -564,13 +571,14 @@ function openMealModal(onDone) {
 
 async function openAssignMealModal(meal) {
   const trainees = await API.get('/api/users?role=trainee');
-  const traineeSel = select(trainees.map((t) => [t.id, `${t.name} (${GOAL_LABELS[t.goal] || '—'})`]));
+  const traineeSel = searchSelect(trainees.map((t) => [t.id, `${t.name} (${GOAL_LABELS[t.goal] || '—'}) — ${t.phone || t.username}`]));
   const slotSel = select(Object.entries(MEAL_TYPES), { value: meal.type });
   const close = modal(`ربط «${meal.name}» ببرنامج متدرب`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           await API.post('/api/meal-plans', { traineeId: Number(traineeSel.value), mealId: meal.id, slot: slotSel.value });
           toast('رُبطت الوجبة ببرنامج المتدرب اليومي.'); close();
@@ -698,8 +706,9 @@ async function viewSettings(root) {
       if (state.roleFilter) list = list.filter((u) => u.role === state.roleFilter);
       if (state.search) list = list.filter((u) => u.name.includes(state.search) || u.username.includes(state.search.toLowerCase()));
       usersWrap.innerHTML = '';
-      usersWrap.append(dataTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', ''],
-        list.map((u) => [u.name,
+      usersWrap.append(pagedTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', ''],
+        list,
+        (u) => [u.name,
           el('code', { style: 'direction:ltr;font-family:var(--font-mono);font-size:12px' }, u.username),
           el('span', { class: 'tag ' + (u.role === 'admin' ? 'tag--petrol' : 'tag--neutral') }, ROLE_LABELS[u.role] || u.role),
           (branches.find((b) => b.id === u.branchId) || {}).name || '—',
@@ -717,8 +726,8 @@ async function viewSettings(root) {
                   render();
                 } catch (ex) { toast(ex.message, true); }
               },
-            }, u.active ? 'تعطيل' : 'تفعيل') : el('span'))]),
-        'لا مستخدمين مطابقين.'));
+            }, u.active ? 'تعطيل' : 'تفعيل') : el('span'))],
+        { pageSize: 15, emptyText: 'لا مستخدمين مطابقين.' }));
     }
 
     container.append(el('div', { class: 'card' },
@@ -815,8 +824,9 @@ async function viewMyTrainees(root) {
   container.innerHTML = '';
   container.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'المتدربون'),
-    dataTable(['الاسم', 'الفرع', 'الهدف', 'الرصيد المتبقي', 'الحالة', ''],
-      trainees.map((t) => {
+    pagedTable(['الاسم', 'الفرع', 'الهدف', 'الرصيد المتبقي', 'الحالة', ''],
+      trainees,
+      (t) => {
         const sub = subs.filter((s) => s.traineeId === t.id && s.status === 'active')[0];
         return [t.name,
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
@@ -824,5 +834,6 @@ async function viewMyTrainees(root) {
           sub ? `${sub.remaining} من ${sub.totalSessions}` : '—',
           sub ? statusTag(sub.status, sub.expiring) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
           el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←')];
-      }), 'لا متدربين بعد.')));
+      },
+      { pageSize: 15, emptyText: 'لا متدربين بعد.', searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' })));
 }

@@ -169,7 +169,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
   let trainers = [];
   if (API.user.role === 'admin') trainers = await API.get('/api/users?role=trainer');
 
-  const traineeSel = select(trainees.map((t) => [t.id, t.name]), { value: prefill.traineeId || (trainees[0] || {}).id });
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: prefill.traineeId || '' });
   const trainerSel = trainers.length ? select(trainers.map((t) => [t.id, t.name])) : null;
   const dateIn = input({ type: 'date', value: todayISO() });
   const timeIn = input({ type: 'time', value: prefill.time || '17:00' });
@@ -183,6 +183,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           const res = await API.post('/api/sessions', {
             traineeId: Number(traineeSel.value),
@@ -249,27 +250,34 @@ async function viewAccountantDash(root) {
         months.length ? barChart(months.map((m) => m.slice(2)), months.map((m) => data.byMonth[m])) : el('div', { class: 'empty' }, 'لا بيانات.')),
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, `دفعات شهر ${data.month}`),
-        dataTable(['المتدرب', 'المبلغ', 'التاريخ', 'الطريقة', ''],
-          data.payments.map((p) => {
+        pagedTable(['المتدرب', 'المبلغ', 'التاريخ', 'الطريقة', ''],
+          data.payments,
+          (p) => {
             const sub = data.subscriptions.find((s) => s.id === p.subscriptionId) || {};
             return [sub.traineeName || '—', fmtMoney(p.amount), p.date, p.method,
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(render, data.subscriptions, p) }, 'تعديل')];
-          }), 'لا دفعات في هذا الشهر.'))));
+          },
+          { pageSize: 10, emptyText: 'لا دفعات في هذا الشهر.',
+            searchText: (p) => ((data.subscriptions.find((s) => s.id === p.subscriptionId) || {}).traineeName || '') }))));
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'الاشتراكات — الحالة المالية'),
-      dataTable(['المتدرب', 'قيمة الاشتراك', 'المدفوع', 'المتبقي', 'تاريخ البدء', 'تاريخ الانتهاء', 'الحالة'],
-        data.subscriptions.map((s) => [s.traineeName, fmtMoney(s.price), fmtMoney(s.paid),
+      pagedTable(['المتدرب', 'قيمة الاشتراك', 'المدفوع', 'المتبقي', 'تاريخ البدء', 'تاريخ الانتهاء', 'الحالة'],
+        data.subscriptions,
+        (s) => [s.traineeName, fmtMoney(s.price), fmtMoney(s.paid),
           el('span', { style: s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(s.remaining)),
-          s.startDate, s.endDate, statusTag(s.status)]))));
+          s.startDate, s.endDate, statusTag(s.status)],
+        { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
 
   await render();
 }
 
 async function openPaymentModal(onDone, subscriptions, existing) {
-  const subSel = select(subscriptions.map((s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})`]),
-    { value: existing ? existing.subscriptionId : undefined });
+  const subOptions = subscriptions.map((s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})`]);
+  const subSel = existing
+    ? select(subOptions, { value: existing.subscriptionId })
+    : searchSelect(subOptions, { placeholder: 'اكتب اسم المتدرب للبحث…' });
   const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']], { value: existing ? existing.method : 'كاش' });
@@ -280,6 +288,7 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!existing && !subSel.value) { toast('اختر الاشتراك من القائمة.', true); return; }
         try {
           if (existing) {
             await API.put('/api/payments/' + existing.id, { amount: amountIn.value, date: dateIn.value, method: methodSel.value, note: noteIn.value });
@@ -360,9 +369,10 @@ async function viewTraineePage(root, traineeId) {
   // سجل الحصص
   container.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'سجل الحصص'),
-    dataTable(['التاريخ', 'الساعة', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات'],
-      data.sessions.map((s) => [s.date, s.time, s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—', s.notes || '—']),
-      'لا حصص مسجلة بعد.')));
+    pagedTable(['التاريخ', 'الساعة', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات'],
+      data.sessions,
+      (s) => [s.date, s.time, s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—', s.notes || '—'],
+      { pageSize: 10, emptyText: 'لا حصص مسجلة بعد.' })));
 
   // البرنامج الغذائي
   if (data.mealPlans.length || API.user.role === 'trainee') {
