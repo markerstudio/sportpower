@@ -145,22 +145,29 @@ async function viewTrainerDash(root) {
     // المتابعة اليومية: سجل اليوم + مهامي (KPI)
     await renderTrainerOps(container);
 
+    // البرامج التدريبية — تُربط تلقائيًا بكل المتدربين
+    await renderTrainerPrograms(container, render);
+
     container.append(el('div', { class: 'grid-2eq' },
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'جدول اليوم',
           el('a', { class: 'btn btn--outline btn--sm', href: '#/calendar' }, 'التقويم الكامل')),
-        dataTable(['الساعة', 'المتدرب', 'ملاحظة', ''],
-          data.todayAppointments.map((a) => [a.time, a.traineeName, a.note || '—',
+        dataTable(['الساعة', 'المتدرب', 'النوع', 'ملاحظة', ''],
+          data.todayAppointments.map((a) => [a.time, a.traineeName,
+            a.kind === 'makeup' ? el('span', { class: 'tag tag--info' }, 'تعويض') : el('span', { class: 'tag tag--neutral' }, 'عادية'),
+            a.note || '—',
             el('button', {
               class: 'btn btn--accent btn--sm',
-              onclick: () => openLogSessionModal(render, { traineeId: a.traineeId, time: a.time, appointmentId: a.id }),
+              onclick: () => openLogSessionModal(render, { traineeId: a.traineeId, time: a.time, appointmentId: a.id, kind: a.kind }),
             }, 'تسجيل الحصة')]),
           'لا مواعيد لهذا اليوم.')),
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'آخر الحصص المسجلة',
           el('button', { class: 'btn btn--accent btn--sm', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة')),
         dataTable(['التاريخ', 'الساعة', 'الأسلوب', 'المدة'],
-          data.recentSessions.map((s) => [s.date, s.time, s.style || '—', s.duration + ' د']),
+          data.recentSessions.map((s) => [s.date, s.time,
+            s.kind === 'makeup' ? el('span', {}, el('span', { class: 'tag tag--info' }, 'تعويض'), ' ', s.style || '') : (s.style || '—'),
+            s.duration + ' د']),
           'لم تسجل حصصًا هذا الشهر بعد.'))));
   }
 
@@ -177,12 +184,20 @@ async function openLogSessionModal(onDone, prefill = {}) {
 
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: prefill.traineeId || '' });
   const trainerSel = trainers.length ? select(trainers.map((t) => [t.id, t.name])) : null;
+  const kindSel = select([['regular', 'عادية — تُخصم من الاشتراك'], ['makeup', 'تعويض — لا تُخصم من الاشتراك']],
+    { value: prefill.kind === 'makeup' ? 'makeup' : 'regular' });
   const dateIn = input({ type: 'date', value: todayISO() });
   const timeIn = input({ type: 'time', value: prefill.time || '17:00' });
   const durIn = input({ type: 'number', value: 60, min: 15, step: 15 });
   const styleIn = input({ placeholder: 'مثال: قوة — دفع / HIIT / مرونة' });
   const weightIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const notesIn = textarea({ placeholder: 'ملاحظات المدرب…' });
+
+  const saveBtn = el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك');
+  kindSel.addEventListener('change', () => {
+    saveBtn.textContent = kindSel.value === 'makeup' ? 'حفظ الحصة التعويضية (بلا خصم)' : 'حفظ الحصة وخصمها من الاشتراك';
+  });
+  if (prefill.kind === 'makeup') saveBtn.textContent = 'حفظ الحصة التعويضية (بلا خصم)';
 
   const close = modal('تسجيل حصة منفذة', [
     el('form', {
@@ -194,26 +209,30 @@ async function openLogSessionModal(onDone, prefill = {}) {
           const res = await API.post('/api/sessions', {
             traineeId: Number(traineeSel.value),
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
+            kind: kindSel.value,
             date: dateIn.value, time: timeIn.value, duration: Number(durIn.value),
             style: styleIn.value, notes: notesIn.value,
             weight: weightIn.value || null,
             appointmentId: prefill.appointmentId || null,
           });
           close();
-          toast(`تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
+          toast(res.makeup
+            ? 'سُجّلت الحصة التعويضية — دون خصم من رصيد المتدرب.'
+            : `تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
           onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('المتدرب', traineeSel),
       trainerSel ? field('المدرب', trainerSel) : el('span'),
+      el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       field('التاريخ', dateIn),
       field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn),
       field('الوزن الحالي (كغ)', weightIn),
       el('div', { class: 'span-2' }, field('الأسلوب التدريبي', styleIn)),
       el('div', { class: 'span-2' }, field('ملاحظات المدرب', notesIn)),
-      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك'))),
+      el('div', { class: 'span-2' }, saveBtn)),
   ]);
 }
 
@@ -228,9 +247,11 @@ async function viewAccountantDash(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [data, branches] = await Promise.all([
+    const [data, branches, expenses, targets] = await Promise.all([
       API.get(`/api/dashboard/accountant?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
+      API.get(`/api/expenses?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')),
+      API.get('/api/targets').catch(() => []),
     ]);
     container.innerHTML = '';
 
@@ -238,16 +259,46 @@ async function viewAccountantDash(root) {
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
     container.append(el('div', { class: 'card filters' },
       field('الشهر', monthInput), field('الفرع', branchSel),
-      el('button', { class: 'btn btn--accent', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ دفعة جديدة')));
+      el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ مشترك جديد (Onboarding)'),
+      el('button', { class: 'btn btn--outline', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ دفعة جديدة'),
+      el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←')));
 
     const k = data.kpis;
+    const expensesTotal = expenses.reduce((s, x) => s + x.amount, 0);
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
       kpiHero(fmtMoney(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
-      kpiHero(fmtMoney(k.outstanding), 'متبقٍ غير محصل', 'alert')));
+      kpiHero(fmtMoney(expensesTotal), 'مصاريف هذا الشهر', 'card'),
+      kpiHero(fmtMoney(k.collectedMonth - expensesTotal), 'صافي الربح', 'chart', 'blue')));
     container.append(el('div', { class: 'kpis' },
+      kpiTile(fmtMoney(k.outstanding), 'متبقٍ غير محصل', 'alert', 'warn'),
       kpiTile(k.paymentsCount, 'عدد الدفعات', 'file'),
       kpiTile(k.renewed, 'اشتراكات مجددة', 'check'),
       kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger')));
+
+    /* الأهداف الشهرية لكل فرع + السنوية مقسمة على الأشهر — بوضوح أمام المحاسب */
+    const year = state.month.slice(0, 4);
+    const goalTargets = targets.filter((t) => ['company', 'branch'].includes(t.scope)
+      && (t.period === state.month || t.period === year)
+      && (!state.branch || t.scope === 'company' || t.refId === Number(state.branch)));
+    if (goalTargets.length) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `أهداف ${state.month} — الشهرية والسنوية`,
+          el('a', { class: 'btn btn--outline btn--sm', href: '#/kpi' }, 'كل الأهداف ←')),
+        dataTable(['النطاق', 'المؤشر', 'الفترة', 'الهدف', 'المرحَّل', 'المطلوب فعليًا', 'المحقق', 'الإنجاز'],
+          goalTargets.map((t) => {
+            const money = t.metric === 'revenue';
+            const fv = (v) => (money ? fmtMoney(v) : String(v));
+            const annual = /^\d{4}$/.test(t.period);
+            return [t.refName || '—', t.metricLabel,
+              annual ? el('span', {}, 'سنوي — ', el('b', {}, fv(Math.round(t.value / 12))), ' شهريًا') : 'شهري',
+              fv(t.value),
+              t.carried > 0 ? el('span', { class: 'tag tag--warning' }, '+' + fv(t.carried)) : '—',
+              el('b', {}, fv(t.effective || t.value)), fv(t.actual), progressBar(t.pct)];
+          }))));
+    }
+
+    /* إدارة المصاريف الشهرية */
+    container.append(expensesCard(expenses, branches, state.month, render));
 
     const months = Object.keys(data.byMonth).sort().slice(-6);
     container.append(el('div', { class: 'grid-2' },
@@ -415,6 +466,26 @@ async function viewTraineePage(root, traineeId) {
       kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
   }
   container.append(statTiles);
+
+  /* نقاطي ومكافآتي — بطاقة سريعة للمتدرب */
+  if (API.user.role === 'trainee' && API.user.id === traineeId) {
+    try {
+      const loyalty = await API.get('/api/loyalty/me');
+      container.append(el('div', { class: 'card', style: 'display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:space-between' },
+        el('div', { style: 'display:flex;align-items:center;gap:12px' },
+          el('span', { class: 'kpi__ic' }, icon('star')),
+          el('div', {},
+            el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:var(--app-ink)' }, `${loyalty.balance} نقطة 🎁`),
+            el('div', { style: 'font-size:12px;color:var(--app-muted)' }, 'اكسب نقاطًا بحضور حصصك وتجديد اشتراكك ودعوة أصدقائك — واستبدلها بمكافآت.'))),
+        el('a', { class: 'btn btn--accent', href: '#/points' }, 'نقاطي ومكافآتي ←')));
+    } catch (e) { /* تجاهل */ }
+  }
+
+  /* البرنامج التدريبي — يُربط تلقائيًا بكل المتدربين */
+  try {
+    const programs = await API.get('/api/programs' + (API.user.role === 'trainer' ? '?all=1' : ''));
+    if (programs.length) container.append(programsListCard(programs, 'البرنامج التدريبي'));
+  } catch (e) { /* تجاهل */ }
 
   /* تاريخ الاشتراكات + الدفعات */
   const historyGrid = el('div', { class: 'grid-2eq' });

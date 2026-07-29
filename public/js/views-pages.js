@@ -56,7 +56,7 @@ async function viewCalendar(root) {
             const trainer = trainers.find((t) => t.id === a.trainerId);
             const chip = el('button', { class: 'cal-chip ' + a.status, onclick: () => openApptModal(render, trainers, trainees, a) },
               el('b', {}, trainee ? trainee.name : 'متدرب #' + a.traineeId),
-              el('small', {}, ` ${a.time}` + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
+              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
             cell.append(chip);
           });
         grid.append(cell);
@@ -78,6 +78,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
     ? select(trainers.map((t) => [t.id, t.name]), { value: existing ? existing.trainerId : undefined })
     : null;
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : (prefillTraineeId || '') });
+  const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض']], { value: existing && existing.kind === 'makeup' ? 'makeup' : 'regular' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const timeIn = input({ type: 'time', value: existing ? existing.time : '17:00' });
   const durIn = input({ type: 'number', value: existing ? existing.duration : 60, min: 15, step: 15 });
@@ -93,7 +94,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         try {
           const body = {
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
-            traineeId: Number(traineeSel.value),
+            traineeId: Number(traineeSel.value), kind: kindSel.value,
             date: dateIn.value, time: timeIn.value, duration: Number(durIn.value), note: noteIn.value,
           };
           if (existing) {
@@ -110,6 +111,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
     },
       trainerSel ? field('المدرب', trainerSel) : el('span'),
       field('المتدرب', traineeSel),
+      field('نوع الحصة', kindSel),
       field('التاريخ', dateIn),
       field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn),
@@ -123,17 +125,18 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
 /* ============================================================
    Onboarding — تسجيل زبون جديد بخطوة واحدة
    ============================================================ */
-async function openOnboardModal(onDone) {
+async function openOnboardModal(onDone, prefill = {}) {
   const [branches, trainers] = await Promise.all([
     API.get('/api/branches'),
     API.get('/api/users?role=trainer'),
   ]);
 
-  const nameIn = input({ placeholder: 'الاسم الكامل *' });
-  const phoneIn = input({ placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end' });
+  const nameIn = input({ placeholder: 'الاسم الكامل *', value: prefill.name || '' });
+  const phoneIn = input({ placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end', value: prefill.phone || '' });
   const birthIn = input({ type: 'date' });
-  const branchSel = select(branches.map((b) => [b.id, b.name]));
+  const branchSel = select(branches.map((b) => [b.id, b.name]), prefill.branchId ? { value: prefill.branchId } : {});
   const goalSel = select(Object.entries(GOAL_LABELS));
+  const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
 
   const totalSel = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
   const priceIn = input({ type: 'number', min: 0, value: 1200 });
@@ -164,6 +167,7 @@ async function openOnboardModal(onDone) {
           const res = await API.post('/api/onboard', {
             name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
             branchId: Number(branchSel.value), goal: goalSel.value,
+            referralCode: referralIn.value || null, leadId: prefill.leadId || null,
             subscription: { totalSessions: Number(totalSel.value), price: Number(priceIn.value), startDate: startIn.value, endDate: endIn.value },
             payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value } : null,
             appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
@@ -175,7 +179,7 @@ async function openOnboardModal(onDone) {
       section('١ — بيانات المتدرب'),
       field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
       field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
-      el('div', { class: 'span-2' }, field('الهدف', goalSel)),
+      field('الهدف', goalSel), field('كود إحالة صديق', referralIn),
       section('٢ — الاشتراك'),
       field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
       field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
@@ -232,11 +236,15 @@ async function viewSubscriptions(root) {
 
     const byName = (id) => (trainees.find((t) => t.id === id) || {}).name || '#' + id;
 
-    container.append(el('div', { class: 'card filters' },
+    const bar = el('div', { class: 'card filters' },
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
-      el('button', { class: 'btn btn--outline', onclick: () => openSubModal(render, trainees) }, 'تجديد اشتراك لمتدرب حالي'),
-      el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة')));
+      el('button', { class: 'btn btn--outline', onclick: () => openSubModal(render, trainees) }, 'تجديد اشتراك لمتدرب حالي'));
+    // تسجيل الحصص للمدرب/الإدارة — وليس المحاسب
+    if (API.user.role === 'admin') {
+      bar.append(el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة'));
+    }
+    container.append(bar);
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل الاشتراكات'),
@@ -245,9 +253,14 @@ async function viewSubscriptions(root) {
         (s) => {
           const nameLink = el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, byName(s.traineeId));
           const act = async (action, label) => {
+            const doIt = async (reason) => {
+              try { await API.post(`/api/subscriptions/${s.id}/action`, { action, reason: reason || '' }); toast('تم — وسُجّل الحدث في المتابعة اليومية والتقارير.'); render(); }
+              catch (ex) { toast(ex.message, true); }
+            };
+            // سبب الإلغاء يُسجَّل لتحليل أسباب خسارة العملاء في تقرير النمو
+            if (action === 'cancel') { openCancelReasonModal(`إلغاء اشتراك ${byName(s.traineeId)}`, doIt); return; }
             if (!confirm(`${label} اشتراك ${byName(s.traineeId)}؟`)) return;
-            try { await API.post(`/api/subscriptions/${s.id}/action`, { action }); toast('تم — وسُجّل الحدث في المتابعة اليومية.'); render(); }
-            catch (ex) { toast(ex.message, true); }
+            doIt();
           };
           return [nameLink,
             el('span', { class: 'num' }, String(s.totalSessions)),
@@ -711,10 +724,11 @@ async function viewReports(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [report, branches, kpis] = await Promise.all([
+    const [report, branches, kpis, growthReport] = await Promise.all([
       API.get(`/api/reports/monthly?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
       API.get('/api/kpi?month=' + state.month).catch(() => []),
+      API.get(`/api/reports/growth?month=${state.month}&branch=${state.branch}`).catch(() => null),
     ]);
     container.innerHTML = '';
 
@@ -759,8 +773,11 @@ async function viewReports(root) {
           b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
           delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true)]))));
 
+    // تقرير النمو الشهري: KPI الفرع + أسباب الإلغاء + المصاريف وصافي الربح + مقارنة الأهداف
+    if (growthReport) renderGrowthReport(container, growthReport);
+
     container.append(el('div', { class: 'alert alert--info' },
-      'ملاحظة الاحتساب: إذا درّب المدرب شخصين في نفس الساعة تُحسب ساعة تدريب واحدة، بينما يُحسب عدد الأشخاص حسب العدد الفعلي — وتُخصم حصة من كل متدرب.'));
+      'ملاحظة الاحتساب: إذا درّب المدرب شخصين في نفس الساعة تُحسب ساعة تدريب واحدة، بينما يُحسب عدد الأشخاص حسب العدد الفعلي — وتُخصم حصة من كل متدرب. الحصص التعويضية لا تُخصم من رصيد الاشتراك.'));
   }
 
   await render();
