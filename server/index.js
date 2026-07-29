@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Store = require('./store');
+const growth = require('./growth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -132,6 +133,13 @@ app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
   }
   if (req.body.frozenMessage !== undefined) patch.frozenMessage = String(req.body.frozenMessage).slice(0, 1000);
   if (req.body.waCountryCode !== undefined) patch.waCountryCode = String(req.body.waCountryCode).replace(/\D/g, '').slice(0, 4);
+  // نقاط الولاء: قيم قابلة للتحكم من الإدارة
+  ['ptsSession', 'ptsRenewal', 'ptsReferral'].forEach((k) => {
+    if (req.body[k] !== undefined) {
+      const v = Math.trunc(Number(req.body[k]));
+      if (v >= 0) patch[k] = v;
+    }
+  });
   if (!Object.keys(patch).length) return res.status(400).json({ error: 'لا شيء لتعديله.' });
   const rows = await Store.all('settings');
   const saved = rows[0]
@@ -405,6 +413,27 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
     await notify(trainer.id, `متدرب جديد: ${result.user.name} — أول حصة يوم ${result.appt.date} الساعة ${result.appt.time}.`, 'appointment');
   }
 
+  // إحالة صديق: كود الإحالة يُنشئ سجل إحالة بانتظار اعتماد الإدارة
+  if (req.body.referralCode) {
+    const code = String(req.body.referralCode).trim().toUpperCase();
+    const referrer = users.find((u) => u.role === 'trainee' && (u.referralCode || '').toUpperCase() === code);
+    if (referrer) {
+      await Store.insert('referrals', {
+        referrerId: referrer.id, traineeId: result.user.id, traineeName: result.user.name,
+        code, date: todayStr(), status: 'pending',
+      });
+      const admin = users.find((u) => u.role === 'admin');
+      if (admin) await notify(admin.id, `إحالة جديدة: ${result.user.name} اشترك بكود ${referrer.name} — بانتظار الاعتماد في صفحة الولاء.`, 'loyalty');
+      await notify(referrer.id, `صديقك ${result.user.name} اشترك بكودك 🎉 — ستصلك نقاط الإحالة بعد اعتماد الإدارة.`, 'loyalty');
+    }
+  }
+
+  // ربط الاشتراك بملف متابعة المبيعات
+  if (req.body.leadId) {
+    const lead = await Store.get('leads', Number(req.body.leadId));
+    if (lead) await Store.update('leads', lead.id, { stage: 'subscribed', traineeId: result.user.id, closedAt: todayStr() });
+  }
+
   res.json({
     user: publicUser(result.user),
     credentials: { username, password },
@@ -423,7 +452,8 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
   res.json(list.map((s) => ({ ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions })));
 }));
 
-app.post('/api/subscriptions', auth, requireRole('admin'), h(async (req, res) => {
+/* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
+app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const { traineeId, totalSessions, price, startDate, endDate } = req.body;
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
@@ -440,23 +470,31 @@ app.post('/api/subscriptions', auth, requireRole('admin'), h(async (req, res) =>
     type: prior ? 'renewal' : 'new', date: todayStr(),
   });
   await notify(trainee.id, `تم تفعيل اشتراك جديد: ${sub.totalSessions} حصة حتى ${sub.endDate}.`, 'subscription');
+  // نقاط الولاء عند تجديد الاشتراك
+  if (prior) {
+    const pts = await growth.loyaltyPts();
+    await growth.awardPoints(trainee.id, pts.renewal, 'تجديد الاشتراك');
+  }
   res.json(sub);
 }));
 
-/* تجميد / فك تجميد / إلغاء اشتراك — مع تسجيل الحدث */
-app.post('/api/subscriptions/:id/action', auth, requireRole('admin'), h(async (req, res) => {
+/* تجميد / فك تجميد / إلغاء اشتراك — مع تسجيل الحدث وسببه (لتحليل أسباب الإلغاء) */
+app.post('/api/subscriptions/:id/action', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const sub = await Store.get('subscriptions', req.params.id);
   if (!sub) return res.status(404).json({ error: 'الاشتراك غير موجود.' });
   const { action } = req.body || {};
+  const reason = String(req.body.reason || '').slice(0, 200);
   const map = { freeze: 'frozen', unfreeze: 'active', cancel: 'cancelled' };
   if (!map[action]) return res.status(400).json({ error: 'الإجراء: freeze أو unfreeze أو cancel.' });
   if (action === 'freeze' && subStatus(sub) !== 'active') return res.status(400).json({ error: 'لا يُجمَّد إلا اشتراك فعّال.' });
   if (action === 'unfreeze' && sub.status !== 'frozen') return res.status(400).json({ error: 'الاشتراك ليس مجمّدًا.' });
 
-  const updated = await Store.update('subscriptions', sub.id, { status: map[action] });
+  const patch = { status: map[action] };
+  if (action === 'cancel') patch.cancelReason = reason;
+  const updated = await Store.update('subscriptions', sub.id, patch);
   await Store.insert('subEvents', {
     subscriptionId: sub.id, traineeId: sub.traineeId, branchId: sub.branchId,
-    type: action, date: todayStr(),
+    type: action, date: todayStr(), reason: ['cancel', 'freeze'].includes(action) ? reason : '',
   });
   const labels = { freeze: 'تم تجميد اشتراكك — تواصل معنا للعودة متى أحببت!', unfreeze: 'تم تفعيل اشتراكك من جديد — أهلًا بعودتك!', cancel: 'تم إلغاء اشتراكك.' };
   await notify(sub.traineeId, labels[action], 'subscription');
@@ -478,6 +516,7 @@ app.get('/api/sessions', auth, h(async (req, res) => {
 
 app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, res) => {
   const { traineeId, date, time, duration, style, notes, weight, appointmentId } = req.body;
+  const kind = req.body.kind === 'makeup' ? 'makeup' : 'regular';
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!date || !time || !duration) return res.status(400).json({ error: 'التاريخ والساعة والمدة مطلوبة.' });
@@ -485,6 +524,24 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   // المدربون بالتناوب: الحصة تُنسب لمن نفّذها فعليًا
   const trainerId = req.user.role === 'trainer' ? req.user.id : Number(req.body.trainerId);
   if (!trainerId) return res.status(400).json({ error: 'اختر المدرب الذي نفّذ الحصة.' });
+
+  /* حصة تعويضية: تُسجل بشكل مستقل عن الحصص العادية — بلا خصم من رصيد الاشتراك */
+  if (kind === 'makeup') {
+    const session = await Store.insert('sessions', {
+      traineeId: trainee.id, trainerId, branchId: trainee.branchId,
+      date, time, duration: Number(duration), style: style || '', notes: notes || '',
+      weight: weight ? Number(weight) : null, subscriptionId: null, kind: 'makeup',
+      createdAt: new Date().toISOString(),
+    });
+    if (appointmentId) {
+      const appt = await Store.get('appointments', Number(appointmentId));
+      if (appt) await Store.update('appointments', appt.id, { status: 'done', sessionId: session.id });
+    }
+    await notify(trainee.id, `تم تسجيل حصة تعويضية لك بتاريخ ${date} — دون خصم من رصيد اشتراكك.`, 'session');
+    const pts = await growth.loyaltyPts();
+    await growth.awardPoints(trainee.id, pts.session, 'حضور حصة تدريبية');
+    return res.json({ session, makeup: true });
+  }
 
   const subs = (await Store.all('subscriptions'))
     .filter((s) => s.traineeId === trainee.id && subStatus(s) === 'active')
@@ -498,7 +555,7 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
     const session = await tx.insert('sessions', {
       traineeId: trainee.id, trainerId, branchId: trainee.branchId,
       date, time, duration: Number(duration), style: style || '', notes: notes || '',
-      weight: weight ? Number(weight) : null, subscriptionId: sub.id,
+      weight: weight ? Number(weight) : null, subscriptionId: sub.id, kind: 'regular',
       createdAt: new Date().toISOString(),
     });
     const used = sub.usedSessions + 1;
@@ -514,6 +571,8 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   });
 
   await notify(trainee.id, `تم تسجيل حصتك بتاريخ ${date} — متبقي ${result.remaining} حصة من أصل ${result.total}.`, 'session');
+  const pts = await growth.loyaltyPts();
+  await growth.awardPoints(trainee.id, pts.session, 'حضور حصة تدريبية');
   if (result.remaining <= 2 && result.remaining > 0) {
     const admin = (await Store.all('users')).find((u) => u.role === 'admin');
     if (admin) await notify(admin.id, `اشتراك ${trainee.name} يوشك على الانتهاء (متبقي ${result.remaining} حصة).`, 'subscription');
@@ -583,6 +642,7 @@ app.post('/api/appointments', auth, requireRole('admin', 'trainer'), h(async (re
     trainerId: trainer.id, traineeId: trainee.id,
     branchId: trainee.branchId, date, time, duration: Number(duration) || 60,
     status: 'scheduled', note: note || '',
+    kind: req.body.kind === 'makeup' ? 'makeup' : 'regular', // «تعويض» في الجدول اليومي
   });
   if (req.user.id !== trainer.id) await notify(trainer.id, `موعد جديد: ${trainee.name} يوم ${date} الساعة ${time}.`, 'appointment');
   await notify(trainee.id, `تم حجز موعد تدريب لك يوم ${date} الساعة ${time} مع ${trainer.name}.`, 'appointment');
@@ -600,6 +660,7 @@ app.put('/api/appointments/:id', auth, requireRole('admin', 'trainer'), h(async 
   ['date', 'time', 'duration', 'status', 'note'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = k === 'duration' ? Number(req.body[k]) : req.body[k];
   });
+  if (req.body.kind !== undefined) patch.kind = req.body.kind === 'makeup' ? 'makeup' : 'regular';
   const updated = await Store.update('appointments', appt.id, patch);
   const after = `${updated.date} ${updated.time}`;
   if (before !== after) {
@@ -1001,6 +1062,32 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   lines.push('');
   lines.push(`الفرع,عدد الحصص,ساعات التدريب,متدربون فعالون,التحصيل,الغيابات,نسبة الحضور %,حصص ${r.prevMonth},تحصيل ${r.prevMonth}`);
   r.branches.forEach((b) => lines.push(`${b.branch},${b.sessions},${b.hours},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevSessions},${b.prevCollected}`));
+
+  // مؤشرات النمو + المالية (المصاريف وصافي الربح)
+  const g = await growth.buildGrowthReport(month, branch, subStatus);
+  lines.push('');
+  lines.push('مؤشرات النمو,القيمة');
+  lines.push(`المشتركون الجدد,${g.kpis.newSubscribers}`);
+  lines.push(`المجددون,${g.kpis.renewals}`);
+  lines.push(`نسبة التجديد %,${g.kpis.retentionRate ?? '-'}`);
+  lines.push(`الإلغاءات,${g.kpis.cancellations}`);
+  lines.push(`نسبة الإلغاء %,${g.kpis.cancellationRate ?? '-'}`);
+  lines.push(`المجمدون,${g.kpis.frozen}`);
+  lines.push(`نسبة التجميد %,${g.kpis.freezeRate ?? '-'}`);
+  lines.push(`النمو الصافي,${g.kpis.netGrowth}`);
+  lines.push(`المشتركون النشطون,${g.kpis.activeSubscribers}`);
+  lines.push(`متوسط بقاء العميل (أشهر),${g.kpis.avgDurationMonths ?? '-'}`);
+  lines.push(`متوسط قيمة العميل LTV,${g.kpis.ltv ?? '-'}`);
+  lines.push('');
+  lines.push('المالية,القيمة');
+  lines.push(`التحصيل,${g.finance.revenue}`);
+  lines.push(`المصاريف,${g.finance.expensesTotal}`);
+  lines.push(`صافي الربح,${g.finance.netProfit}`);
+  if (g.finance.expenses.length) {
+    lines.push('');
+    lines.push('المصروف,التصنيف,المبلغ');
+    g.finance.expenses.forEach((e) => lines.push(`${e.label},${e.category},${e.amount}`));
+  }
   const csv = '﻿' + lines.join('\r\n');
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="sportpower-report-${month}.csv"`);
@@ -1009,6 +1096,9 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
 
 /* وحدة التشغيل: متابعة يومية، مهام، أهداف وKPI، مجمّدون */
 require('./ops')(app, { auth, requireRole, h, notify, subStatus });
+
+/* وحدة النمو: مصاريف، تقرير نمو، مبيعات، برامج تدريبية، ولاء وإحالات */
+growth(app, { auth, requireRole, h, notify, subStatus });
 
 /* ============================================================ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير موجود.' }));

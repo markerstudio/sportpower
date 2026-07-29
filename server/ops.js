@@ -26,6 +26,25 @@ function monthInPeriod(period, month) {
 
 const hoursOf = (sessions) => new Set(sessions.map((s) => `${s.trainerId}|${s.date}|${s.time.slice(0, 2)}`)).size;
 
+const prevMonthStr = (m) => {
+  const [y, mm] = m.split('-').map(Number);
+  return mm === 1 ? `${y - 1}-12` : `${y}-${String(mm - 1).padStart(2, '0')}`;
+};
+
+/* ترحيل الهدف: إن لم يتحقق هدف شهر منقضٍ يُضاف المتبقي تلقائيًا لهدف الشهر التالي
+   (يُتتبع تسلسليًا عبر الأشهر السابقة لنفس النطاق والمؤشر). */
+function effectiveTarget(t, allTargets, data, subStatus, depth = 0) {
+  if (!/^\d{4}-\d{2}$/.test(t.period) || depth >= 12) return t.value;
+  const prevPeriod = prevMonthStr(t.period);
+  if (prevPeriod >= thisMonthStr()) return t.value; // لا يُرحَّل إلا شهر منقضٍ
+  const prev = allTargets.find((x) => x.scope === t.scope && x.refId === t.refId
+    && x.metric === t.metric && x.period === prevPeriod);
+  if (!prev) return t.value;
+  const prevEffective = effectiveTarget(prev, allTargets, data, subStatus, depth + 1);
+  const prevActual = computeActual(prev, { ...data, subStatus }) || 0;
+  return t.value + Math.max(0, prevEffective - prevActual);
+}
+
 const diffHours = (from, to) => {
   if (!from || !to) return null;
   const [h1, m1] = from.split(':').map(Number);
@@ -175,12 +194,18 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     if (req.query.period) targets = targets.filter((t) => t.period === req.query.period);
     res.json(targets.map((t) => {
       const actual = computeActual(t, { ...data, subStatus });
+      const effective = effectiveTarget(t, data.targets, data, subStatus);
       const refName = t.scope === 'branch'
         ? (data.branches.find((b) => b.id === t.refId) || {}).name
         : t.scope === 'trainer'
           ? (data.users.find((u) => u.id === t.refId) || {}).name
           : 'الشركة كاملة';
-      return { ...t, actual, pct: t.value ? Math.round((actual / t.value) * 100) : null, refName, metricLabel: METRIC_LABELS[t.metric] || t.metric };
+      return {
+        ...t, actual,
+        effective, carried: effective - t.value, // المتبقي المرحَّل من الأشهر السابقة
+        pct: effective ? Math.round((actual / effective) * 100) : null,
+        refName, metricLabel: METRIC_LABELS[t.metric] || t.metric,
+      };
     }));
   }));
 
@@ -456,3 +481,6 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
 module.exports.inPeriod = inPeriod;
 module.exports.monthInPeriod = monthInPeriod;
+module.exports.computeActual = computeActual;
+module.exports.effectiveTarget = effectiveTarget;
+module.exports.METRIC_LABELS = METRIC_LABELS;

@@ -9,6 +9,8 @@ const NAV = {
     ['#/admin', 'لوحة التحكم', 'grid'],
     ['#/daily', 'المتابعة اليومية', 'clipboard'],
     ['#/kpi', 'الأهداف وKPI', 'target'],
+    ['#/sales', 'متابعة المبيعات', 'wa'],
+    ['#/loyalty', 'الولاء والإحالات', 'gift'],
     ['#/frozen', 'المجمدون', 'snow'],
     ['#/calendar', 'التقويم والمواعيد', 'calendar'],
     ['#/subscriptions', 'الاشتراكات والحصص', 'card'],
@@ -29,11 +31,16 @@ const NAV = {
     ['#/accountant', 'اللوحة المالية', 'wallet'],
     ['#/daily', 'المتابعة اليومية', 'clipboard'],
     ['#/kpi', 'الأهداف وKPI', 'target'],
+    ['#/sales', 'متابعة المبيعات', 'wa'],
+    ['#/loyalty', 'الولاء والإحالات', 'gift'],
+    ['#/subscriptions', 'الاشتراكات والحصص', 'card'],
+    ['#/trainees', 'المتدربون', 'users'],
     ['#/frozen', 'المجمدون', 'snow'],
     ['#/reports', 'التقارير الشهرية', 'chart'],
   ],
   trainee: [
     ['#/me', 'صفحتي', 'user'],
+    ['#/points', 'نقاطي ومكافآتي', 'star'],
     ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
   nutritionist: [
@@ -49,6 +56,7 @@ const TITLES = {
   '#/reports': 'التقارير الشهرية', '#/trainees': 'المتدربون',
   '#/settings': 'الإعدادات والتحكم',
   '#/daily': 'المتابعة اليومية', '#/kpi': 'الأهداف وKPI', '#/frozen': 'متابعة المجمدين',
+  '#/sales': 'متابعة المبيعات', '#/loyalty': 'الولاء والإحالات', '#/points': 'نقاطي ومكافآتي',
 };
 
 async function renderShell(route, renderView) {
@@ -183,16 +191,19 @@ async function route() {
     '#/accountant': guard(['accountant', 'admin'], viewAccountantDash),
     '#/me': guard(['trainee'], (r) => viewTraineePage(r, API.user.id)),
     '#/calendar': guard(['admin', 'trainer', 'trainee'], viewCalendar),
-    '#/subscriptions': guard(['admin'], viewSubscriptions),
+    '#/subscriptions': guard(['admin', 'accountant'], viewSubscriptions),
     '#/branches': guard(['admin'], viewBranches),
     '#/inbody': guard(['admin', 'trainer', 'trainee'], viewInbody),
     '#/meals': viewMeals,
     '#/reports': guard(['admin', 'accountant'], viewReports),
-    '#/trainees': guard(['trainer', 'nutritionist'], viewMyTrainees),
+    '#/trainees': guard(['trainer', 'nutritionist', 'accountant'], viewMyTrainees),
     '#/settings': guard(['admin'], viewSettings),
     '#/daily': guard(['admin', 'accountant'], viewDaily),
     '#/kpi': guard(['admin', 'accountant'], viewKpi),
     '#/frozen': guard(['admin', 'accountant'], viewFrozen),
+    '#/sales': guard(['admin', 'accountant'], viewSales),
+    '#/loyalty': guard(['admin', 'accountant'], viewLoyalty),
+    '#/points': guard(['trainee'], viewMyPoints),
   };
 
   const view = routes[hash];

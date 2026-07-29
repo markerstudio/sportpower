@@ -20,6 +20,17 @@ const MEALS = [
 
 const DEFAULT_FROZEN_MSG = 'مرحبًا {الاسم} 👋 اشتقنالك في سبورت باور! جسمك بيستناك يرجع أقوى — رجعتك علينا: أول أسبوع بعد التجميد مجانًا. متى بنشوفك؟ 💪';
 
+/* نقاط الولاء الافتراضية — تعدلها الإدارة من صفحة الولاء والإحالات */
+const LOYALTY_DEFAULTS = { ptsSession: 5, ptsRenewal: 50, ptsReferral: 100 };
+
+/* مكافآت البداية لنظام الولاء */
+const DEFAULT_REWARDS = [
+  { id: 1, name: 'خصم 10% على تجديد الاشتراك', cost: 300, active: true, note: '' },
+  { id: 2, name: 'بلوزة من منتجات Sport Power', cost: 400, active: true, note: '' },
+  { id: 3, name: 'حصة تدريبية إضافية مجانية', cost: 250, active: true, note: '' },
+  { id: 4, name: 'شهر مجاني', cost: 1200, active: true, note: '' },
+];
+
 const BRANCHES = [
   { id: 1, name: 'فرع بيت ساحور', address: 'بيت ساحور، فلسطين', phone: '02-2770000' },
   { id: 2, name: 'فرع بيت لحم', address: 'بيت لحم، فلسطين', phone: '02-2740000' },
@@ -38,8 +49,9 @@ function productionSeed(hash) {
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],
-    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970' }],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', ...LOYALTY_DEFAULTS }],
     trainerLogs: [], tasks: [], targets: [], frozen: [], subEvents: [],
+    expenses: [], leads: [], programs: [], pointsLog: [], rewards: DEFAULT_REWARDS, redemptions: [], referrals: [],
   };
 }
 
@@ -61,8 +73,8 @@ function demoSeed(hash) {
     { id: 4, username: 'khaled', password: hash('123456'), role: 'trainer', name: 'كابتن خالد مراد', phone: '0500000004', branchId: 3, specialty: 'استشفاء ومرونة' },
     { id: 5, username: 'rana', password: hash('123456'), role: 'accountant', name: 'أ. رنا الخطيب', phone: '0500000005', branchId: null },
     { id: 6, username: 'nour', password: hash('123456'), role: 'nutritionist', name: 'أخصائية نور حداد', phone: '0500000006', branchId: null },
-    { id: 10, username: 'ahmad', password: hash('123456'), role: 'trainee', name: 'أحمد الخطيب', phone: '0501111110', branchId: 1, goal: 'muscle', joinedAt: prevMonth(3) },
-    { id: 11, username: 'sara', password: hash('123456'), role: 'trainee', name: 'سارة منصور', phone: '0501111111', branchId: 1, goal: 'loss', joinedAt: prevMonth(5) },
+    { id: 10, username: 'ahmad', password: hash('123456'), role: 'trainee', name: 'أحمد الخطيب', phone: '0501111110', branchId: 1, goal: 'muscle', joinedAt: prevMonth(3), referralCode: 'SP-AHMAD' },
+    { id: 11, username: 'sara', password: hash('123456'), role: 'trainee', name: 'سارة منصور', phone: '0501111111', branchId: 1, goal: 'loss', joinedAt: prevMonth(5), referralCode: 'SP-SARA' },
     { id: 12, username: 'fadi', password: hash('123456'), role: 'trainee', name: 'فادي عبد الله', phone: '0501111112', branchId: 1, goal: 'maintain', joinedAt: prevMonth(10) },
     { id: 13, username: 'lina', password: hash('123456'), role: 'trainee', name: 'لينا سعيد', phone: '0501111113', branchId: 2, goal: 'loss', joinedAt: prevMonth(8) },
     { id: 14, username: 'majed', password: hash('123456'), role: 'trainee', name: 'ماجد الحسن', phone: '0501111114', branchId: 2, goal: 'muscle', joinedAt: thisMonth(1) },
@@ -202,6 +214,10 @@ function demoSeed(hash) {
     { id: 7, scope: 'trainer', refId: 2, metric: 'uniqueTrainees', period: MONTH, value: 15 },
     { id: 8, scope: 'trainer', refId: 3, metric: 'sessions', period: MONTH, value: 35 },
     { id: 9, scope: 'trainer', refId: 4, metric: 'sessions', period: MONTH, value: 30 },
+    // هدف الشهر الماضي — غير محقق فيُرحَّل المتبقي تلقائيًا لهدف هذا الشهر
+    { id: 10, scope: 'branch', refId: 1, metric: 'revenue', period: prevMonth(1).slice(0, 7), value: 60000 },
+    { id: 11, scope: 'company', refId: null, metric: 'newSubs', period: MONTH, value: 20 },
+    { id: 12, scope: 'company', refId: null, metric: 'revenue', period: MONTH, value: 130000 },
   ];
 
   const frozen = [
@@ -219,10 +235,61 @@ function demoSeed(hash) {
   });
   subEvents.push({ id: evId++, subscriptionId: 6, traineeId: 15, branchId: 2, type: 'freeze', date: TODAY });
   subEvents.push({ id: evId++, subscriptionId: 5, traineeId: 14, branchId: 2, type: 'renewal', date: TODAY });
+  // إلغاء بسبب مسجّل — يغذي تقرير النمو (أسباب الإلغاء)
+  subEvents.push({ id: evId++, subscriptionId: 10, traineeId: 19, branchId: 3, type: 'cancel', date: thisMonth(6), reason: 'السعر' });
+
+  /* ---------- المصاريف الشهرية ---------- */
+  const PREV = prevMonth(1).slice(0, 7);
+  const expenses = [
+    { id: 1, month: MONTH, branchId: 1, category: 'رواتب', label: 'رواتب المدربين والموظفين', amount: 9000, note: '' },
+    { id: 2, month: MONTH, branchId: 1, category: 'إيجار', label: 'إيجار الفرع', amount: 3500, note: '' },
+    { id: 3, month: MONTH, branchId: 2, category: 'تسويق', label: 'إعلانات ممولة', amount: 1200, note: 'حملة إنستغرام' },
+    { id: 4, month: MONTH, branchId: null, category: 'اشتراكات وأنظمة', label: 'أنظمة وبرمجيات', amount: 400, note: '' },
+    { id: 5, month: PREV, branchId: 1, category: 'رواتب', label: 'رواتب المدربين والموظفين', amount: 9000, note: '' },
+    { id: 6, month: PREV, branchId: 2, category: 'صيانة', label: 'صيانة أجهزة', amount: 800, note: '' },
+  ];
+
+  /* ---------- ملف متابعة المبيعات (Leads) ---------- */
+  const leads = [
+    { id: 1, contactDate: thisMonth(1), name: 'رامي حنّا', phone: '0599000001', residence: 'بيت ساحور', channel: 'إنستغرام', trainingType: 'تدريب شخصي', branchId: 1, goal: 'نزول بالوزن', stage: 'subscribed', objection: '', note: 'اشترك بعد حصة التجربة', traineeId: null, createdBy: 5 },
+    { id: 2, contactDate: thisMonth(2), name: 'ميرا سابا', phone: '0599000002', residence: 'بيت لحم', channel: 'فيسبوك', trainingType: 'جروب', branchId: 2, goal: 'لياقة عامة', stage: 'trial-booked', objection: '', note: '', traineeId: null, createdBy: 5 },
+    { id: 3, contactDate: thisMonth(3), name: 'باسل زيدان', phone: '0599000003', residence: 'العبيدية', channel: 'واتساب', trainingType: 'تدريب شخصي', branchId: 2, goal: 'بناء عضل', stage: 'lost', objection: 'غالي', note: 'طلب عرضًا أرخص', traineeId: null, createdBy: 5 },
+    { id: 4, contactDate: thisMonth(4), name: 'نانسي عوض', phone: '0599000004', residence: 'الخليل', channel: 'إنستغرام', trainingType: 'جروب', branchId: 1, goal: 'نزول بالوزن', stage: 'lost', objection: 'بعيد', note: 'المسافة طويلة عليها', traineeId: null, createdBy: 5 },
+    { id: 5, contactDate: thisMonth(6), name: 'شادي قسيس', phone: '0599000005', residence: 'بيت جالا', channel: 'إحالة صديق', trainingType: 'تدريب شخصي', branchId: 1, goal: 'بناء عضل', stage: 'no-show', objection: 'ما اجى عالتست', note: 'حجز تجربة ولم يحضر', traineeId: null, createdBy: 5 },
+    { id: 6, contactDate: thisMonth(8), name: 'لارا مسلّم', phone: '0599000006', residence: 'بيت ساحور', channel: 'تيك توك', trainingType: 'جروب', branchId: 1, goal: 'لياقة عامة', stage: 'contacted', objection: 'يفكر', note: 'ستقرر نهاية الشهر', traineeId: null, createdBy: 5 },
+    { id: 7, contactDate: thisMonth(9), name: 'إيلي فرح', phone: '0599000007', residence: 'عمّان', channel: 'اتصال هاتفي', trainingType: 'تدريب شخصي', branchId: 3, goal: 'استشفاء', stage: 'trial-attended', objection: '', note: 'معجب بالمكان', traineeId: null, createdBy: 5 },
+    { id: 8, contactDate: thisMonth(10), name: 'دينا شحادة', phone: '0599000008', residence: 'بيت لحم', channel: 'إنستغرام', trainingType: 'جروب', branchId: 2, goal: 'نزول بالوزن', stage: 'subscribed', objection: '', note: '', traineeId: null, createdBy: 5 },
+    { id: 9, contactDate: PREV + '-20', name: 'فارس نصار', phone: '0599000009', residence: 'بيت ساحور', channel: 'زيارة مباشرة', trainingType: 'تدريب شخصي', branchId: 1, goal: 'بناء عضل', stage: 'subscribed', objection: '', note: '', traineeId: null, createdBy: 5 },
+    { id: 10, contactDate: thisMonth(12), name: 'هديل عابد', phone: '0599000010', residence: 'الدوحة', channel: 'واتساب', trainingType: 'جروب', branchId: 2, goal: 'نزول بالوزن', stage: 'new', objection: '', note: '', traineeId: null, createdBy: 5 },
+  ];
+
+  /* ---------- البرامج التدريبية ---------- */
+  const programs = [
+    { id: 1, trainerId: 2, title: 'برنامج القوة الأساسي — 4 أسابيع', focus: 'قوة وبناء عضل', description: 'أسبوع 1-2: دفع/سحب/أرجل بأوزان متوسطة. أسبوع 3-4: زيادة الأحمال 5% مع تمارين مركبة (سكوات، ديدلفت، بنش).', createdAt: thisMonth(1) },
+  ];
+
+  /* ---------- نظام الولاء: نقاط، مكافآت، استبدال، إحالات ---------- */
+  const pointsLog = [
+    { id: 1, traineeId: 10, points: 50, reason: 'تجديد الاشتراك', date: prevMonth(3) },
+    { id: 2, traineeId: 10, points: 5, reason: 'حضور حصة تدريبية', date: thisMonth(2) },
+    { id: 3, traineeId: 10, points: 5, reason: 'حضور حصة تدريبية', date: thisMonth(6) },
+    { id: 4, traineeId: 10, points: 100, reason: 'إحالة صديق (ماجد الحسن)', date: thisMonth(1) },
+    { id: 5, traineeId: 10, points: 150, reason: 'تحقيق هدف الوزن 🎯', date: thisMonth(15) },
+    { id: 6, traineeId: 11, points: 5, reason: 'حضور حصة تدريبية', date: thisMonth(8) },
+    { id: 7, traineeId: 11, points: 50, reason: 'تجديد الاشتراك', date: prevMonth(5) },
+  ];
+  const redemptions = [
+    { id: 1, traineeId: 10, rewardId: 3, rewardName: 'حصة تدريبية إضافية مجانية', points: 250, date: TODAY, status: 'pending' },
+  ];
+  const referrals = [
+    { id: 1, referrerId: 10, traineeId: 14, traineeName: 'ماجد الحسن', code: 'SP-AHMAD', date: thisMonth(1), status: 'approved' },
+    { id: 2, referrerId: 11, traineeId: 17, traineeName: 'دانا سليمان', code: 'SP-SARA', date: thisMonth(5), status: 'pending' },
+  ];
 
   return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [],
-    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970' }],
-    trainerLogs, tasks, targets, frozen, subEvents };
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', ...LOYALTY_DEFAULTS }],
+    trainerLogs, tasks, targets, frozen, subEvents,
+    expenses, leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals };
 }
 
 module.exports = { demoSeed, productionSeed };
