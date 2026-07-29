@@ -91,7 +91,7 @@ function demoSeed(hash) {
     { id: 3, traineeId: 12, branchId: 1, totalSessions: 8, usedSessions: 7, price: 900, startDate: prevMonth(10), endDate: thisMonth(24), status: 'active' },
     { id: 4, traineeId: 13, branchId: 2, totalSessions: 16, usedSessions: 6, price: 1500, startDate: prevMonth(8), endDate: nextMonth(8), status: 'active' },
     { id: 5, traineeId: 14, branchId: 2, totalSessions: 12, usedSessions: 3, price: 1200, startDate: thisMonth(1), endDate: nextMonth(1), status: 'active' },
-    { id: 6, traineeId: 15, branchId: 2, totalSessions: 8, usedSessions: 2, price: 900, startDate: thisMonth(2), endDate: nextMonth(2), status: 'active' },
+    { id: 6, traineeId: 15, branchId: 2, totalSessions: 8, usedSessions: 2, price: 900, startDate: thisMonth(2), endDate: nextMonth(2), status: 'frozen' }, // يطابق حدث التجميد أدناه
     { id: 7, traineeId: 16, branchId: 3, totalSessions: 12, usedSessions: 11, price: 1200, startDate: prevMonth(15), endDate: thisMonth(23), status: 'active' },
     { id: 8, traineeId: 17, branchId: 3, totalSessions: 12, usedSessions: 2, price: 1200, startDate: thisMonth(5), endDate: nextMonth(5), status: 'active' },
     { id: 9, traineeId: 18, branchId: 1, totalSessions: 16, usedSessions: 8, price: 1500, startDate: prevMonth(20), endDate: nextMonth(20), status: 'active' },
@@ -292,4 +292,4 @@ function demoSeed(hash) {
     expenses, leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals };
 }
 
-module.exports = { demoSeed, productionSeed };
+module.exports = { demoSeed, productionSeed, DEFAULT_REWARDS };
