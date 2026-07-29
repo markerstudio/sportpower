@@ -422,7 +422,7 @@ function openUserModal(onDone, branches, users) {
   const roleSel = select([['trainee', 'متدرب'], ['trainer', 'مدرب'], ['accountant', 'محاسب'], ['nutritionist', 'أخصائية تغذية']]);
   const nameIn = input({ placeholder: 'الاسم الكامل' });
   const userIn = input({ placeholder: 'username', dir: 'ltr', style: 'text-align:end' });
-  const passIn = input({ placeholder: 'كلمة المرور', dir: 'ltr', style: 'text-align:end' });
+  const passIn = input({ placeholder: '8 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
   const phoneIn = input({ placeholder: '05XXXXXXXX', dir: 'ltr', style: 'text-align:end' });
   const branchSel = select(branches.map((b) => [b.id, b.name]));
   const goalSel = select([['loss', 'نزول وزن'], ['muscle', 'زيادة عضل'], ['maintain', 'تثبيت وزن']]);
@@ -503,7 +503,13 @@ async function viewInbody(root) {
       dataTable(['التاريخ', 'الوزن', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة'],
         readings.map((r) => [r.date, r.weight, r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
-          r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—'])),
+          r.image ? el('button', {
+            class: 'btn btn--ghost btn--sm',
+            onclick: async () => {
+              try { window.open(await API.blobUrl('/uploads/' + r.image), '_blank'); }
+              catch (ex) { toast(ex.message, true); }
+            },
+          }, 'عرض') : '—'])),
       el('h3', { class: 'card__title', style: 'margin-top:18px' }, 'مقارنة أول قراءة بآخر قراءة'),
       inbodyComparisonTable(readings));
   }
@@ -587,10 +593,18 @@ function openInbodyModal(onDone, traineeId, trainees) {
    ============================================================ */
 function mealCard(meal, { slotLabel, actions } = {}) {
   if (!meal) return el('span');
+  let imgNode;
+  if (meal.image) {
+    // الصور خلف المصادقة — تُجلب بترويسة التوثيق ثم تُعرض
+    imgNode = el('img', { class: 'real', alt: meal.name });
+    API.blobUrl('/uploads/' + meal.image)
+      .then((u) => { imgNode.src = u; })
+      .catch(() => { imgNode.replaceWith(el('img', { class: 'ph', src: '/assets/icons/energy.svg', alt: '' })); });
+  } else {
+    imgNode = el('img', { class: 'ph', src: '/assets/icons/energy.svg', alt: '' });
+  }
   return el('div', { class: 'card meal-card' },
-    el('div', { class: 'meal-card__img' },
-      meal.image ? el('img', { class: 'real', src: '/uploads/' + meal.image, alt: meal.name })
-        : el('img', { class: 'ph', src: '/assets/icons/energy.svg', alt: '' })),
+    el('div', { class: 'meal-card__img' }, imgNode),
     el('div', { class: 'meal-card__head' },
       el('h4', {}, meal.name),
       el('span', { class: 'tag tag--accent' }, MEAL_TYPES[meal.type] || meal.type)),
@@ -942,7 +956,7 @@ function openUserEditModal(onDone, user, branches) {
 }
 
 function openResetPasswordModal(user) {
-  const passIn = input({ placeholder: '6 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
+  const passIn = input({ placeholder: '8 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
   const close = modal(`إعادة تعيين كلمة مرور «${user.name}»`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',

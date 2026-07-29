@@ -125,10 +125,17 @@ class PgDriver {
   constructor(url) {
     const { Pool } = require('pg');
     const local = /localhost|127\.0\.0\.1/.test(url);
+    /* TLS مع التحقق من شهادة الخادم (الافتراضي الآمن).
+       - مزود بشهادة خاصة (مثل Supabase): مرر شهادة CA عبر DATABASE_CA_CERT (نص PEM).
+       - حل مؤقت فقط إن تعذّر التحقق: DATABASE_TLS_INSECURE=1 (يعيد السلوك القديم). */
+    const insecure = process.env.DATABASE_TLS_INSECURE === '1';
+    const ca = process.env.DATABASE_CA_CERT || null;
     this.pool = new Pool({
       connectionString: url,
       max: IS_SERVERLESS ? 1 : 5,
-      ssl: local ? false : { rejectUnauthorized: false },
+      ssl: local ? false
+        : insecure ? { rejectUnauthorized: false }
+          : { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
     });
   }
 

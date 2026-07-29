@@ -365,6 +365,16 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       field('تاريخ الدفع', dateIn),
       field('طريقة الدفع', methodSel),
       field('ملاحظة', noteIn),
+      /* سجل التدقيق: من عدّل الدفعة ومتى وما الذي تغيّر */
+      existing && existing.history && existing.history.length
+        ? el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted);border-top:1px solid var(--app-line);padding-top:10px' },
+          el('b', { style: 'color:var(--app-ink)' }, 'سجل التعديلات:'),
+          ...existing.history.slice(-5).reverse().map((hst) => {
+            const FIELD_LABELS = { amount: 'المبلغ', date: 'التاريخ', method: 'الطريقة', note: 'الملاحظة' };
+            const parts = Object.entries(hst.changes).map(([k, [from, to]]) => `${FIELD_LABELS[k] || k}: ${from ?? '—'} ← ${to ?? '—'}`);
+            return el('div', { style: 'margin-top:4px' }, `${hst.at.slice(0, 16).replace('T', ' ')} — ${hst.byName}: ${parts.join(' · ')}`);
+          }))
+        : el('span'),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'حفظ الدفعة'))),
   ]);
   if (existing) subSel.disabled = true;

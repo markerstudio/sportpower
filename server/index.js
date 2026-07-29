@@ -49,7 +49,7 @@ app.get('/sw.js', (req, res) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 app.use('/marketing', express.static(path.join(__dirname, '..', 'marketing')));
-app.use('/uploads', express.static(UPLOADS));
+/* ملفات /uploads (صور InBody والوجبات) خلف المصادقة — تُسجَّل بعد تعريف auth أدناه */
 
 /* غلاف موحد لالتقاط الأخطاء في المعالجات غير المتزامنة */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -79,6 +79,9 @@ const auth = h(async (req, res, next) => {
   next();
 });
 
+/* الصور المرفوعة بيانات صحية — لا تُقدَّم إلا لجلسة مسجلة (الواجهة تجلبها بترويسة التوثيق) */
+app.use('/uploads', auth, express.static(UPLOADS));
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {
@@ -94,6 +97,10 @@ const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, 
 const loginAttempts = new Map(); // key → { count, resetAt }
 function rateLimited(key, max, windowMs) {
   const now = Date.now();
+  // تنظيف السجلات المنتهية حتى لا تنمو الذاكرة بلا حد على خادم طويل التشغيل
+  if (loginAttempts.size > 5000) {
+    for (const [k, r] of loginAttempts) if (r.resetAt < now) loginAttempts.delete(k);
+  }
   const rec = loginAttempts.get(key);
   if (!rec || rec.resetAt < now) {
     loginAttempts.set(key, { count: 1, resetAt: now + windowMs });
@@ -297,7 +304,7 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
   if (!['trainee', 'trainer', 'accountant', 'nutritionist', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'نوع مستخدم غير صحيح.' });
   }
-  if (String(password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'كلمة المرور 8 أحرف على الأقل.' });
   const users = await Store.all('users');
   if (users.some((u) => u.username === String(username).toLowerCase())) {
     return res.status(400).json({ error: 'اسم المستخدم موجود مسبقًا.' });
@@ -331,7 +338,7 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
 
   // إعادة تعيين كلمة المرور من الإدارة
   if (req.body.password !== undefined) {
-    if (String(req.body.password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+    if (String(req.body.password).length < 8) return res.status(400).json({ error: 'كلمة المرور 8 أحرف على الأقل.' });
     patch.password = Store.hashPassword(req.body.password);
     patch.mustChangePassword = user.id !== req.user.id;
   }
@@ -602,6 +609,7 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
   const payment = await Store.insert('payments', {
     subscriptionId: sub.id, traineeId: sub.traineeId,
     amount: Number(amount), date, method: method || 'كاش', note: note || '', createdBy: req.user.id,
+    createdAt: new Date().toISOString(),
   });
   res.json(payment);
 }));
@@ -610,9 +618,19 @@ app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (
   const payment = await Store.get('payments', req.params.id);
   if (!payment) return res.status(404).json({ error: 'الدفعة غير موجودة.' });
   const patch = {};
+  const changes = {};
   ['amount', 'date', 'method', 'note'].forEach((k) => {
-    if (req.body[k] !== undefined) patch[k] = k === 'amount' ? Number(req.body[k]) : req.body[k];
+    if (req.body[k] === undefined) return;
+    const next = k === 'amount' ? Number(req.body[k]) : req.body[k];
+    if (next !== payment[k]) changes[k] = [payment[k], next];
+    patch[k] = next;
   });
+  // سجل تدقيق: من عدّل الدفعة، متى، وما الذي تغيّر (آخر 20 تعديلًا)
+  if (Object.keys(changes).length) {
+    patch.history = [...(payment.history || []), {
+      by: req.user.id, byName: req.user.name, at: new Date().toISOString(), changes,
+    }].slice(-20);
+  }
   res.json(await Store.update('payments', payment.id, patch));
 }));
 

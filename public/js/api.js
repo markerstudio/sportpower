@@ -62,6 +62,17 @@ const API = {
     localStorage.removeItem('sp-user');
   },
 
+  /* الملفات المرفوعة خلف المصادقة — تُجلب بترويسة التوثيق وتُعرض كـ blob URL (مع تخزين للجلسة) */
+  _blobCache: {},
+  async blobUrl(path) {
+    if (this._blobCache[path]) return this._blobCache[path];
+    const res = await fetch(path, { headers: { Authorization: 'Bearer ' + this.token } });
+    if (!res.ok) throw new Error('تعذّر تحميل الملف.');
+    const url = URL.createObjectURL(await res.blob());
+    this._blobCache[path] = url;
+    return url;
+  },
+
   /* تنزيل ملف مع ترويسة المصادقة */
   async download(url, filename) {
     const res = await fetch(url, { headers: { Authorization: 'Bearer ' + this.token } });
