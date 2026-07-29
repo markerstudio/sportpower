@@ -45,6 +45,20 @@ async function pointsBalance(traineeId) {
   return log.reduce((s, p) => s + p.points, 0);
 }
 
+/* قواعد بيانات أُنشئت قبل ميزة الولاء: تعبئة المكافآت الافتراضية مرة واحدة */
+let rewardsBackfilled = false;
+async function ensureDefaultRewards() {
+  if (rewardsBackfilled) return;
+  rewardsBackfilled = true;
+  const rows = await Store.all('rewards');
+  if (rows.length) return;
+  const seedData = require('./seed-data');
+  for (const r of seedData.DEFAULT_REWARDS) {
+    const { id, ...reward } = r;
+    await Store.insert('rewards', reward);
+  }
+}
+
 /* كود إحالة فريد للمتدرب — يُنشأ عند أول طلب */
 async function ensureReferralCode(user) {
   if (user.referralCode) return user.referralCode;
@@ -61,7 +75,7 @@ async function ensureReferralCode(user) {
    تقرير النمو الشهري — وفق مؤشرات ملف الشركة
    ============================================================ */
 async function buildGrowthReport(month, branch, subStatus) {
-  const data = await Store.load('subscriptions', 'subEvents', 'payments', 'users', 'expenses', 'targets', 'branches', 'sessions', 'leads');
+  const data = await Store.load('subscriptions', 'subEvents', 'payments', 'users', 'expenses', 'targets', 'branches', 'sessions');
   const inBranch = (x) => !branch || x.branchId === branch;
 
   const ev = data.subEvents.filter((e) => inBranch(e) && monthOf(e.date) === month);
@@ -336,6 +350,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
      نظام الولاء — نقاطي ومكافآتي (المتدرب)
      ============================================================ */
   app.get('/api/loyalty/me', auth, requireRole('trainee'), h(async (req, res) => {
+    await ensureDefaultRewards();
     const referralCode = await ensureReferralCode(req.user);
     const { pointsLog, rewards, redemptions, referrals } = await Store.load('pointsLog', 'rewards', 'redemptions', 'referrals');
     const myLog = pointsLog.filter((p) => p.traineeId === req.user.id).sort((a, b) => b.id - a.id);
@@ -353,6 +368,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
 
   /* لوحة الولاء (الإدارة/المحاسب): الأرصدة والطلبات والإحالات والتقارير */
   app.get('/api/loyalty/summary', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    await ensureDefaultRewards();
     const { pointsLog, rewards, redemptions, referrals, users } = await Store.load('pointsLog', 'rewards', 'redemptions', 'referrals', 'users');
     const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
     const balances = {};
@@ -388,6 +404,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
 
   /* ---------- المكافآت ---------- */
   app.get('/api/rewards', auth, h(async (req, res) => {
+    await ensureDefaultRewards();
     let list = await Store.all('rewards');
     if (req.user.role === 'trainee') list = list.filter((r) => r.active !== false);
     res.json(list);

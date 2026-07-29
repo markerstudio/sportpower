@@ -426,16 +426,18 @@ async function viewTraineePage(root, traineeId) {
           onclick: async () => openInbodyModal(refresh, traineeId, await API.get('/api/users?role=trainee')),
         }, '+ قراءة InBody'));
     }
+    // التجديد من الإدارة أو المحاسب (إدخال الاشتراكات صلاحية المحاسب)
+    if (['admin', 'accountant'].includes(API.user.role)) {
+      actions.append(el('button', {
+        class: 'btn btn--outline btn--sm',
+        onclick: async () => openSubModal(refresh, await API.get('/api/users?role=trainee'), traineeId),
+      }, 'تجديد الاشتراك'));
+    }
     if (API.user.role === 'admin') {
-      actions.append(
-        el('button', {
-          class: 'btn btn--outline btn--sm',
-          onclick: async () => openSubModal(refresh, await API.get('/api/users?role=trainee'), traineeId),
-        }, 'تجديد الاشتراك'),
-        el('button', {
-          class: 'btn btn--outline btn--sm',
-          onclick: async () => openEditTraineeModal(refresh, t, [], await API.get('/api/branches')),
-        }, 'تعديل البيانات'));
+      actions.append(el('button', {
+        class: 'btn btn--outline btn--sm',
+        onclick: async () => openEditTraineeModal(refresh, t, [], await API.get('/api/branches')),
+      }, 'تعديل البيانات'));
     }
     if (['admin', 'accountant'].includes(API.user.role) && data.payments) {
       const paidOf = (sid) => data.payments.filter((p) => p.subscriptionId === sid).reduce((s, p) => s + p.amount, 0);

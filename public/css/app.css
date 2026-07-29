@@ -254,11 +254,14 @@ a { color: var(--action); }
 [data-theme="dark"] .kpi--warn .kpi__ic { background: #4a3a14; color: #f2c063; }
 [data-theme="dark"] .kpi--danger .kpi__ic { background: #4c1f1a; color: #f19b90; }
 [data-theme="dark"] .kpi--blue .kpi__ic { background: #16294f; color: var(--blue-300); }
-.kpi__value { font-family: var(--font-display); font-weight: var(--weight-black); font-size: 1.45rem; color: var(--app-ink); line-height: 1.2; }
+.kpi > div { min-width: 0; }
+.kpi__value { font-family: var(--font-display); font-weight: var(--weight-black); font-size: 1.45rem; color: var(--app-ink); line-height: 1.2; overflow-wrap: anywhere; }
 .kpi__label { font-size: var(--text-2xs); color: var(--app-muted); font-weight: var(--weight-medium); }
 
 .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 22px; align-items: start; }
 .grid-2eq { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+/* عناصر الشبكات والأعمدة لا تتمدد بمحتواها العريض (الجداول تتصفح داخل table-wrap بدلًا من كسر الصفحة) */
+.content > *, .grid-2 > *, .grid-2eq > *, .kpis > * { min-width: 0; }
 
 /* ---------- جداول ---------- */
 .table-wrap { overflow-x: auto; }
@@ -418,15 +421,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 
 /* ---------- استجابة الموبايل ---------- */
 .menu-btn { display: none; }
+.sidebar-backdrop { display: none; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar {
-    position: fixed; inset-block: 0; inset-inline-start: 0; width: 256px; z-index: 40;
+    position: fixed; inset-block: 0; inset-inline-start: 0; width: min(256px, 82vw); z-index: 40;
     transform: translateX(100%); transition: transform var(--dur-base) var(--ease-out);
     box-shadow: none;
   }
   .sidebar.open { transform: none; box-shadow: var(--app-shadow-lg); }
   .menu-btn { display: inline-flex; }
+  /* خلفية معتمة خلف القائمة الجانبية — تُغلق بالنقر خارجها */
+  .sidebar-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 39;
+    background: rgba(12, 30, 30, .45); backdrop-filter: blur(2px);
+    opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .sidebar-backdrop.show { opacity: 1; pointer-events: auto; }
   .grid-2, .grid-2eq, .form-grid { grid-template-columns: 1fr; }
   .form-grid .span-2 { grid-column: auto; }
   .content { padding: 16px; }
@@ -434,6 +445,41 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
   .login-screen { grid-template-columns: 1fr; }
   .login-brand { padding: 44px 28px; min-height: 280px; }
   .login-brand__mark { height: 260px; }
+  /* منع تكبير iOS التلقائي عند التركيز على الحقول (Safari يكبّر تحت 16px) */
+  .field__input, .field__select, .field__textarea { font-size: 16px; }
+}
+
+/* شاشات الجوال الصغيرة: تكثيف المساحات وتكبير أهداف اللمس */
+@media (max-width: 640px) {
+  .content { padding: 12px; gap: 14px; }
+  .card { padding: 16px 14px; }
+  .kpis { gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .kpi { padding: 14px; gap: 10px; }
+  .kpi__ic { width: 40px; height: 40px; }
+  .kpi__value { font-size: 1.25rem; }
+  .kpi-hero { min-height: 106px; padding: 18px; }
+  .kpi-hero__icon { width: 38px; height: 38px; margin-bottom: 10px; }
+  .kpi-hero__value { font-size: 1.6rem; }
+  .tbl th { padding: 9px 10px; }
+  .tbl td { padding: 10px; font-size: var(--text-xs); }
+  .topbar { gap: 8px; }
+  .topbar__title { font-size: var(--text-base); }
+  .topbar__user > div { display: none; } /* الاسم والدور — تبقى الصورة الرمزية */
+  .topbar__avatar { width: 36px; height: 36px; font-size: 14px; }
+  .iconbtn { width: 38px; height: 38px; }
+  .filters { gap: 10px; }
+  .filters .field { flex: 1 1 140px; min-width: 130px; }
+  .filters .btn { flex: 1 1 auto; }
+  .btn { padding: 11px 18px; min-height: 42px; } /* هدف لمس مريح */
+  .btn--sm { padding: 8px 12px; min-height: 36px; }
+  .modal__body { padding: 16px; gap: 12px; }
+  .modal__head { padding: 14px 16px; }
+  .toast { max-width: calc(100vw - 44px); }
+  .cal-toolbar__title { min-width: 0; font-size: var(--text-sm); }
+  .pt-bar { justify-content: center; }
+  .progress-ring { width: 128px; height: 128px; }
+  .progress-ring svg { width: 128px; height: 128px; }
+  .macros { gap: 5px; }
 }
 
 /* ---------- ترقيم الصفحات ---------- */

@@ -71,19 +71,26 @@ async function renderShell(route, renderView) {
 
   const nav = NAV[API.user.role] || [];
   const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
+  // على الموبايل: القائمة تنزلق فوق المحتوى مع خلفية معتمة، وتُغلق بالنقر خارجها أو باختيار صفحة
+  const closeSidebar = () => { sidebar.classList.remove('open'); backdrop.classList.remove('show'); };
+  const toggleSidebar = () => {
+    sidebar.classList.toggle('open');
+    backdrop.classList.toggle('show', sidebar.classList.contains('open'));
+  };
   const sidebar = el('aside', { class: 'sidebar', id: 'sidebar' },
     el('div', { class: 'sidebar__logo' }, el('img', { src: logoSrc, alt: 'سبورت باور' })),
     el('div', { class: 'sidebar__caption' }, 'القائمة الرئيسية'),
     el('nav', { class: 'sidebar__nav' },
-      ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '' }, icon(ic), label))),
+      ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '', onclick: closeSidebar }, icon(ic), label))),
     el('div', { class: 'sidebar__foot' },
       el('b', {}, 'سبورت باور © 2026'),
       'جسم أقوى. حياة أصحّ. نظام يبقى معك.'));
+  const backdrop = el('div', { class: 'sidebar-backdrop', onclick: closeSidebar });
 
   const bellBtn = el('button', { class: 'iconbtn', title: 'الإشعارات', onclick: openNotifications }, icon('bell'));
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
-      el('button', { class: 'iconbtn menu-btn', onclick: () => sidebar.classList.toggle('open') }, icon('menu')),
+      el('button', { class: 'iconbtn menu-btn', onclick: toggleSidebar }, icon('menu')),
       el('div', { class: 'topbar__title' }, TITLES[route] || 'نظام سبورت باور'),
       el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,
@@ -96,7 +103,7 @@ async function renderShell(route, renderView) {
       el('button', { class: 'iconbtn', title: 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
     el('div', { id: 'view' }));
 
-  app.append(el('div', { class: 'shell' }, sidebar, main));
+  app.append(el('div', { class: 'shell' }, sidebar, backdrop, main));
 
   // تنبيه أمان: كلمة المرور الافتراضية لم تُغيَّر بعد
   if (API.user.mustChangePassword) {
