@@ -173,6 +173,13 @@ class JsonDriver {
     return before - this.db[col].length;
   }
 
+  async updateWhere(col, where, patch) {
+    let n = 0;
+    this.db[col].forEach((r) => { if (matches(r, where)) { Object.assign(r, patch); n++; } });
+    if (n) this.save();
+    return n;
+  }
+
   async count(col, where) { return this.db[col].filter((r) => matches(r, where)).length; }
 
   async sum(col, field, where) {
@@ -189,10 +196,22 @@ class JsonDriver {
     return out;
   }
 
+  async groupSum(col, sumField, byField, where) {
+    const out = {};
+    this.db[col].filter((r) => matches(r, where))
+      .forEach((r) => { out[r[byField]] = (out[r[byField]] || 0) + (Number(r[sumField]) || 0); });
+    return out;
+  }
+
+  async distinct(col, field, where) {
+    return [...new Set(this.db[col].filter((r) => matches(r, where)).map((r) => r[field]))];
+  }
+
   /* عملية واحدة في كل مرة — كافٍ لعملية محلية أحادية */
   async transaction(fn) {
     const bound = {};
-    for (const m of ['all', 'find', 'get', 'insert', 'update', 'remove', 'deleteWhere', 'count', 'sum', 'countDistinct', 'groupCount']) {
+    for (const m of ['all', 'find', 'get', 'insert', 'update', 'updateWhere', 'remove', 'deleteWhere',
+      'count', 'sum', 'countDistinct', 'groupCount', 'groupSum', 'distinct']) {
       bound[m] = this[m].bind(this);
     }
     bound.getForUpdate = this.get.bind(this);
@@ -286,6 +305,7 @@ module.exports = {
   get: wrap('get'),
   insert: wrap('insert'),
   update: wrap('update'),
+  updateWhere: wrap('updateWhere'),
   remove: wrap('remove'),
   removeWhere: wrap('removeWhere'),
   deleteWhere: wrap('deleteWhere'),
@@ -293,6 +313,8 @@ module.exports = {
   sum: wrap('sum'),
   countDistinct: wrap('countDistinct'),
   groupCount: wrap('groupCount'),
+  groupSum: wrap('groupSum'),
+  distinct: wrap('distinct'),
   transaction: wrap('transaction'),
   reseed: async () => { await initOnce(); return driver.reseed(); },
   end: async () => driver.end(),

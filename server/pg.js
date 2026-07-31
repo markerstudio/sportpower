@@ -63,8 +63,10 @@ function buildWhere(collection, where, params) {
 
   for (const [field, cond] of Object.entries(where || {})) {
     const spec = map.byField[field];
-    // حقل غير معمّد عمودًا: يُقارن داخل meta
-    const lhs = spec ? `"${spec.column}"` : `meta->>'${field.replace(/'/g, "''")}'`;
+    // المفتاح الأساسي، ثم الأعمدة المعرّفة، وأخيرًا الحقول داخل meta
+    const lhs = field === 'id' ? '"id"'
+      : spec ? `"${spec.column}"`
+        : `meta->>'${field.replace(/'/g, "''")}'`;
 
     if (cond === null) { parts.push(`${lhs} IS NULL`); continue; }
     if (typeof cond !== 'object' || Array.isArray(cond)) {
@@ -103,9 +105,17 @@ function buildOrder(collection, order) {
   const map = FIELD_MAP[collection];
   return 'ORDER BY ' + order.map(([field, dir]) => {
     const spec = map.byField[field];
-    const lhs = spec ? `"${spec.column}"` : `meta->>'${field.replace(/'/g, "''")}'`;
+    const lhs = field === 'id' ? '"id"'
+      : spec ? `"${spec.column}"`
+        : `meta->>'${field.replace(/'/g, "''")}'`;
     return `${lhs} ${String(dir).toLowerCase() === 'desc' ? 'DESC' : 'ASC'}`;
   }).join(', ');
+}
+
+/* تعبير العمود لحقل ما (للتجميع) */
+function fieldExpr(collection, field) {
+  const spec = FIELD_MAP[collection].byField[field];
+  return field === 'id' ? '"id"' : spec ? `"${spec.column}"` : `meta->>'${field.replace(/'/g, "''")}'`;
 }
 
 /* ============================================================
@@ -248,7 +258,46 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    id: 2,
+    name: 'payments-branch-denormalisation',
+    async up(c, log) {
+      // العمود يُنشأ ضمن مخطط الجداول؛ هنا نملؤه للبيانات القائمة
+      const { rowCount } = await c.query(`
+        UPDATE payments p SET branch_id = s.branch_id
+        FROM subscriptions s
+        WHERE p.subscription_id = s.id AND p.branch_id IS NULL AND s.branch_id IS NOT NULL`);
+      if (rowCount) log(`  payments.branch_id: عُبّئ لـ ${rowCount} دفعة من اشتراكاتها`);
+    },
+  },
 ];
+
+/* مزامنة المخطط: تضيف أي عمود أو فهرس جديد أُضيف إلى schema.js لاحقًا.
+   بهذا لا يحتاج إدخال حقل جديد إلى ترحيل يدوي — تكفي إضافته للمخطط.
+   الأعمدة المضافة لجدول فيه بيانات تُنشأ nullable (لا يمكن فرض NOT NULL
+   على صفوف قائمة)، ويبقى القيد كاملًا على القواعد الجديدة. */
+async function syncSchema(c, log) {
+  for (const col of CREATE_ORDER) {
+    const t = tableName(col);
+    if (!(await tableExists(c, t))) continue;
+    const { rows } = await c.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2', ['public', t]);
+    const present = new Set(rows.map((r) => r.column_name));
+    for (const { column, def } of columnsOf(col)) {
+      if (present.has(column)) continue;
+      let line = `"${column}" ${SQL_TYPE[def.type]}`;
+      if (def.default !== undefined) line += ` DEFAULT ${def.default}`;
+      await c.query(`ALTER TABLE ${t} ADD COLUMN ${line}`);
+      log(`  + عمود ${t}.${column}`);
+      if (def.ref) {
+        const fk = foreignKeySqls(col).find((f) => f.column === column);
+        const exists = await c.query('SELECT 1 FROM pg_constraint WHERE conname = $1', [fk.name]);
+        if (!exists.rows.length) await c.query(fk.sql);
+      }
+    }
+    for (const sql of indexSqls(col)) await c.query(sql);
+  }
+}
 
 async function runMigrations(pool, log) {
   const c = await pool.connect();
@@ -256,6 +305,14 @@ async function runMigrations(pool, log) {
     await c.query('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
     const { rows } = await c.query('SELECT id FROM schema_migrations');
     const done = new Set(rows.map((r) => r.id));
+
+    // قاعدة قائمة: طابِق المخطط أولًا حتى تجد الترحيلاتُ الأعمدةَ التي تحتاجها
+    if (done.size) {
+      await c.query('BEGIN');
+      try { await syncSchema(c, log); await c.query('COMMIT'); }
+      catch (e) { await c.query('ROLLBACK'); throw e; }
+    }
+
     for (const m of MIGRATIONS) {
       if (done.has(m.id)) continue;
       log(`ترحيل #${m.id} — ${m.name}…`);
@@ -269,6 +326,15 @@ async function runMigrations(pool, log) {
         await c.query('ROLLBACK');
         throw new Error(`فشل الترحيل #${m.id} (${m.name}): ${e.message}`);
       }
+    }
+    // بعد الترحيلات: طابِق أي عمود/فهرس أُضيف للمخطط بلا ترحيل خاص
+    await c.query('BEGIN');
+    try {
+      await syncSchema(c, log);
+      await c.query('COMMIT');
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
     }
   } finally {
     c.release();
@@ -365,6 +431,23 @@ class PgDriver {
         const res = await q(`DELETE FROM ${tableName(col)} ${w}`, params);
         return res.rowCount;
       },
+      updateWhere: async (col, where, patch) => {
+        const { cols, meta } = toRow(col, patch);
+        const params = [];
+        const sets = [];
+        for (const [name, value] of Object.entries(cols)) {
+          params.push(value);
+          sets.push(`"${name}" = $${params.length}`);
+        }
+        if (Object.keys(meta).length) {
+          params.push(JSON.stringify(meta));
+          sets.push(`meta = meta || $${params.length}::jsonb`);
+        }
+        if (!sets.length) return 0;
+        const w = buildWhere(col, where, params);
+        const res = await q(`UPDATE ${tableName(col)} SET ${sets.join(', ')} ${w}`, params);
+        return res.rowCount;
+      },
       count: async (col, where) => {
         const params = [];
         const w = buildWhere(col, where, params);
@@ -374,26 +457,36 @@ class PgDriver {
       sum: async (col, field, where) => {
         const params = [];
         const w = buildWhere(col, where, params);
-        const spec = FIELD_MAP[col].byField[field];
-        const lhs = spec ? `"${spec.column}"` : `(meta->>'${field}')::numeric`;
-        const res = await q(`SELECT COALESCE(sum(${lhs}),0)::float8 s FROM ${tableName(col)} ${w}`, params);
+        const res = await q(`SELECT COALESCE(sum(${fieldExpr(col, field)}::numeric),0)::float8 s FROM ${tableName(col)} ${w}`, params);
         return res.rows[0].s;
       },
       countDistinct: async (col, field, where) => {
         const params = [];
         const w = buildWhere(col, where, params);
-        const spec = FIELD_MAP[col].byField[field];
-        const lhs = spec ? `"${spec.column}"` : `meta->>'${field}'`;
-        const res = await q(`SELECT count(DISTINCT ${lhs})::int n FROM ${tableName(col)} ${w}`, params);
+        const res = await q(`SELECT count(DISTINCT ${fieldExpr(col, field)})::int n FROM ${tableName(col)} ${w}`, params);
         return res.rows[0].n;
       },
       groupCount: async (col, field, where) => {
         const params = [];
         const w = buildWhere(col, where, params);
-        const spec = FIELD_MAP[col].byField[field];
-        const lhs = spec ? `"${spec.column}"` : `meta->>'${field}'`;
-        const res = await q(`SELECT ${lhs} AS k, count(*)::int n FROM ${tableName(col)} ${w} GROUP BY 1`, params);
+        const res = await q(`SELECT ${fieldExpr(col, field)} AS k, count(*)::int n FROM ${tableName(col)} ${w} GROUP BY 1`, params);
         return Object.fromEntries(res.rows.map((r) => [r.k, r.n]));
+      },
+      /* مجموع حقل مُجمّعًا بحقل آخر — يستبدل حلقات O(n×m) في التقارير */
+      groupSum: async (col, sumField, byField, where) => {
+        const params = [];
+        const w = buildWhere(col, where, params);
+        const res = await q(
+          `SELECT ${fieldExpr(col, byField)} AS k, COALESCE(sum(${fieldExpr(col, sumField)}::numeric),0)::float8 s
+           FROM ${tableName(col)} ${w} GROUP BY 1`, params);
+        return Object.fromEntries(res.rows.map((r) => [r.k, r.s]));
+      },
+      /* القيم المميزة لحقل — لعدّ المتدربين الفريدين دون سحب الصفوف */
+      distinct: async (col, field, where) => {
+        const params = [];
+        const w = buildWhere(col, where, params);
+        const res = await q(`SELECT DISTINCT ${fieldExpr(col, field)} AS v FROM ${tableName(col)} ${w}`, params);
+        return res.rows.map((r) => r.v);
       },
     };
   }
@@ -405,10 +498,13 @@ class PgDriver {
   async update(col, id, patch) { return this._api(this.pool).update(col, id, patch); }
   async remove(col, id) { return this._api(this.pool).remove(col, id); }
   async deleteWhere(col, where) { return this._api(this.pool).deleteWhere(col, where); }
+  async updateWhere(col, where, patch) { return this._api(this.pool).updateWhere(col, where, patch); }
   async count(col, where) { return this._api(this.pool).count(col, where); }
   async sum(col, field, where) { return this._api(this.pool).sum(col, field, where); }
   async countDistinct(col, field, where) { return this._api(this.pool).countDistinct(col, field, where); }
   async groupCount(col, field, where) { return this._api(this.pool).groupCount(col, field, where); }
+  async groupSum(col, sumField, byField, where) { return this._api(this.pool).groupSum(col, sumField, byField, where); }
+  async distinct(col, field, where) { return this._api(this.pool).distinct(col, field, where); }
 
   /* بعد إدراج صفوف بمعرّفات صريحة (زرع/ترحيل) تُضبط العدّادات */
   async resetSequences() {

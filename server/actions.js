@@ -66,12 +66,47 @@ function isMissed(a, nowIso) {
    بناء قائمة الإجراءات من بيانات النظام
    ============================================================ */
 async function buildActions({ branch, subStatus }) {
-  const data = await Store.load('users', 'branches', 'subscriptions', 'sessions', 'appointments',
-    'inbody', 'payments', 'subEvents', 'targets', 'actionLog', 'sessionRatings', 'settings', 'tasks');
-
-  const TH = readThresholds(data.settings[0]);
   const today = todayStr();
   const month = thisMonthStr();
+
+  /* ------------------------------------------------------------
+     كل قاعدة اكتشاف تنظر إلى نافذة زمنية محدودة، فنطلب من القاعدة
+     تلك النافذة فقط بدل سحب الجداول كاملة:
+       المواعيد/الحصص  30 يومًا (الغياب، القياسات، الحضور)
+       القياسات        21 يومًا لالتقاط المرشحين، ثم تاريخهم كاملًا
+       الدفعات         400 يومًا (ترحيل أهداف التحصيل يعود 12 شهرًا)
+       التقييمات       30 يومًا · سجل الإجراءات 180 يومًا
+     الجداول المرجعية الصغيرة تُحمَّل كاملة.
+     ------------------------------------------------------------ */
+  const monthStart = month + '-01';
+  const eventFrom = daysAgo(30) < monthStart ? daysAgo(30) : monthStart;
+
+  const [users, branches, subscriptions, targets, settings,
+    sessions, appointments, inbodyRecent, payments, subEvents, sessionRatings, actionLog] = await Promise.all([
+    Store.all('users'),
+    Store.all('branches'),
+    Store.all('subscriptions'),
+    Store.all('targets'),
+    Store.all('settings'),
+    Store.find('sessions', { date: { gte: daysAgo(30) } }),
+    Store.find('appointments', { date: { gte: eventFrom } }),
+    Store.find('inbody', { date: { gte: daysAgo(21) } }),
+    Store.find('payments', { date: { gte: daysAgo(400) } }),
+    Store.find('subEvents', { date: { gte: monthStart, lte: month + '-31' } }),
+    Store.find('sessionRatings', { date: { gte: daysAgo(30) } }),
+    Store.find('actionLog', { date: { gte: daysAgo(180) } }),
+  ]);
+
+  // تاريخ القياسات الكامل — للمرشحين وحدهم (من لديه قراءة حديثة)
+  const candidateIds = [...new Set(inbodyRecent.map((r) => r.traineeId))];
+  const inbody = candidateIds.length
+    ? await Store.find('inbody', { traineeId: { in: candidateIds } })
+    : [];
+
+  const data = { users, branches, subscriptions, targets, settings, sessions, appointments,
+    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog };
+
+  const TH = readThresholds(data.settings[0]);
   const nowIso = new Date().toISOString().slice(0, 16);
   const inBranch = (x) => !branch || x.branchId === branch;
 
@@ -257,13 +292,15 @@ async function buildActions({ branch, subStatus }) {
      🟡 مهم — مدرب لم يسجل قياسات لمتدربيه خلال أسبوعين
      ============================================================ */
   const measureCutoff = daysAgo(TH.acMeasureDays);
-  data.users.filter((u) => u.role === 'trainer' && u.active !== false && inBranch(u)).forEach((trainer) => {
+  for (const trainer of data.users.filter((u) => u.role === 'trainer' && u.active !== false && inBranch(u))) {
     const recentSessions = data.sessions.filter((s) => s.trainerId === trainer.id && s.date >= measureCutoff);
-    if (recentSessions.length < 3) return; // مدرب بلا نشاط يُقاس عليه
+    if (recentSessions.length < 3) continue; // مدرب بلا نشاط يُقاس عليه
     const traineeIds = [...new Set(recentSessions.map((s) => s.traineeId))];
-    const readings = data.inbody.filter((r) => r.date >= measureCutoff && traineeIds.includes(r.traineeId));
-    if (readings.length) return;
-    const lastReading = data.inbody.filter((r) => traineeIds.includes(r.traineeId)).map((r) => r.date).sort().pop();
+    const readings = data.inbodyRecent.filter((r) => r.date >= measureCutoff && traineeIds.includes(r.traineeId));
+    if (readings.length) continue;
+    // آخر قراءة لمتدربي هذا المدرب — استعلام واحد موجّه (لا يُنفَّذ إلا عند تحقق القاعدة)
+    const lastRow = (await Store.find('inbody', { traineeId: { in: traineeIds } }, { order: [['date', 'desc']], limit: 1 }))[0];
+    const lastReading = lastRow ? lastRow.date : undefined;
 
     add({
       key: `measure:${trainer.id}:${month}`,
@@ -287,19 +324,19 @@ async function buildActions({ branch, subStatus }) {
         link('فتح صفحة القياسات', '#/inbody'),
       ].filter(Boolean),
     });
-  });
+  }
 
   /* ============================================================
      🟡 مهم — متدرب بلا تقدّم خلال 4 أسابيع → مراجعة الخطة التدريبية
      ============================================================ */
   const progressDays = TH.acProgressWeeks * 7;
-  trainees.forEach((trainee) => {
+  for (const trainee of trainees) {
     const readings = data.inbody.filter((r) => r.traineeId === trainee.id).sort((a, b) => a.date.localeCompare(b.date));
-    if (readings.length < 2) return;
+    if (readings.length < 2) continue;
     const last = readings[readings.length - 1];
     const base = readings.filter((r) => daysBetween(r.date, last.date) >= progressDays).pop();
-    if (!base) return;
-    if (daysBetween(last.date, today) > 21) return; // قراءة قديمة جدًا — تُعالجها قاعدة القياسات
+    if (!base) continue;
+    if (daysBetween(last.date, today) > 21) continue; // قراءة قديمة جدًا — تُعالجها قاعدة القياسات
 
     const dWeight = last.weight != null && base.weight != null ? +(last.weight - base.weight).toFixed(1) : null;
     const dFat = last.bodyFatPct != null && base.bodyFatPct != null ? +(last.bodyFatPct - base.bodyFatPct).toFixed(1) : null;
@@ -309,14 +346,14 @@ async function buildActions({ branch, subStatus }) {
     if (trainee.goal === 'muscle') improved = (dMuscle != null && dMuscle > 0.3) || (dWeight != null && dWeight > 0.5 && (dFat == null || dFat <= 0));
     else if (trainee.goal === 'maintain') improved = (dFat != null && dFat < -0.5) || (dMuscle != null && dMuscle > 0.3);
     else improved = (dWeight != null && dWeight < -0.5) || (dFat != null && dFat < -0.5);
-    if (improved) return;
+    if (improved) continue;
 
     const changes = [
       dWeight != null ? `الوزن ${dWeight > 0 ? '+' : ''}${dWeight} كغ` : null,
       dFat != null ? `الدهون ${dFat > 0 ? '+' : ''}${dFat}%` : null,
       dMuscle != null ? `العضل ${dMuscle > 0 ? '+' : ''}${dMuscle} كغ` : null,
     ].filter(Boolean).join(' · ');
-    const sessionsCount = data.sessions.filter((s) => s.traineeId === trainee.id && s.date >= base.date).length;
+    const sessionsCount = await Store.count('sessions', { traineeId: trainee.id, date: { gte: base.date } });
 
     add({
       key: `progress:${trainee.id}:${last.date}`,
@@ -337,7 +374,7 @@ async function buildActions({ branch, subStatus }) {
         waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 راجعنا قياساتك في سبورت باور ونحبّ نعدّل خطتك التدريبية لنتائج أسرع — متى يناسبك نلتقي؟`),
       ].filter(Boolean),
     });
-  });
+  }
 
   /* ============================================================
      🟡 مهم — انخفاض نسبة التجديد في فرع عن الهدف

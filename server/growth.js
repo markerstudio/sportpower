@@ -75,7 +75,31 @@ async function ensureReferralCode(user) {
    تقرير النمو الشهري — وفق مؤشرات ملف الشركة
    ============================================================ */
 async function buildGrowthReport(month, branch, subStatus) {
-  const data = await Store.load('subscriptions', 'subEvents', 'payments', 'users', 'expenses', 'targets', 'branches', 'sessions');
+  const year = month.slice(0, 4);
+  // السنة السابقة مشمولة لأن ترحيل الهدف قد يعود حتى 12 شهرًا (ويعبر رأس السنة)
+  const prevYear = String(Number(year) - 1);
+  const scope = branch ? { branchId: branch } : {};
+  /* الأهداف السنوية تُحسب شهرًا بشهر، فنحتاج نافذة السنة — لا التاريخ كله.
+     أما LTV (إجمالي ما دفعه العميل طوال بقائه) فيُحسب بتجميع في القاعدة. */
+  const [subscriptions, subEvents, users, expenses, targets, branches, payments, lifetimePaid, payerCount] = await Promise.all([
+    Store.all('subscriptions'),
+    Store.find('subEvents', { date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
+    Store.all('users'),
+    Store.all('expenses'),
+    Store.all('targets'),
+    Store.all('branches'),
+    Store.find('payments', { ...scope, subscriptionId: { isNull: false }, date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
+    Store.sum('payments', 'amount', { ...scope, subscriptionId: { isNull: false } }),
+    Store.countDistinct('payments', 'traineeId', { ...scope, subscriptionId: { isNull: false } }),
+  ]);
+  // مؤشرات الحصص تُحمَّل فقط إن وُجد هدف يعتمدها
+  const needSessions = targets.some((t) => ['sessions', 'uniqueTrainees'].includes(t.metric)
+    && (t.period === month || t.period === year || /^\d{4}-H[12]$/.test(t.period)));
+  const sessions = needSessions
+    ? await Store.find('sessions', { date: { gte: prevYear + '-01-01', lte: year + '-12-31' } })
+    : [];
+
+  const data = { subscriptions, subEvents, payments, users, expenses, targets, branches, sessions };
   const inBranch = (x) => !branch || x.branchId === branch;
 
   const ev = data.subEvents.filter((e) => inBranch(e) && monthOf(e.date) === month);
@@ -113,11 +137,9 @@ async function buildGrowthReport(month, branch, subStatus) {
   });
   const avgDurationMonths = durations.length ? round1(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
 
-  // متوسط قيمة العميل LTV — متوسط إجمالي ما دفعه العميل طوال بقائه
-  const subIds = new Set(subs.map((s) => s.id));
-  const pays = data.payments.filter((p) => subIds.has(p.subscriptionId));
-  const payers = new Set(pays.map((p) => p.traineeId));
-  const ltv = payers.size ? Math.round(pays.reduce((s, p) => s + p.amount, 0) / payers.size) : null;
+  // متوسط قيمة العميل LTV — مجموع كل ما دُفع ÷ عدد الدافعين (مُجمَّعان في القاعدة)
+  const pays = data.payments;
+  const ltv = payerCount ? Math.round(lifetimePaid / payerCount) : null;
 
   // أسباب الإلغاء
   const churnReasons = {};
@@ -129,11 +151,10 @@ async function buildGrowthReport(month, branch, subStatus) {
   // المالية: التحصيل − المصاريف = صافي الربح
   const monthPays = pays.filter((p) => monthOf(p.date) === month);
   const revenue = monthPays.reduce((s, p) => s + p.amount, 0);
-  const expenses = data.expenses.filter((e) => e.month === month && (!branch || e.branchId === branch));
-  const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
+  const monthExpenses = data.expenses.filter((e) => e.month === month && (!branch || e.branchId === branch));
+  const expensesTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
 
   // الأهداف: الشهرية (مع الترحيل) + السنوية مقسمة على الأشهر
-  const year = month.slice(0, 4);
   const scopedTargets = data.targets.filter((t) => (t.scope === 'company' && !branch)
     || (t.scope === 'branch' && (branch ? t.refId === branch : true)));
   const nameOf = (t) => (t.scope === 'company' ? 'الشركة كاملة' : (data.branches.find((b) => b.id === t.refId) || {}).name || '—');
@@ -170,7 +191,7 @@ async function buildGrowthReport(month, branch, subStatus) {
       avgDurationMonths, ltv,
     },
     churnReasons,
-    finance: { revenue, expensesTotal, netProfit: revenue - expensesTotal, expenses },
+    finance: { revenue, expensesTotal, netProfit: revenue - expensesTotal, expenses: monthExpenses },
     goals: { monthly: monthlyGoals, annual: annualGoals },
   };
 }

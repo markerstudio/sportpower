@@ -73,7 +73,11 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
   const scopeTrainer = (trainerId) => t.scope !== 'trainer' || trainerId === t.refId;
   switch (t.metric) {
     case 'revenue': {
-      const subBranch = (p) => (subscriptions.find((s) => s.id === p.subscriptionId) || {}).branchId;
+      // الفرع محفوظ على الدفعة نفسها؛ الرجوع للاشتراك للبيانات القديمة فقط.
+      // (المطابقة بالبحث لكل دفعة كانت تكلّف عدد الدفعات × عدد الاشتراكات.)
+      const subBranch = (p) => (p.branchId !== undefined && p.branchId !== null
+        ? p.branchId
+        : (subscriptions.find((s) => s.id === p.subscriptionId) || {}).branchId);
       return payments.filter((p) => inPeriod(t.period, p.date) && scopeBranch(subBranch(p)))
         .reduce((sum, p) => sum + p.amount, 0);
     }
@@ -275,13 +279,26 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   app.get('/api/daily', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const date = req.query.date || todayStr();
     const nowIso = new Date().toISOString().slice(0, 16).replace('T', 'T');
-    const data = await Store.load('payments', 'subscriptions', 'subEvents', 'sessions', 'appointments', 'users', 'branches', 'trainerLogs', 'tasks', 'notifications');
+    /* لوحة يوم واحد: كل الجداول الكبيرة تُصفّى بالتاريخ في القاعدة،
+       عدا المواعيد فنحتاج نافذة 30 يومًا لرصد الغياب المتكرر. */
+    const absenceFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const [payments, subEvents, sessions, dayAppts, windowAppts, trainerLogs, tasks, users, branches] = await Promise.all([
+      Store.find('payments', { date }),
+      Store.find('subEvents', { date }),
+      Store.find('sessions', { date }),
+      Store.find('appointments', { date }),
+      Store.find('appointments', { date: { gte: absenceFrom, lte: date } }),
+      Store.find('trainerLogs', { date }),
+      Store.find('tasks', { month: monthOf(date) }),
+      Store.all('users'),
+      Store.all('branches'),
+    ]);
+    const data = { payments, subEvents, sessions, users, branches, trainerLogs, tasks };
 
     // التحصيل اليومي لكل فرع
     const branchRows = data.branches.map((b) => {
-      const subIds = data.subscriptions.filter((s) => s.branchId === b.id).map((s) => s.id);
-      const dayPays = data.payments.filter((p) => p.date === date && subIds.includes(p.subscriptionId));
-      const ev = data.subEvents.filter((e) => e.date === date && e.branchId === b.id);
+      const dayPays = data.payments.filter((p) => p.branchId === b.id && p.subscriptionId != null);
+      const ev = data.subEvents.filter((e) => e.branchId === b.id);
       return {
         branchId: b.id, branch: b.name,
         collected: dayPays.reduce((s, p) => s + p.amount, 0),
@@ -290,24 +307,22 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         freezes: ev.filter((e) => e.type === 'freeze').length,
         cancels: ev.filter((e) => e.type === 'cancel').length,
         returns: ev.filter((e) => e.type === 'unfreeze').length,
-        sessions: data.sessions.filter((s) => s.date === date && s.branchId === b.id).length,
+        sessions: data.sessions.filter((s) => s.branchId === b.id).length,
       };
     });
 
     // حضور وغياب اليوم
-    const dayAppts = data.appointments.filter((a) => a.date === date);
     const attendance = {
-      sessions: data.sessions.filter((s) => s.date === date).length,
-      uniqueTrainees: new Set(data.sessions.filter((s) => s.date === date).map((s) => s.traineeId)).size,
+      sessions: data.sessions.length,
+      uniqueTrainees: new Set(data.sessions.map((s) => s.traineeId)).size,
       scheduled: dayAppts.length,
       done: dayAppts.filter((a) => a.status === 'done').length,
       missed: dayAppts.filter((a) => isMissed(a, nowIso)).length,
     };
 
     // من غاب أكثر من مرة خلال 30 يومًا → تنبيه للإدارة ومدرب الحصص
-    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const missedByTrainee = {};
-    data.appointments.filter((a) => a.date >= cutoff && a.date <= date && isMissed(a, nowIso))
+    windowAppts.filter((a) => isMissed(a, nowIso))
       .forEach((a) => { (missedByTrainee[a.traineeId] = missedByTrainee[a.traineeId] || []).push(a); });
     const absentees = Object.entries(missedByTrainee)
       .filter(([, list]) => list.length >= 2)
@@ -324,14 +339,18 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     // إشعارات الغياب (بدون تكرار)
     const admin = data.users.find((u) => u.role === 'admin');
-    for (const a of absentees) {
-      const text = `تنبيه غياب: ${a.name} غاب عن ${a.missed} حصص — يُرجى التواصل معه.`;
-      if (admin && !data.notifications.some((n) => n.userId === admin.id && n.text === text)) {
-        await Store.insert('notifications', { userId: admin.id, text, date, read: false, type: 'absence' });
-      }
-      for (const tid of a.trainerIds) {
-        if (!data.notifications.some((n) => n.userId === tid && n.text === text)) {
-          await Store.insert('notifications', { userId: tid, text, date, read: false, type: 'absence' });
+    if (absentees.length) {
+      const recipients = [...new Set([admin && admin.id, ...absentees.flatMap((a) => a.trainerIds)].filter(Boolean))];
+      // إشعارات الغياب السابقة لهؤلاء المستلمين فقط — استعلام واحد بدل مسح الجدول
+      const seen = new Set((await Store.find('notifications', { userId: { in: recipients }, type: 'absence' }))
+        .map((n) => n.userId + '|' + n.text));
+      for (const a of absentees) {
+        const text = `تنبيه غياب: ${a.name} غاب عن ${a.missed} حصص — يُرجى التواصل معه.`;
+        const targets = [admin && admin.id, ...a.trainerIds].filter(Boolean);
+        for (const uid of targets) {
+          if (seen.has(uid + '|' + text)) continue;
+          await Store.insert('notifications', { userId: uid, text, date, read: false, type: 'absence' });
+          seen.add(uid + '|' + text);
         }
       }
     }
@@ -339,8 +358,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     // سجلات المدربين اليومية + إحصاءاتهم التلقائية + مهام اليوم
     const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false);
     const trainerRows = trainers.map((t) => {
-      const log = data.trainerLogs.find((l) => l.trainerId === t.id && l.date === date) || {};
-      const ds = data.sessions.filter((s) => s.trainerId === t.id && s.date === date);
+      const log = data.trainerLogs.find((l) => l.trainerId === t.id) || {};
+      const ds = data.sessions.filter((s) => s.trainerId === t.id);
       const dayTasks = data.tasks.filter((x) => x.trainerId === t.id
         && ((x.type === 'daily' && x.date === date) || (x.type === 'monthly' && x.month === monthOf(date))));
       return {

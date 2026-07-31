@@ -66,13 +66,16 @@ const SCHEMA = {
     columns: {
       subscriptionId: col('int', { ref: ref('subscriptions') }),
       traineeId: col('int', { ref: ref('users') }),
+      // الفرع مُكرَّر هنا عن قصد: كل تقارير التحصيل تُصفّى بالفرع،
+      // وبدونه يحتاج كل مجموع مالي وصلًا (JOIN) بالاشتراكات.
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
       amount: col('num', { notNull: true }),
       date: col('text', { notNull: true }),
       method: col('text'),
       note: col('text'),
       createdBy: col('int'),
     },
-    indexes: [['date'], ['subscriptionId'], ['traineeId']],
+    indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date']],
   },
 
   sessions: {

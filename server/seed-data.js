@@ -117,17 +117,17 @@ function demoSeed(hash) {
   ];
 
   const payments = [
-    { id: 1, subscriptionId: 1, traineeId: 10, amount: 1200, date: prevMonth(3), method: 'كاش', note: 'دفعة كاملة', createdBy: 5 },
-    { id: 2, subscriptionId: 2, traineeId: 11, amount: 700, date: prevMonth(5), method: 'تحويل بنكي', note: 'دفعة أولى', createdBy: 5 },
-    { id: 3, subscriptionId: 2, traineeId: 11, amount: 500, date: thisMonth(2), method: 'كاش', note: 'دفعة ثانية — إغلاق', createdBy: 5 },
-    { id: 4, subscriptionId: 3, traineeId: 12, amount: 900, date: prevMonth(10), method: 'بطاقة', note: '', createdBy: 5 },
-    { id: 5, subscriptionId: 4, traineeId: 13, amount: 1000, date: prevMonth(8), method: 'كاش', note: 'دفعة أولى', createdBy: 5 },
-    { id: 6, subscriptionId: 5, traineeId: 14, amount: 1200, date: thisMonth(1), method: 'تحويل بنكي', note: '', createdBy: 5 },
-    { id: 7, subscriptionId: 6, traineeId: 15, amount: 450, date: thisMonth(2), method: 'كاش', note: 'دفعة أولى 50%', createdBy: 5 },
-    { id: 8, subscriptionId: 7, traineeId: 16, amount: 1200, date: prevMonth(15), method: 'كاش', note: '', createdBy: 5 },
-    { id: 9, subscriptionId: 8, traineeId: 17, amount: 600, date: thisMonth(5), method: 'بطاقة', note: 'دفعة أولى', createdBy: 5 },
-    { id: 10, subscriptionId: 9, traineeId: 18, amount: 1500, date: prevMonth(20), method: 'تحويل بنكي', note: 'دفعة كاملة', createdBy: 5 },
-    { id: 11, subscriptionId: 10, traineeId: 19, amount: 900, date: prevMonth(1), method: 'كاش', note: '', createdBy: 5 },
+    { id: 1, subscriptionId: 1, branchId: 1, traineeId: 10, amount: 1200, date: prevMonth(3), method: 'كاش', note: 'دفعة كاملة', createdBy: 5 },
+    { id: 2, subscriptionId: 2, branchId: 1, traineeId: 11, amount: 700, date: prevMonth(5), method: 'تحويل بنكي', note: 'دفعة أولى', createdBy: 5 },
+    { id: 3, subscriptionId: 2, branchId: 1, traineeId: 11, amount: 500, date: thisMonth(2), method: 'كاش', note: 'دفعة ثانية — إغلاق', createdBy: 5 },
+    { id: 4, subscriptionId: 3, branchId: 1, traineeId: 12, amount: 900, date: prevMonth(10), method: 'بطاقة', note: '', createdBy: 5 },
+    { id: 5, subscriptionId: 4, branchId: 2, traineeId: 13, amount: 1000, date: prevMonth(8), method: 'كاش', note: 'دفعة أولى', createdBy: 5 },
+    { id: 6, subscriptionId: 5, branchId: 2, traineeId: 14, amount: 1200, date: thisMonth(1), method: 'تحويل بنكي', note: '', createdBy: 5 },
+    { id: 7, subscriptionId: 6, branchId: 2, traineeId: 15, amount: 450, date: thisMonth(2), method: 'كاش', note: 'دفعة أولى 50%', createdBy: 5 },
+    { id: 8, subscriptionId: 7, branchId: 3, traineeId: 16, amount: 1200, date: prevMonth(15), method: 'كاش', note: '', createdBy: 5 },
+    { id: 9, subscriptionId: 8, branchId: 3, traineeId: 17, amount: 600, date: thisMonth(5), method: 'بطاقة', note: 'دفعة أولى', createdBy: 5 },
+    { id: 10, subscriptionId: 9, branchId: 1, traineeId: 18, amount: 1500, date: prevMonth(20), method: 'تحويل بنكي', note: 'دفعة كاملة', createdBy: 5 },
+    { id: 11, subscriptionId: 10, branchId: 3, traineeId: 19, amount: 900, date: prevMonth(1), method: 'كاش', note: '', createdBy: 5 },
   ];
 
   const sessions = [];
