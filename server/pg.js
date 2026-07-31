@@ -551,6 +551,14 @@ class PgDriver {
     await this.init();
   }
 
+  /* رقم آخر ترحيل مطبَّق — للتأكد أن النشر حدّث المخطط */
+  async schemaVersion() {
+    try {
+      const { rows } = await this.pool.query('SELECT max(id)::int v FROM schema_migrations');
+      return rows[0].v || 0;
+    } catch (e) { return null; }
+  }
+
   async end() { await this.pool.end(); }
 }
 

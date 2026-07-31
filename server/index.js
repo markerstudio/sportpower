@@ -149,9 +149,17 @@ app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
   res.json(saved);
 }));
 
+/* فحص الصحة — يستخدمه المزوّد والمراقبة، ويؤكد أن النشر طبّق الترحيلات */
 app.get('/api/health', h(async (req, res) => {
-  await Store.all('branches');
-  res.json({ ok: true, storage: Store.IS_PG ? 'postgres' : 'file' });
+  const t = process.hrtime.bigint();
+  await Store.count('branches', null);
+  const latencyMs = Math.round(Number(process.hrtime.bigint() - t) / 1e6);
+  res.json({
+    ok: true,
+    storage: Store.IS_PG ? 'postgres' : 'file',
+    schemaVersion: await Store.schemaVersion(),
+    latencyMs,
+  });
 }));
 
 app.post('/api/login', h(async (req, res) => {

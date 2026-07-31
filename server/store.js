@@ -222,6 +222,8 @@ class JsonDriver {
     await this.loadSeed(seedData.demoSeed(hashPassword));
   }
 
+  async schemaVersion() { return 0; } // التخزين الملفّي بلا ترحيلات
+
   async end() {}
 }
 
@@ -235,23 +237,39 @@ let driver;
 if (DATABASE_URL) {
   const { PgDriver } = require('./pg');
   const local = /localhost|127\.0\.0\.1/.test(DATABASE_URL);
+
+  /* على البيئات اللحظية (Vercel) تُنشأ نسخة لكل طلب تقريبًا؛ الاتصال المباشر
+     يستنفد حدّ اتصالات القاعدة بسرعة. مزوّدو Postgres المُدارون يوفّرون رابطًا
+     مجمَّعًا (pooler) وهو المطلوب هنا — ننبّه بوضوح إن لم يُستخدم. */
+  if (IS_SERVERLESS && /neon\.tech|supabase\.co/.test(DATABASE_URL) && !/-pooler\.|pooler\./.test(DATABASE_URL)) {
+    console.warn('[db] ⚠️ رابط اتصال غير مجمَّع على بيئة لحظية — استخدم رابط الـ Pooler '
+      + '(المضيف الذي يحوي «-pooler») وإلا قد تنفد اتصالات القاعدة تحت الحمل.');
+  }
+
   driver = new PgDriver(DATABASE_URL, {
     log,
     slowMs: SLOW_QUERY_MS,
     pool: {
-      // على البيئات اللحظية: اتصال واحد لكل نسخة، والتجميع يتكفّل به
-      // pooler المزوّد (Neon/Supabase) عبر رابط الاتصال المجمَّع.
+      // اتصال واحد لكل نسخة لحظية؛ التجميع الفعلي يتكفّل به pooler المزوّد
       max: IS_SERVERLESS ? 1 : Number(process.env.PG_POOL_MAX || 10),
       idleTimeoutMillis: IS_SERVERLESS ? 10000 : 30000,
       connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10000),
-      // التحقق من شهادة الخادم مفعَّل افتراضيًا (يمنع اعتراض الاتصال).
-      // مزوّدو Postgres المُدارون يقدّمون شهادات موثوقة عامةً.
+      // سقف زمني للاستعلام: استعلام شارد لا يحتجز اتصالًا إلى الأبد
+      statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS || 15000),
+      query_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS || 15000),
+      idle_in_transaction_session_timeout: Number(process.env.PG_IDLE_TX_TIMEOUT_MS || 15000),
+      // التحقق من شهادة الخادم مفعَّل افتراضيًا — بدونه يكون الاتصال مشفَّرًا
+      // لكن غير موثَّق الهوية (قابل للاعتراض). مزوّدو Postgres المُدارون
+      // يقدّمون شهادات موثوقة عامةً فيعمل التحقق دون إعداد إضافي.
       ssl: local ? false : {
-        rejectUnauthorized: process.env.PGSSL_NO_VERIFY === '1' ? false : true,
+        rejectUnauthorized: process.env.PGSSL_NO_VERIFY !== '1',
         ca: process.env.PGSSL_CA || undefined,
       },
     },
   });
+  if (process.env.PGSSL_NO_VERIFY === '1') {
+    console.warn('[db] ⚠️ التحقق من شهادة الخادم معطَّل (PGSSL_NO_VERIFY=1) — للتشخيص فقط، لا للإنتاج.');
+  }
 } else {
   driver = new JsonDriver();
 }
@@ -317,6 +335,7 @@ module.exports = {
   distinct: wrap('distinct'),
   transaction: wrap('transaction'),
   reseed: async () => { await initOnce(); return driver.reseed(); },
+  schemaVersion: async () => { await initOnce(); return driver.schemaVersion(); },
   end: async () => driver.end(),
   hashPassword,
   verifyPassword,
