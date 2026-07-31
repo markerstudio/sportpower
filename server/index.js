@@ -9,6 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Store = require('./store');
 const growth = require('./growth');
+const clients = require('./clients');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -373,6 +374,8 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   }
   const password = 'sp-' + crypto.randomBytes(4).toString('hex');
 
+  const pkg = subscription.packageId ? await Store.get('packages', Number(subscription.packageId)) : null;
+
   const result = await Store.transaction(async (tx) => {
     const user = await tx.insert('users', {
       username, password: Store.hashPassword(password), role: 'trainee',
@@ -385,6 +388,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       totalSessions: Number(subscription.totalSessions), usedSessions: 0,
       price: Number(subscription.price),
       startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
+      packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
     });
     await tx.insert('subEvents', {
       subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
@@ -434,6 +438,12 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
     if (lead) await Store.update('leads', lead.id, { stage: 'subscribed', traineeId: result.user.id, closedAt: todayStr() });
   }
 
+  // إغلاق العقد الإلكتروني الذي عبّأه الزبون بنفسه
+  if (req.body.contractId) {
+    const contract = await Store.get('contracts', Number(req.body.contractId));
+    if (contract) await Store.update('contracts', contract.id, { status: 'converted', traineeId: result.user.id, convertedAt: todayStr() });
+  }
+
   res.json({
     user: publicUser(result.user),
     credentials: { username, password },
@@ -449,20 +459,28 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
   let list = subscriptions;
   if (req.user.role === 'trainee') list = list.filter((s) => s.traineeId === req.user.id);
   if (req.query.branch) list = list.filter((s) => s.branchId === Number(req.query.branch));
-  res.json(list.map((s) => ({ ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions })));
+  // الأسعار سرّ تجاري: المدرب وأخصائية التغذية لا يريان قيمة الاشتراك
+  const withPrice = clients.canSeePrices(req.user.role);
+  res.json(list.map((s) => {
+    const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
+    if (!withPrice) delete row.price;
+    return row;
+  }));
 }));
 
 /* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
 app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const { traineeId, totalSessions, price, startDate, endDate } = req.body;
+  const { traineeId, totalSessions, price, startDate, endDate, packageId } = req.body;
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!totalSessions || !price || !startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
+  const pkg = packageId ? await Store.get('packages', Number(packageId)) : null;
   const prior = (await Store.all('subscriptions')).some((s) => s.traineeId === trainee.id);
   const sub = await Store.insert('subscriptions', {
     traineeId: trainee.id, branchId: trainee.branchId,
     totalSessions: Number(totalSessions), usedSessions: 0, price: Number(price),
     startDate, endDate, status: 'active',
+    packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
   });
   // سجل الحدث لِلوحة المتابعة اليومية (جديد أم تجديد)
   await Store.insert('subEvents', {
@@ -690,6 +708,7 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
     weight: Number(weight), bodyFatPct: numOrNull(bodyFatPct), muscleMass: numOrNull(muscleMass),
     fatMass: numOrNull(fatMass), water: numOrNull(water), bmi: numOrNull(bmi), score: numOrNull(score),
     notes: notes || '', image: saveImage(imageBase64, `inbody-${trainee.id}`),
+    createdBy: req.user.id,
   });
   await notify(trainee.id, `تمت إضافة قراءة InBody جديدة بتاريخ ${date}.`, 'inbody');
   res.json(reading);
@@ -928,8 +947,9 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
 /* ملف المتدرب — نظرة شاملة */
 app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const id = Number(req.params.id);
-  const { users, subscriptions, sessions, appointments, inbody, mealPlans, meals, branches, payments } = await Store.load(
-    'users', 'subscriptions', 'sessions', 'appointments', 'inbody', 'mealPlans', 'meals', 'branches', 'payments');
+  await clients.ensureDefaultPackages();
+  const { users, subscriptions, sessions, appointments, inbody, mealPlans, meals, branches, payments, packages, sessionRatings } = await Store.load(
+    'users', 'subscriptions', 'sessions', 'appointments', 'inbody', 'mealPlans', 'meals', 'branches', 'payments', 'packages', 'sessionRatings');
 
   const trainee = users.find((u) => u.id === id && u.role === 'trainee');
   if (!trainee) return res.status(404).json({ error: 'المتدرب غير موجود.' });
@@ -939,8 +959,14 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     || (req.user.role === 'trainee' && req.user.id === id);
   if (!allowed) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
 
+  // الأسعار سرّ تجاري: المدرب وأخصائية التغذية يريان الباقة والحصص — بلا أي سعر
+  const showPrices = clients.canSeePrices(req.user.role);
   const subs = subscriptions.filter((s) => s.traineeId === id)
-    .map((s) => ({ ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions }));
+    .map((s) => {
+      const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
+      if (!showPrices) delete row.price;
+      return row;
+    });
   const current = subs.filter((s) => s.status === 'active').sort((a, b) => a.endDate.localeCompare(b.endDate))[0] || subs[subs.length - 1];
   const mySessions = sessions.filter((s) => s.traineeId === id).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const appts = appointments.filter((a) => a.traineeId === id && a.date >= todayStr() && a.status === 'scheduled')
@@ -971,12 +997,24 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   } : null;
   if (finance) finance.remaining = Math.max(0, finance.totalDue - finance.totalPaid);
 
+  /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
+  const availablePackages = packages
+    .filter((p) => p.active !== false && (!p.branchId || p.branchId === trainee.branchId))
+    .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
+    .map((p) => (showPrices ? p : clients.stripPackagePrice(p)));
+
+  /* تقييمات الحصص: المتدرب يرى تقييماته، والإدارة ترى كل شيء — والمدرب لا يرى شيئًا */
+  const canSeeRatings = req.user.role === 'admin' || (req.user.role === 'trainee' && req.user.id === id);
+  const myRatings = canSeeRatings ? sessionRatings.filter((r) => r.traineeId === id).sort((a, b) => b.id - a.id) : null;
+
   res.json({
     trainee: publicUser(trainee),
     trainerName: lastSession ? (users.find((u) => u.id === lastSession.trainerId) || {}).name : null,
     branchName: (branches.find((b) => b.id === trainee.branchId) || {}).name,
     subscription: current || null,
     subscriptions: subs,
+    packages: availablePackages,
+    showPrices,
     sessions: mySessions,
     appointments: appts.map((a) => ({ ...a, trainerName: (users.find((u) => u.id === a.trainerId) || {}).name })),
     inbody: readings,
@@ -985,6 +1023,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     attendance,
     payments: myPayments,
     finance,
+    ratings: myRatings,
   });
 }));
 
@@ -1099,6 +1138,12 @@ require('./ops')(app, { auth, requireRole, h, notify, subStatus });
 
 /* وحدة النمو: مصاريف، تقرير نمو، مبيعات، برامج تدريبية، ولاء وإحالات */
 growth(app, { auth, requireRole, h, notify, subStatus });
+
+/* وحدة العملاء: الباقات، العقد الإلكتروني، تقييم الحصص */
+clients(app, { auth, requireRole, h, notify });
+
+/* مركز القرارات: تحويل كل مشكلة يكتشفها النظام إلى إجراء قابل للتنفيذ */
+require('./actions')(app, { auth, requireRole, h, notify, subStatus });
 
 /* ============================================================ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير موجود.' }));

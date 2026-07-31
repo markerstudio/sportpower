@@ -72,8 +72,12 @@ async function viewAdminDash(root) {
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); } });
     container.append(el('div', { class: 'card filters' }, field('الشهر', monthInput), field('الفرع', branchSel),
       el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
+      el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/actions'; } }, 'مركز القرارات ←'),
       el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←'),
       el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/settings'; } }, 'الإعدادات ←')));
+
+    // مركز القرارات: ما الذي يجب فعله الآن — قبل الأرقام
+    container.append(await actionCenterBanner());
 
     const k = data.kpis;
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
@@ -383,6 +387,8 @@ async function viewTraineePage(root, traineeId) {
   const sub = data.subscription;
   const t = data.trainee;
   const isStaff = ['admin', 'trainer', 'accountant', 'nutritionist'].includes(API.user.role);
+  const showPrices = data.showPrices !== false; // المدرب لا يرى الأسعار
+  const refreshPage = () => { root.innerHTML = ''; viewTraineePage(root, traineeId); };
   const infoChip = (label, value) => el('span', { class: 'macro' }, label + ' ', el('b', {}, value || '—'));
 
   const headCard = el('div', { class: 'card', style: 'display:flex;gap:26px;align-items:center;flex-wrap:wrap' },
@@ -398,6 +404,7 @@ async function viewTraineePage(root, traineeId) {
         infoChip('الجوال', t.phone), infoChip('الميلاد', t.birthDate),
         infoChip('انضم', t.joinedAt), infoChip('اسم المستخدم', t.username)),
       sub ? el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:14px' },
+        sub.packageName ? el('div', {}, 'الباقة: ', el('b', { style: 'color:var(--accent-hover)' }, sub.packageName)) : '',
         el('div', {}, `عدد الحصص الكلي: `, el('b', {}, String(sub.totalSessions)),
           ' · المستخدمة: ', el('b', {}, String(sub.usedSessions)),
           ' · المتبقية: ', el('b', { style: 'color:var(--accent-hover)' }, String(sub.remaining))),
@@ -407,7 +414,7 @@ async function viewTraineePage(root, traineeId) {
 
   /* شريط الإجراءات السريعة للموظفين */
   if (isStaff) {
-    const refresh = () => { root.innerHTML = ''; viewTraineePage(root, traineeId); };
+    const refresh = refreshPage;
     const actions = el('div', { class: 'card filters' });
     if (['admin', 'trainer'].includes(API.user.role)) {
       actions.append(
@@ -469,6 +476,23 @@ async function viewTraineePage(root, traineeId) {
   }
   container.append(statTiles);
 
+  /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب) */
+  container.append(traineePackagesCard(data, traineeId, refreshPage));
+
+  /* تقييم الحصص: المتدرب يقيّم حصصه — والنتيجة سرّية تصل للإدارة */
+  if (API.user.role === 'trainee' && API.user.id === traineeId) {
+    container.append(traineeRatingsCard(data, refreshPage));
+  } else if (API.user.role === 'admin' && data.ratings && data.ratings.length) {
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'تقييمات المتدرب لحصصه 🔒',
+        el('a', { class: 'btn btn--outline btn--sm', href: '#/ratings' }, 'كل التقييمات ←')),
+      el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px' }, 'سرّي — لا يظهر للمدربين.'),
+      dataTable(['التاريخ', 'التقييم', 'التعليق'],
+        data.ratings.map((r) => [r.date,
+          el('span', { class: 'stars-view' + (r.rating <= 2 ? ' stars-view--low' : '') }, '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating)),
+          r.comment || '—']))));
+  }
+
   /* نقاطي ومكافآتي — بطاقة سريعة للمتدرب */
   if (API.user.role === 'trainee' && API.user.id === traineeId) {
     try {
@@ -493,9 +517,11 @@ async function viewTraineePage(root, traineeId) {
   const historyGrid = el('div', { class: 'grid-2eq' });
   historyGrid.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'تاريخ الاشتراكات'),
-    dataTable(['الحصص', 'المستخدم', 'القيمة', 'من', 'إلى', 'الحالة'],
-      data.subscriptions.slice().reverse().map((s) => [String(s.totalSessions), String(s.usedSessions),
-        fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring)]),
+    dataTable(['الباقة', 'الحصص', 'المستخدم', ...(showPrices ? ['القيمة'] : []), 'من', 'إلى', 'الحالة'],
+      data.subscriptions.slice().reverse().map((s) => [
+        s.packageName || '—', String(s.totalSessions), String(s.usedSessions),
+        ...(showPrices ? [fmtMoney(s.price)] : []),
+        s.startDate, s.endDate, statusTag(s.status, s.expiring)]),
       'لا اشتراكات بعد.')));
   if (data.payments) {
     historyGrid.append(el('div', { class: 'card' },

@@ -12,7 +12,8 @@ const seedData = require('./seed-data');
 const COLLECTIONS = ['branches', 'users', 'subscriptions', 'payments', 'sessions',
   'appointments', 'inbody', 'meals', 'mealPlans', 'notifications', 'tokens', 'settings',
   'trainerLogs', 'tasks', 'targets', 'frozen', 'subEvents',
-  'expenses', 'leads', 'programs', 'pointsLog', 'rewards', 'redemptions', 'referrals'];
+  'expenses', 'leads', 'programs', 'pointsLog', 'rewards', 'redemptions', 'referrals',
+  'packages', 'contracts', 'sessionRatings', 'actionLog'];
 const TABLE = Object.fromEntries(COLLECTIONS.map((c) => [c, c.replace(/[A-Z]/g, (ch) => '_' + ch.toLowerCase())]));
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;

@@ -126,23 +126,41 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
    Onboarding — تسجيل زبون جديد بخطوة واحدة
    ============================================================ */
 async function openOnboardModal(onDone, prefill = {}) {
-  const [branches, trainers] = await Promise.all([
+  const [branches, trainers, packages] = await Promise.all([
     API.get('/api/branches'),
     API.get('/api/users?role=trainer'),
+    API.get('/api/packages').catch(() => []),
   ]);
 
   const nameIn = input({ placeholder: 'الاسم الكامل *', value: prefill.name || '' });
   const phoneIn = input({ placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end', value: prefill.phone || '' });
-  const birthIn = input({ type: 'date' });
+  const birthIn = input({ type: 'date', value: prefill.birthDate || '' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), prefill.branchId ? { value: prefill.branchId } : {});
-  const goalSel = select(Object.entries(GOAL_LABELS));
+  const goalSel = select(Object.entries(GOAL_LABELS), prefill.goal ? { value: prefill.goal } : {});
   const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
 
-  const totalSel = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
-  const priceIn = input({ type: 'number', min: 0, value: 1200 });
+  /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي */
+  const active = packages.filter((p) => p.active !== false);
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
+    ...active.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
+  { value: prefill.packageId || '' });
+  const totalSel = input({ type: 'number', min: 1, value: prefill.totalSessions || 12 });
+  const priceIn = input({ type: 'number', min: 0, value: prefill.price !== undefined ? prefill.price : 1200 });
   const startIn = input({ type: 'date', value: todayISO() });
   const endDefault = new Date(); endDefault.setMonth(endDefault.getMonth() + 1);
-  const endIn = input({ type: 'date', value: endDefault.toISOString().slice(0, 10) });
+  const endIn = input({ type: 'date', value: prefill.endDate || endDefault.toISOString().slice(0, 10) });
+
+  const applyPackage = () => {
+    const p = active.find((x) => String(x.id) === String(pkgSel.value));
+    if (!p) return;
+    totalSel.value = p.sessions;
+    priceIn.value = p.price;
+    const end = new Date(startIn.value || todayISO());
+    end.setDate(end.getDate() + (p.durationDays || 30));
+    endIn.value = end.toISOString().slice(0, 10);
+  };
+  pkgSel.addEventListener('change', applyPackage);
+  startIn.addEventListener('change', () => { if (pkgSel.value) applyPackage(); });
 
   const payIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا إن لم يدفع الآن' });
   const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']]);
@@ -168,7 +186,11 @@ async function openOnboardModal(onDone, prefill = {}) {
             name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
             branchId: Number(branchSel.value), goal: goalSel.value,
             referralCode: referralIn.value || null, leadId: prefill.leadId || null,
-            subscription: { totalSessions: Number(totalSel.value), price: Number(priceIn.value), startDate: startIn.value, endDate: endIn.value },
+            contractId: prefill.contractId || null,
+            subscription: {
+              totalSessions: Number(totalSel.value), price: Number(priceIn.value),
+              packageId: pkgSel.value || null, startDate: startIn.value, endDate: endIn.value,
+            },
             payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value } : null,
             appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
           });
@@ -180,7 +202,8 @@ async function openOnboardModal(onDone, prefill = {}) {
       field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
       field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
       field('الهدف', goalSel), field('كود إحالة صديق', referralIn),
-      section('٢ — الاشتراك'),
+      section('٢ — الاشتراك والباقة'),
+      el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
       field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
       field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
       section('٣ — الدفعة الأولى (اختياري)'),
@@ -290,13 +313,30 @@ async function viewSubscriptions(root) {
   await render();
 }
 
-async function openSubModal(onDone, trainees, preselectId) {
+async function openSubModal(onDone, trainees, preselectId, presetPackage) {
+  const packages = (await API.get('/api/packages').catch(() => [])).filter((p) => p.active !== false);
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: preselectId || '' });
-  const totalIn = select([[8, '8 حصص'], [12, '12 حصة'], [16, '16 حصة'], [24, '24 حصة']], { value: 12 });
-  const priceIn = input({ type: 'number', value: 1200, min: 0 });
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
+    ...packages.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
+  { value: presetPackage ? presetPackage.id : '' });
+  const totalIn = input({ type: 'number', min: 1, value: presetPackage ? presetPackage.sessions : 12 });
+  const priceIn = input({ type: 'number', value: presetPackage ? presetPackage.price : 1200, min: 0 });
   const startIn = input({ type: 'date', value: todayISO() });
-  const end = new Date(); end.setMonth(end.getMonth() + 1);
+  const end = new Date();
+  end.setDate(end.getDate() + (presetPackage ? presetPackage.durationDays || 30 : 30));
   const endIn = input({ type: 'date', value: end.toISOString().slice(0, 10) });
+
+  const applyPackage = () => {
+    const p = packages.find((x) => String(x.id) === String(pkgSel.value));
+    if (!p) return;
+    totalIn.value = p.sessions;
+    priceIn.value = p.price;
+    const d = new Date(startIn.value || todayISO());
+    d.setDate(d.getDate() + (p.durationDays || 30));
+    endIn.value = d.toISOString().slice(0, 10);
+  };
+  pkgSel.addEventListener('change', applyPackage);
+  startIn.addEventListener('change', () => { if (pkgSel.value) applyPackage(); });
 
   const close = modal('اشتراك جديد / تجديد', [
     el('form', {
@@ -307,7 +347,8 @@ async function openSubModal(onDone, trainees, preselectId) {
         try {
           await API.post('/api/subscriptions', {
             traineeId: Number(traineeSel.value), totalSessions: Number(totalIn.value),
-            price: Number(priceIn.value), startDate: startIn.value, endDate: endIn.value,
+            price: Number(priceIn.value), packageId: pkgSel.value || null,
+            startDate: startIn.value, endDate: endIn.value,
           });
           toast('تم تفعيل الاشتراك — ووصل إشعار للمتدرب.');
           close(); onDone && onDone();
@@ -315,6 +356,7 @@ async function openSubModal(onDone, trainees, preselectId) {
       },
     },
       el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
+      el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
       field('عدد الحصص', totalIn),
       field(`القيمة (${curInfo().name})`, priceIn),
       field('تاريخ البدء', startIn),

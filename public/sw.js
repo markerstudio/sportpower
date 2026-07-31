@@ -4,7 +4,7 @@
    - واجهات /api: شبكة فقط — لا تُخزَّن أبدًا (بيانات حية + مصادقة)
    - التنقلات: شبكة أولًا مع رجوع للنسخة المخزنة عند انقطاع الاتصال
    ============================================================ */
-const VERSION = 'sp-v3';
+const VERSION = 'sp-v4';
 const CORE = [
   '/',
   '/css/tokens.css',
@@ -15,6 +15,8 @@ const CORE = [
   '/js/views-pages.js',
   '/js/views-ops.js',
   '/js/views-growth.js',
+  '/js/views-clients.js',
+  '/js/views-actions.js',
   '/js/app.js',
   '/assets/logo-color.svg',
   '/assets/logo-white.svg',

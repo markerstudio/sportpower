@@ -37,6 +37,23 @@ const BRANCHES = [
   { id: 3, name: 'فرع عمّان', address: 'عمّان، الأردن', phone: '06-5850000' },
 ];
 
+/* باقات الاشتراك — تظهر في العقد الإلكتروني وفي ملف المشترك (الأسعار للإدارة والمحاسب فقط) */
+const DEFAULT_PACKAGES = [
+  { id: 1, name: 'باقة البداية — 8 حصص', sessions: 8, price: 900, durationDays: 30, branchId: null, sessionsPerWeek: 2, description: 'مناسبة لمن يبدأ رحلته: حصتان أسبوعيًا مع متابعة وزن.', features: 'خطة تدريب مبدئية\nقراءة InBody عند البداية\nمتابعة أسبوعية', active: true },
+  { id: 2, name: 'الباقة الأساسية — 12 حصة', sessions: 12, price: 1200, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'الأكثر طلبًا: ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody\nمتابعة مستمرة', active: true },
+  { id: 3, name: 'الباقة المتقدمة — 16 حصة', sessions: 16, price: 1500, durationDays: 30, branchId: null, sessionsPerWeek: 4, description: 'أربع حصص أسبوعيًا لمن يريد نتائج أسرع.', features: 'برنامج تدريبي متقدم\nبرنامج غذائي\nقراءات InBody شهرية\nحصة تعويضية مجانية', active: true },
+  { id: 4, name: 'باقة الالتزام — 24 حصة', sessions: 24, price: 2100, durationDays: 60, branchId: null, sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز — أفضل قيمة مقابل السعر.', features: 'كل مزايا الباقة المتقدمة\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
+];
+
+/* نصّ شروط العقد الإلكتروني — تعدله الإدارة من صفحة الباقات والعقود */
+const DEFAULT_CONTRACT_TERMS = [
+  'الاشتراك شخصي وغير قابل للتحويل لشخص آخر.',
+  'الحصص تُخصم عند تنفيذها، والحصة الملغاة قبل أقل من 4 ساعات تُحتسب.',
+  'يمكن تجميد الاشتراك مرة واحدة لمدة أقصاها أسبوعان بطلب مسبق.',
+  'الأسعار المذكورة أعلاه شاملة، ولا تُسترد الرسوم بعد بدء الاشتراك.',
+  'يلتزم المشترك بتعليمات المدرب والسلامة داخل النادي.',
+].join('\n');
+
 /* الحد الأدنى للإنتاج: مدير + الفروع + مكتبة الوجبات */
 function productionSeed(hash) {
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
@@ -49,9 +66,10 @@ function productionSeed(hash) {
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],
-    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', ...LOYALTY_DEFAULTS }],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', contractTerms: DEFAULT_CONTRACT_TERMS, ...LOYALTY_DEFAULTS }],
     trainerLogs: [], tasks: [], targets: [], frozen: [], subEvents: [],
     expenses: [], leads: [], programs: [], pointsLog: [], rewards: DEFAULT_REWARDS, redemptions: [], referrals: [],
+    packages: DEFAULT_PACKAGES, contracts: [], sessionRatings: [], actionLog: [],
   };
 }
 
@@ -86,16 +104,16 @@ function demoSeed(hash) {
   ];
 
   const subscriptions = [
-    { id: 1, traineeId: 10, branchId: 1, totalSessions: 12, usedSessions: 5, price: 1200, startDate: prevMonth(3), endDate: nextMonth(3), status: 'active' },
-    { id: 2, traineeId: 11, branchId: 1, totalSessions: 12, usedSessions: 9, price: 1200, startDate: prevMonth(5), endDate: thisMonth(28), status: 'active' },
-    { id: 3, traineeId: 12, branchId: 1, totalSessions: 8, usedSessions: 7, price: 900, startDate: prevMonth(10), endDate: thisMonth(24), status: 'active' },
-    { id: 4, traineeId: 13, branchId: 2, totalSessions: 16, usedSessions: 6, price: 1500, startDate: prevMonth(8), endDate: nextMonth(8), status: 'active' },
-    { id: 5, traineeId: 14, branchId: 2, totalSessions: 12, usedSessions: 3, price: 1200, startDate: thisMonth(1), endDate: nextMonth(1), status: 'active' },
-    { id: 6, traineeId: 15, branchId: 2, totalSessions: 8, usedSessions: 2, price: 900, startDate: thisMonth(2), endDate: nextMonth(2), status: 'frozen' }, // يطابق حدث التجميد أدناه
-    { id: 7, traineeId: 16, branchId: 3, totalSessions: 12, usedSessions: 11, price: 1200, startDate: prevMonth(15), endDate: thisMonth(23), status: 'active' },
-    { id: 8, traineeId: 17, branchId: 3, totalSessions: 12, usedSessions: 2, price: 1200, startDate: thisMonth(5), endDate: nextMonth(5), status: 'active' },
-    { id: 9, traineeId: 18, branchId: 1, totalSessions: 16, usedSessions: 8, price: 1500, startDate: prevMonth(20), endDate: nextMonth(20), status: 'active' },
-    { id: 10, traineeId: 19, branchId: 3, totalSessions: 8, usedSessions: 8, price: 900, startDate: prevMonth(1), endDate: prevMonth(28), status: 'expired' },
+    { id: 1, traineeId: 10, branchId: 1, totalSessions: 12, usedSessions: 5, price: 1200, startDate: prevMonth(3), endDate: nextMonth(3), status: 'active', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة' },
+    { id: 2, traineeId: 11, branchId: 1, totalSessions: 12, usedSessions: 9, price: 1200, startDate: prevMonth(5), endDate: thisMonth(28), status: 'active', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة' },
+    { id: 3, traineeId: 12, branchId: 1, totalSessions: 8, usedSessions: 7, price: 900, startDate: prevMonth(10), endDate: thisMonth(24), status: 'active', packageId: 1, packageName: 'باقة البداية — 8 حصص' },
+    { id: 4, traineeId: 13, branchId: 2, totalSessions: 16, usedSessions: 6, price: 1500, startDate: prevMonth(8), endDate: nextMonth(8), status: 'active', packageId: 3, packageName: 'الباقة المتقدمة — 16 حصة' },
+    { id: 5, traineeId: 14, branchId: 2, totalSessions: 12, usedSessions: 3, price: 1200, startDate: thisMonth(1), endDate: nextMonth(1), status: 'active', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة' },
+    { id: 6, traineeId: 15, branchId: 2, totalSessions: 8, usedSessions: 2, price: 900, startDate: thisMonth(2), endDate: nextMonth(2), status: 'frozen', packageId: 1, packageName: 'باقة البداية — 8 حصص' }, // يطابق حدث التجميد أدناه
+    { id: 7, traineeId: 16, branchId: 3, totalSessions: 12, usedSessions: 11, price: 1200, startDate: prevMonth(15), endDate: thisMonth(23), status: 'active', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة' },
+    { id: 8, traineeId: 17, branchId: 3, totalSessions: 12, usedSessions: 2, price: 1200, startDate: thisMonth(5), endDate: nextMonth(5), status: 'active', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة' },
+    { id: 9, traineeId: 18, branchId: 1, totalSessions: 16, usedSessions: 8, price: 1500, startDate: prevMonth(20), endDate: nextMonth(20), status: 'active', packageId: 3, packageName: 'الباقة المتقدمة — 16 حصة' },
+    { id: 10, traineeId: 19, branchId: 3, totalSessions: 8, usedSessions: 8, price: 900, startDate: prevMonth(1), endDate: prevMonth(28), status: 'expired', packageId: 1, packageName: 'باقة البداية — 8 حصص' },
   ];
 
   const payments = [
@@ -163,6 +181,9 @@ function demoSeed(hash) {
     { id: 6, traineeId: 13, date: prevMonth(8), weight: 69.5, bodyFatPct: 29.8, muscleMass: 23.5, fatMass: 20.7, water: 36.1, bmi: 25.9, score: 66, image: null, notes: '' },
     { id: 7, traineeId: 13, date: thisMonth(8), weight: 66.8, bodyFatPct: 27.4, muscleMass: 23.9, fatMass: 18.3, water: 36.9, bmi: 24.9, score: 70, image: null, notes: '' },
     { id: 8, traineeId: 16, date: prevMonth(15), weight: 92.5, bodyFatPct: 26.0, muscleMass: 36.0, fatMass: 24.0, water: 50.2, bmi: 29.0, score: 67, image: null, notes: '' },
+    // طارق: قراءتان بفارق أكثر من 4 أسابيع بلا أي تقدّم — يظهر في مركز القرارات كمراجعة خطة
+    { id: 9, traineeId: 18, date: prevMonth(10), weight: 90.4, bodyFatPct: 25.1, muscleMass: 33.0, fatMass: 22.7, water: 49.0, bmi: 28.2, score: 65, image: null, notes: '' },
+    { id: 10, traineeId: 18, date: thisMonth(12), weight: 90.6, bodyFatPct: 25.2, muscleMass: 33.1, fatMass: 22.8, water: 49.1, bmi: 28.3, score: 65, image: null, notes: 'ثبات بالقياسات' },
   ];
 
   const meals = MEALS.map((m) => ({ ...m, createdBy: 6 }));
@@ -286,10 +307,33 @@ function demoSeed(hash) {
     { id: 2, referrerId: 11, traineeId: 17, traineeName: 'دانا سليمان', code: 'SP-SARA', date: thisMonth(5), status: 'pending' },
   ];
 
+  /* ---------- تقييمات المتدربين للحصص (خاصة بالإدارة) ---------- */
+  const sessionRatings = [
+    { id: 1, sessionId: 8, traineeId: 10, trainerId: 2, rating: 5, comment: 'حصة ممتازة، الكابتن صحّح وضعية الظهر وشرح كل تمرين.', date: thisMonth(13), seen: false },
+    { id: 2, sessionId: 15, traineeId: 13, trainerId: 3, rating: 2, comment: 'الحصة كانت مزدحمة والمتابعة كانت سريعة — حسّيت ما أخذت وقتي.', date: thisMonth(10), seen: false },
+    { id: 3, sessionId: 17, traineeId: 14, trainerId: 3, rating: 4, comment: '', date: thisMonth(12), seen: true },
+  ];
+
+  /* ---------- العقود الإلكترونية (رابط تسجيل ذاتي) ---------- */
+  const contracts = [
+    { id: 1, token: 'demo-open-link-001', branchId: 1, createdBy: 1, createdAt: TODAY, expiresAt: nextMonth(1), status: 'open', note: 'رابط تسجيل لعملاء حملة إنستغرام', submission: null, traineeId: null, convertedAt: null },
+    {
+      id: 2, token: 'demo-submitted-002', branchId: 2, createdBy: 1, createdAt: thisMonth(Math.max(1, d - 1)), expiresAt: nextMonth(1),
+      status: 'submitted', note: '', traineeId: null, convertedAt: null,
+      submission: {
+        name: 'رانيا خوري', phone: '0599777888', birthDate: '1994-08-12', goal: 'loss',
+        address: 'بيت لحم', packageId: 2, packageName: 'الباقة الأساسية — 12 حصة', sessions: 12, price: 1200,
+        healthNotes: 'لا يوجد', emergencyPhone: '0599777000', notes: 'أفضل التدريب مساءً',
+        agreedAt: thisMonth(Math.max(1, d - 1)),
+      },
+    },
+  ];
+
   return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [],
-    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', ...LOYALTY_DEFAULTS }],
+    settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', contractTerms: DEFAULT_CONTRACT_TERMS, ...LOYALTY_DEFAULTS }],
     trainerLogs, tasks, targets, frozen, subEvents,
-    expenses, leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals };
+    expenses, leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals,
+    packages: DEFAULT_PACKAGES.map((p) => ({ ...p })), contracts, sessionRatings, actionLog: [] };
 }
 
-module.exports = { demoSeed, productionSeed, DEFAULT_REWARDS };
+module.exports = { demoSeed, productionSeed, DEFAULT_REWARDS, DEFAULT_PACKAGES, DEFAULT_CONTRACT_TERMS };

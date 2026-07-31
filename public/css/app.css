@@ -511,3 +511,126 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .task-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--app-radius-sm); cursor: pointer; font-size: var(--text-sm); }
 .task-row:hover { background: var(--app-hover); }
 .task-row input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--green-500); flex: none; }
+
+/* ============================================================
+   مركز القرارات — بطاقات الإجراءات
+   ============================================================ */
+.ac-section { border-top: 4px solid var(--app-line); }
+.ac-section--urgent { border-top-color: var(--status-danger); }
+.ac-section--important { border-top-color: var(--status-warning); }
+.ac-section--improve { border-top-color: var(--accent); }
+.ac-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+
+.ac-card {
+  border: 1px solid var(--app-line); border-radius: var(--app-radius);
+  border-inline-start: 5px solid var(--grey-300);
+  background: var(--app-surface); padding: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+}
+.ac-card:hover { box-shadow: var(--app-shadow-lg); transform: translateY(-2px); }
+.ac-card--urgent { border-inline-start-color: var(--status-danger); }
+.ac-card--important { border-inline-start-color: var(--status-warning); }
+.ac-card--improve { border-inline-start-color: var(--accent); }
+.ac-card--handled { opacity: .6; }
+.ac-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.ac-card__title { font-family: var(--font-display); font-weight: var(--weight-bold); color: var(--app-ink); font-size: var(--text-base); line-height: 1.5; }
+.ac-card__reason { font-size: var(--text-sm); color: var(--app-ink-2); line-height: 1.7; }
+.ac-card__reason b, .ac-card__suggestion b { color: var(--app-ink); }
+.ac-card__suggestion {
+  font-size: var(--text-sm); color: var(--app-ink-2); line-height: 1.7;
+  background: var(--app-hover); border-radius: var(--app-radius-sm); padding: 9px 12px;
+}
+.ac-card__meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.ac-card__actions { display: flex; gap: 7px; flex-wrap: wrap; padding-top: 4px; }
+.ac-card__controls {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  margin-top: auto; padding-top: 10px; border-top: 1px dashed var(--app-line);
+}
+.ac-banner { border-top: 4px solid var(--status-danger); }
+.ac-banner .notif { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* ============================================================
+   الباقات
+   ============================================================ */
+.pkg-card__price {
+  font-family: var(--font-display); font-weight: var(--weight-black);
+  font-size: 1.5rem; color: var(--accent-hover); line-height: 1.2;
+}
+.pkg-card__features { margin: 0; padding-inline-start: 18px; font-size: var(--text-xs); color: var(--app-muted); line-height: 1.9; }
+.pkg-card--off { opacity: .55; }
+.pkg-card--current { border: 2px solid var(--accent); }
+.pkg-current { background: var(--app-hover); border-radius: var(--app-radius-sm); padding: 14px; }
+
+/* ============================================================
+   نجوم التقييم
+   ============================================================ */
+.stars-input { display: flex; align-items: center; gap: 2px; }
+.star {
+  background: none; border: none; cursor: pointer; padding: 2px 3px;
+  font-size: 1.9rem; line-height: 1; color: var(--grey-300);
+  transition: color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.star:hover { transform: scale(1.12); }
+.star--on { color: #f5b301; }
+.stars-view { color: #f5b301; font-size: 1rem; letter-spacing: 1px; }
+.stars-view--low { color: var(--status-danger); }
+
+/* ============================================================
+   صفحة العقد العامة — يفتحها الزبون بلا حساب
+   ============================================================ */
+.public-page { max-width: 860px; margin: 0 auto; padding: 0 0 48px; }
+.public-head {
+  background: linear-gradient(140deg, var(--petrol-800), var(--petrol-600));
+  color: #fff; padding: 34px 26px; text-align: center; position: relative; overflow: hidden;
+}
+.public-head::after {
+  content: ""; position: absolute; width: 260px; height: 260px; border-radius: 50%;
+  background: rgba(121, 190, 67, .16); top: -130px; inset-inline-end: -60px;
+}
+.public-head__logo { height: 42px; margin-bottom: 14px; position: relative; z-index: 1; }
+.public-head h1 { font-family: var(--font-display); font-weight: var(--weight-black); font-size: 1.6rem; margin: 0; position: relative; z-index: 1; }
+.public-head p { color: var(--green-300); font-size: var(--text-sm); margin: 6px 0 0; position: relative; z-index: 1; }
+.public-card {
+  background: var(--app-surface); border-radius: var(--app-radius); box-shadow: var(--app-shadow);
+  padding: 24px; margin: -22px 16px 0; position: relative; z-index: 2;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.public-section { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.public-section__num {
+  width: 30px; height: 30px; flex: none; border-radius: 50%;
+  background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-weight: var(--weight-bold); font-size: var(--text-sm);
+}
+.public-section b { font-family: var(--font-display); font-weight: var(--weight-bold); color: var(--app-ink); font-size: var(--text-base); }
+.public-packages { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.public-pkg {
+  text-align: start; cursor: pointer; background: var(--app-surface);
+  border: 2px solid var(--app-line); border-radius: var(--app-radius); padding: 16px;
+  display: flex; flex-direction: column; gap: 7px; font-family: var(--font-body);
+  transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.public-pkg:hover { border-color: var(--accent); box-shadow: var(--app-shadow); }
+.public-pkg--on { border-color: var(--accent); background: var(--accent-soft); }
+[data-theme="dark"] .public-pkg--on { background: var(--petrol-600); }
+.public-pkg__name { font-family: var(--font-display); font-weight: var(--weight-bold); color: var(--app-ink); font-size: var(--text-base); }
+.public-pkg__price { font-family: var(--font-display); font-weight: var(--weight-black); font-size: 1.5rem; color: var(--accent-hover); }
+.public-pkg__meta { font-size: var(--text-xs); color: var(--app-muted); }
+.public-pkg__desc { font-size: var(--text-xs); color: var(--app-ink-2); line-height: 1.7; }
+.public-summary {
+  background: var(--app-hover); border-radius: var(--app-radius-sm); padding: 13px 15px;
+  font-size: var(--text-sm); color: var(--app-ink-2); line-height: 1.8;
+}
+.public-terms { margin: 0; padding-inline-start: 20px; font-size: var(--text-sm); color: var(--app-ink-2); line-height: 2; }
+.public-agree {
+  display: flex; align-items: center; gap: 10px; font-size: var(--text-sm); color: var(--app-ink);
+  background: var(--app-hover); border-radius: var(--app-radius-sm); padding: 13px 15px; cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .ac-list { grid-template-columns: 1fr; }
+  .ac-card { padding: 14px; }
+  .public-card { margin: -18px 10px 0; padding: 18px 14px; }
+  .public-head { padding: 26px 18px; }
+  .public-packages { grid-template-columns: 1fr; }
+}
