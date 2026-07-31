@@ -1,19 +1,15 @@
 /* ============================================================
    طبقة التخزين
-   - Postgres (DATABASE_URL / POSTGRES_URL): للإنتاج — دائم وموثوق
+   - Postgres (DATABASE_URL / POSTGRES_URL): للإنتاج — جداول علائقية
+     حقيقية بأعمدة وأنواع ومفاتيح أجنبية وفهارس وترحيلات متتبَّعة
    - ملف JSON محلي: للتطوير والعرض (بلا إعداد)
-   واجهة واحدة غير متزامنة للطرفين + دعم معاملات (transactions).
+   واجهة واحدة للطرفين: قراءة/كتابة + استعلام مفلتر + تجميع + معاملات.
    ============================================================ */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const seedData = require('./seed-data');
-
-const COLLECTIONS = ['branches', 'users', 'subscriptions', 'payments', 'sessions',
-  'appointments', 'inbody', 'meals', 'mealPlans', 'notifications', 'tokens', 'settings',
-  'trainerLogs', 'tasks', 'targets', 'frozen', 'subEvents',
-  'expenses', 'leads', 'programs', 'pointsLog', 'rewards', 'redemptions', 'referrals'];
-const TABLE = Object.fromEntries(COLLECTIONS.map((c) => [c, c.replace(/[A-Z]/g, (ch) => '_' + ch.toLowerCase())]));
+const { COLLECTIONS, CREATE_ORDER } = require('./schema');
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;
 const IS_SERVERLESS = !!process.env.VERCEL;
@@ -42,6 +38,54 @@ function verifyPassword(password, stored) {
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 /* ============================================================
+   مطابقة شروط الاستعلام في الذاكرة — بنفس دلالات نسخة SQL
+   ============================================================ */
+function likeToRegExp(pattern) {
+  const escaped = String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^' + escaped.replace(/%/g, '.*').replace(/_/g, '.') + '$');
+}
+
+function matches(obj, where) {
+  for (const [field, cond] of Object.entries(where || {})) {
+    const v = obj[field];
+    if (cond === null) { if (v !== null && v !== undefined) return false; continue; }
+    if (Array.isArray(cond)) { if (!cond.includes(v)) return false; continue; }
+    if (typeof cond !== 'object') { if (v !== cond) return false; continue; }
+    for (const [op, val] of Object.entries(cond)) {
+      switch (op) {
+        case 'in': if (!val.includes(v)) return false; break;
+        case 'notIn': if (val.includes(v)) return false; break;
+        case 'isNull': if (val ? (v !== null && v !== undefined) : (v === null || v === undefined)) return false; break;
+        case 'eq': if (v !== val) return false; break;
+        case 'ne': if (v === val) return false; break;
+        case 'gt': if (!(v > val)) return false; break;
+        case 'gte': if (!(v >= val)) return false; break;
+        case 'lt': if (!(v < val)) return false; break;
+        case 'lte': if (!(v <= val)) return false; break;
+        case 'like': if (!likeToRegExp(val).test(String(v ?? ''))) return false; break;
+        default: throw new Error('مُعامل استعلام غير مدعوم: ' + op);
+      }
+    }
+  }
+  return true;
+}
+
+function applyOrder(rows, order) {
+  if (!order || !order.length) return rows.sort((a, b) => a.id - b.id);
+  return rows.sort((a, b) => {
+    for (const [field, dir] of order) {
+      const s = dir && String(dir).toLowerCase() === 'desc' ? -1 : 1;
+      const x = a[field], y = b[field];
+      if (x === y) continue;
+      if (x === null || x === undefined) return 1;
+      if (y === null || y === undefined) return -1;
+      return (x > y ? 1 : -1) * s;
+    }
+    return 0;
+  });
+}
+
+/* ============================================================
    مشغّل ملف JSON (تطوير/عرض)
    ============================================================ */
 class JsonDriver {
@@ -53,14 +97,17 @@ class JsonDriver {
   }
 
   async init() {
-    if (!fs.existsSync(this.file)) await this.reseed();
+    if (!fs.existsSync(this.file)) this.db = { __empty: true };
     else this.db = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-    // ملفات قديمة: مجموعات ناقصة أو tokens ككائن
     for (const col of COLLECTIONS) if (!Array.isArray(this.db[col])) this.db[col] = [];
+    delete this.db.__empty;
   }
 
-  async reseed() {
-    this.db = seedData.demoSeed(hashPassword);
+  async isEmpty() { return !fs.existsSync(this.file) || !this.db.users.length; }
+
+  async loadSeed(seed) {
+    this.db = { ...seed };
+    for (const col of COLLECTIONS) if (!Array.isArray(this.db[col])) this.db[col] = [];
     this.persist();
   }
 
@@ -79,13 +126,22 @@ class JsonDriver {
 
   async all(col) { return this.db[col].map((r) => ({ ...r })); }
 
+  async find(col, where, opts = {}) {
+    let rows = this.db[col].filter((r) => matches(r, where)).map((r) => ({ ...r }));
+    rows = applyOrder(rows, opts.order);
+    const start = opts.offset || 0;
+    if (opts.limit) rows = rows.slice(start, start + opts.limit);
+    else if (start) rows = rows.slice(start);
+    return rows;
+  }
+
   async get(col, id) {
     const r = this.db[col].find((x) => x.id === Number(id));
     return r ? { ...r } : null;
   }
 
   async insert(col, obj) {
-    const id = this.db[col].reduce((m, r) => Math.max(m, r.id), 0) + 1;
+    const id = obj.id != null ? Number(obj.id) : this.db[col].reduce((m, r) => Math.max(m, r.id), 0) + 1;
     const row = { ...obj, id };
     this.db[col].push(row);
     this.save();
@@ -110,126 +166,143 @@ class JsonDriver {
     this.save();
   }
 
+  async deleteWhere(col, where) {
+    const before = this.db[col].length;
+    this.db[col] = this.db[col].filter((r) => !matches(r, where));
+    this.save();
+    return before - this.db[col].length;
+  }
+
+  async updateWhere(col, where, patch) {
+    let n = 0;
+    this.db[col].forEach((r) => { if (matches(r, where)) { Object.assign(r, patch); n++; } });
+    if (n) this.save();
+    return n;
+  }
+
+  async count(col, where) { return this.db[col].filter((r) => matches(r, where)).length; }
+
+  async sum(col, field, where) {
+    return this.db[col].filter((r) => matches(r, where)).reduce((s, r) => s + (Number(r[field]) || 0), 0);
+  }
+
+  async countDistinct(col, field, where) {
+    return new Set(this.db[col].filter((r) => matches(r, where)).map((r) => r[field])).size;
+  }
+
+  async groupCount(col, field, where) {
+    const out = {};
+    this.db[col].filter((r) => matches(r, where)).forEach((r) => { out[r[field]] = (out[r[field]] || 0) + 1; });
+    return out;
+  }
+
+  async groupSum(col, sumField, byField, where) {
+    const out = {};
+    this.db[col].filter((r) => matches(r, where))
+      .forEach((r) => { out[r[byField]] = (out[r[byField]] || 0) + (Number(r[sumField]) || 0); });
+    return out;
+  }
+
+  async distinct(col, field, where) {
+    return [...new Set(this.db[col].filter((r) => matches(r, where)).map((r) => r[field]))];
+  }
+
   /* عملية واحدة في كل مرة — كافٍ لعملية محلية أحادية */
   async transaction(fn) {
-    const tx = { all: this.all.bind(this), get: this.get.bind(this), getForUpdate: this.get.bind(this), insert: this.insert.bind(this), update: this.update.bind(this), remove: this.remove.bind(this) };
-    return fn(tx);
-  }
-}
-
-/* ============================================================
-   مشغّل Postgres (إنتاج)
-   جدول لكل مجموعة: id SERIAL PRIMARY KEY + data JSONB
-   ============================================================ */
-class PgDriver {
-  constructor(url) {
-    const { Pool } = require('pg');
-    const local = /localhost|127\.0\.0\.1/.test(url);
-    this.pool = new Pool({
-      connectionString: url,
-      max: IS_SERVERLESS ? 1 : 5,
-      ssl: local ? false : { rejectUnauthorized: false },
-    });
-  }
-
-  async init() {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      for (const col of COLLECTIONS) {
-        await client.query(`CREATE TABLE IF NOT EXISTS ${TABLE[col]} (id SERIAL PRIMARY KEY, data JSONB NOT NULL)`);
-      }
-      const { rows } = await client.query('SELECT COUNT(*)::int AS n FROM users');
-      if (rows[0].n === 0) {
-        const seed = DEMO_MODE ? seedData.demoSeed(hashPassword) : seedData.productionSeed(hashPassword);
-        for (const col of COLLECTIONS) {
-          for (const row of seed[col] || []) {
-            await client.query(`INSERT INTO ${TABLE[col]} (id, data) VALUES ($1, $2)`, [row.id, JSON.stringify(row)]);
-          }
-          await client.query(`SELECT setval(pg_get_serial_sequence('${TABLE[col]}','id'), GREATEST((SELECT COALESCE(MAX(id),0) FROM ${TABLE[col]}), 1))`);
-        }
-      }
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
+    const bound = {};
+    for (const m of ['all', 'find', 'get', 'insert', 'update', 'updateWhere', 'remove', 'deleteWhere',
+      'count', 'sum', 'countDistinct', 'groupCount', 'groupSum', 'distinct']) {
+      bound[m] = this[m].bind(this);
     }
-  }
-
-  _q(clientOrPool) {
-    const q = (text, params) => clientOrPool.query(text, params);
-    return {
-      all: async (col) => (await q(`SELECT data FROM ${TABLE[col]} ORDER BY id`)).rows.map((r) => r.data),
-      get: async (col, id) => ((await q(`SELECT data FROM ${TABLE[col]} WHERE id=$1`, [Number(id)])).rows[0] || {}).data || null,
-      getForUpdate: async (col, id) => ((await q(`SELECT data FROM ${TABLE[col]} WHERE id=$1 FOR UPDATE`, [Number(id)])).rows[0] || {}).data || null,
-      insert: async (col, obj) => {
-        const idRes = await q(`SELECT nextval(pg_get_serial_sequence('${TABLE[col]}','id'))::int AS id`);
-        const id = idRes.rows[0].id;
-        const row = { ...obj, id };
-        await q(`INSERT INTO ${TABLE[col]} (id, data) VALUES ($1, $2)`, [id, JSON.stringify(row)]);
-        return row;
-      },
-      update: async (col, id, patch) => {
-        const res = await q(`UPDATE ${TABLE[col]} SET data = data || $2::jsonb WHERE id=$1 RETURNING data`, [Number(id), JSON.stringify(patch)]);
-        return (res.rows[0] || {}).data || null;
-      },
-      remove: async (col, id) => { await q(`DELETE FROM ${TABLE[col]} WHERE id=$1`, [Number(id)]); },
-    };
-  }
-
-  async all(col) { return this._q(this.pool).all(col); }
-  async get(col, id) { return this._q(this.pool).get(col, id); }
-  async insert(col, obj) { return this._q(this.pool).insert(col, obj); }
-  async update(col, id, patch) { return this._q(this.pool).update(col, id, patch); }
-  async remove(col, id) { return this._q(this.pool).remove(col, id); }
-
-  async removeWhere(col, pred) {
-    const rows = await this.all(col);
-    for (const r of rows) if (pred(r)) await this.remove(col, r.id);
-  }
-
-  async transaction(fn) {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await fn(this._q(client));
-      await client.query('COMMIT');
-      return result;
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
+    bound.getForUpdate = this.get.bind(this);
+    return fn(bound);
   }
 
   async reseed() {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      for (const col of COLLECTIONS) await client.query(`DROP TABLE IF EXISTS ${TABLE[col]}`);
-      await client.query('COMMIT');
-    } finally {
-      client.release();
-    }
-    await this.init();
+    await this.loadSeed(seedData.demoSeed(hashPassword));
   }
+
+  async schemaVersion() { return 0; } // التخزين الملفّي بلا ترحيلات
+
+  async end() {}
 }
 
 /* ============================================================
-   الواجهة الموحدة
+   اختيار المشغّل
    ============================================================ */
-const driver = DATABASE_URL ? new PgDriver(DATABASE_URL) : new JsonDriver();
-let ready = null;
+const SLOW_QUERY_MS = Number(process.env.SLOW_QUERY_MS || 0);
+const log = (msg) => console.log('[db] ' + msg);
 
+let driver;
+if (DATABASE_URL) {
+  const { PgDriver } = require('./pg');
+  const local = /localhost|127\.0\.0\.1/.test(DATABASE_URL);
+
+  /* على البيئات اللحظية (Vercel) تُنشأ نسخة لكل طلب تقريبًا؛ الاتصال المباشر
+     يستنفد حدّ اتصالات القاعدة بسرعة. مزوّدو Postgres المُدارون يوفّرون رابطًا
+     مجمَّعًا (pooler) وهو المطلوب هنا — ننبّه بوضوح إن لم يُستخدم. */
+  if (IS_SERVERLESS && /neon\.tech|supabase\.co/.test(DATABASE_URL) && !/-pooler\.|pooler\./.test(DATABASE_URL)) {
+    console.warn('[db] ⚠️ رابط اتصال غير مجمَّع على بيئة لحظية — استخدم رابط الـ Pooler '
+      + '(المضيف الذي يحوي «-pooler») وإلا قد تنفد اتصالات القاعدة تحت الحمل.');
+  }
+
+  driver = new PgDriver(DATABASE_URL, {
+    log,
+    slowMs: SLOW_QUERY_MS,
+    pool: {
+      // اتصال واحد لكل نسخة لحظية؛ التجميع الفعلي يتكفّل به pooler المزوّد
+      max: IS_SERVERLESS ? 1 : Number(process.env.PG_POOL_MAX || 10),
+      idleTimeoutMillis: IS_SERVERLESS ? 10000 : 30000,
+      connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10000),
+      // سقف زمني للاستعلام: استعلام شارد لا يحتجز اتصالًا إلى الأبد
+      statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS || 15000),
+      query_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS || 15000),
+      idle_in_transaction_session_timeout: Number(process.env.PG_IDLE_TX_TIMEOUT_MS || 15000),
+      // التحقق من شهادة الخادم مفعَّل افتراضيًا — بدونه يكون الاتصال مشفَّرًا
+      // لكن غير موثَّق الهوية (قابل للاعتراض). مزوّدو Postgres المُدارون
+      // يقدّمون شهادات موثوقة عامةً فيعمل التحقق دون إعداد إضافي.
+      ssl: local ? false : {
+        rejectUnauthorized: process.env.PGSSL_NO_VERIFY !== '1',
+        ca: process.env.PGSSL_CA || undefined,
+      },
+    },
+  });
+  if (process.env.PGSSL_NO_VERIFY === '1') {
+    console.warn('[db] ⚠️ التحقق من شهادة الخادم معطَّل (PGSSL_NO_VERIFY=1) — للتشخيص فقط، لا للإنتاج.');
+  }
+} else {
+  driver = new JsonDriver();
+}
+
+/* ---------- الزرع: مرة واحدة على قاعدة فارغة ---------- */
+async function seedIfEmpty() {
+  const empty = driver instanceof JsonDriver
+    ? await driver.isEmpty()
+    : (await driver.count('users', null)) === 0;
+  if (!empty) return;
+
+  const seed = DEMO_MODE ? seedData.demoSeed(hashPassword) : seedData.productionSeed(hashPassword);
+  if (driver instanceof JsonDriver) return driver.loadSeed(seed);
+
+  // ترتيب الإدراج يحترم المفاتيح الأجنبية، والمعرّفات تُحفظ كما هي
+  for (const col of CREATE_ORDER) {
+    for (const row of seed[col] || []) await driver.insert(col, row);
+  }
+  if (driver.resetSequences) await driver.resetSequences();
+  log(`زُرعت بيانات ${DEMO_MODE ? 'العرض' : 'الإنتاج'}.`);
+}
+
+let ready = null;
 function initOnce() {
-  if (!ready) ready = driver.init();
+  if (!ready) {
+    ready = driver.init().then(seedIfEmpty).catch((e) => { ready = null; throw e; });
+  }
   return ready;
 }
 
-/* تحميل عدة مجموعات دفعة واحدة */
+/* تحميل عدة مجموعات كاملة دفعة واحدة.
+   ملاحظة أداء: هذه للمجموعات الصغيرة (الفروع، الإعدادات، الباقات…).
+   للمجموعات الكبيرة استخدم find/count/sum حتى تُنفَّذ الفلترة في القاعدة. */
 async function load(...cols) {
   await initOnce();
   const out = {};
@@ -237,20 +310,33 @@ async function load(...cols) {
   return out;
 }
 
+const wrap = (name) => async (...args) => { await initOnce(); return driver[name](...args); };
+
 module.exports = {
   COLLECTIONS,
   DEMO_MODE,
   IS_PG: !!DATABASE_URL,
   initOnce,
   load,
-  all: async (c) => { await initOnce(); return driver.all(c); },
-  get: async (c, id) => { await initOnce(); return driver.get(c, id); },
-  insert: async (c, o) => { await initOnce(); return driver.insert(c, o); },
-  update: async (c, id, p) => { await initOnce(); return driver.update(c, id, p); },
-  remove: async (c, id) => { await initOnce(); return driver.remove(c, id); },
-  removeWhere: async (c, pred) => { await initOnce(); return driver.removeWhere(c, pred); },
-  transaction: async (fn) => { await initOnce(); return driver.transaction(fn); },
+  all: wrap('all'),
+  find: wrap('find'),
+  get: wrap('get'),
+  insert: wrap('insert'),
+  update: wrap('update'),
+  updateWhere: wrap('updateWhere'),
+  remove: wrap('remove'),
+  removeWhere: wrap('removeWhere'),
+  deleteWhere: wrap('deleteWhere'),
+  count: wrap('count'),
+  sum: wrap('sum'),
+  countDistinct: wrap('countDistinct'),
+  groupCount: wrap('groupCount'),
+  groupSum: wrap('groupSum'),
+  distinct: wrap('distinct'),
+  transaction: wrap('transaction'),
   reseed: async () => { await initOnce(); return driver.reseed(); },
+  schemaVersion: async () => { await initOnce(); return driver.schemaVersion(); },
+  end: async () => driver.end(),
   hashPassword,
   verifyPassword,
   sha256,

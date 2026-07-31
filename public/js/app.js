@@ -6,10 +6,13 @@ function homeRoute(role) {
 
 const NAV = {
   admin: [
+    ['#/actions', 'مركز القرارات', 'compass'],
     ['#/admin', 'لوحة التحكم', 'grid'],
     ['#/daily', 'المتابعة اليومية', 'clipboard'],
     ['#/kpi', 'الأهداف وKPI', 'target'],
     ['#/sales', 'متابعة المبيعات', 'wa'],
+    ['#/packages', 'الباقات والعقود', 'tag'],
+    ['#/ratings', 'تقييمات المتدربين', 'star'],
     ['#/loyalty', 'الولاء والإحالات', 'gift'],
     ['#/frozen', 'المجمدون', 'snow'],
     ['#/calendar', 'التقويم والمواعيد', 'calendar'],
@@ -28,10 +31,12 @@ const NAV = {
     ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
   accountant: [
+    ['#/actions', 'مركز القرارات', 'compass'],
     ['#/accountant', 'اللوحة المالية', 'wallet'],
     ['#/daily', 'المتابعة اليومية', 'clipboard'],
     ['#/kpi', 'الأهداف وKPI', 'target'],
     ['#/sales', 'متابعة المبيعات', 'wa'],
+    ['#/packages', 'الباقات والعقود', 'tag'],
     ['#/loyalty', 'الولاء والإحالات', 'gift'],
     ['#/subscriptions', 'الاشتراكات والحصص', 'card'],
     ['#/trainees', 'المتدربون', 'users'],
@@ -57,6 +62,8 @@ const TITLES = {
   '#/settings': 'الإعدادات والتحكم',
   '#/daily': 'المتابعة اليومية', '#/kpi': 'الأهداف وKPI', '#/frozen': 'متابعة المجمدين',
   '#/sales': 'متابعة المبيعات', '#/loyalty': 'الولاء والإحالات', '#/points': 'نقاطي ومكافآتي',
+  '#/actions': 'مركز القرارات — القرارات اليومية',
+  '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
 };
 
 async function renderShell(route, renderView) {
@@ -68,6 +75,15 @@ async function renderShell(route, renderView) {
     const cfg = await API.config();
     if (cfg.currency) ACTIVE_CURRENCY = cfg.currency;
   } catch (e) { /* الافتراضي شيكل */ }
+
+  // مفتاح الدولة لروابط الواتساب — تحتاجه بطاقات الإجراءات والعقود
+  if (['admin', 'accountant'].includes(API.user.role)) {
+    try {
+      const st = await API.get('/api/settings');
+      OPS_SETTINGS.waCountryCode = st.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
+      OPS_SETTINGS.frozenMessage = st.frozenMessage || OPS_SETTINGS.frozenMessage || '';
+    } catch (e) { /* الافتراضي */ }
+  }
 
   const nav = NAV[API.user.role] || [];
   const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
@@ -91,7 +107,7 @@ async function renderShell(route, renderView) {
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
       el('button', { class: 'iconbtn menu-btn', onclick: toggleSidebar }, icon('menu')),
-      el('div', { class: 'topbar__title' }, TITLES[route] || 'نظام سبورت باور'),
+      el('div', { class: 'topbar__title' }, TITLES[route] || (route.startsWith('#/trainee/') ? 'ملف المتدرب' : 'نظام سبورت باور')),
       el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,
       el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
@@ -177,6 +193,14 @@ async function route() {
   const hash = location.hash || '#/login';
   const app = document.getElementById('app');
 
+  /* العقد الإلكتروني: صفحة عامة يفتحها الزبون بلا تسجيل دخول */
+  const contractMatch = hash.match(/^#\/contract\/([\w-]+)$/);
+  if (contractMatch) {
+    app.innerHTML = '';
+    await viewPublicContract(app, contractMatch[1]);
+    return;
+  }
+
   if (!API.token || hash === '#/login') {
     if (API.token && hash === '#/login') { location.hash = homeRoute(API.user.role); return; }
     app.innerHTML = '';
@@ -211,6 +235,9 @@ async function route() {
     '#/sales': guard(['admin', 'accountant'], viewSales),
     '#/loyalty': guard(['admin', 'accountant'], viewLoyalty),
     '#/points': guard(['trainee'], viewMyPoints),
+    '#/actions': guard(['admin', 'accountant'], viewActionCenter),
+    '#/packages': guard(['admin', 'accountant'], viewPackages),
+    '#/ratings': guard(['admin'], viewRatings),
   };
 
   const view = routes[hash];
