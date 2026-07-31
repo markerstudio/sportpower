@@ -179,8 +179,9 @@ app.post('/api/login', h(async (req, res) => {
   loginAttempts.delete('user:' + uname);
   const token = crypto.randomBytes(32).toString('hex');
   await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, expiresAt: Date.now() + TOKEN_TTL_MS });
-  // تنظيف الجلسات المنتهية
+  // تنظيف دوري: الجلسات المنتهية، والإشعارات المقروءة القديمة
   await Store.deleteWhere('tokens', { expiresAt: { lt: Date.now() } });
+  await sweepOldNotifications();
   res.json({ token, user: publicUser(user) });
 }));
 
@@ -237,6 +238,24 @@ async function notify(userId, text, type) {
   await Store.insert('notifications', { userId, text, date: todayStr(), read: false, type: type || 'info' });
 }
 
+/* ---------- تنظيف الإشعارات القديمة ----------
+   الإشعارات تتراكم بلا سقف (تنبيهات الاشتراكات والغياب تُنشأ يوميًا).
+   نحذف **المقروءة** الأقدم من مدة الاحتفاظ فقط — غير المقروء يبقى دائمًا.
+   يُنفَّذ عند تسجيل الدخول بحد أقصى مرة كل 6 ساعات لكل نسخة تشغيل. */
+const NOTIF_RETENTION_DAYS = Math.max(Number(process.env.NOTIF_RETENTION_DAYS || 180), 7);
+let lastNotifSweep = 0;
+async function sweepOldNotifications() {
+  if (Date.now() - lastNotifSweep < 6 * 60 * 60 * 1000) return;
+  lastNotifSweep = Date.now();
+  const cutoff = new Date(Date.now() - NOTIF_RETENTION_DAYS * 86400000).toISOString().slice(0, 10);
+  try {
+    const removed = await Store.deleteWhere('notifications', { read: true, date: { lt: cutoff } });
+    if (removed) console.log(`[db] نُظّف ${removed} إشعارًا مقروءًا أقدم من ${NOTIF_RETENTION_DAYS} يومًا.`);
+  } catch (e) {
+    console.error('تعذّر تنظيف الإشعارات:', e.message);
+  }
+}
+
 /* إشعارات الاشتراكات القريبة من الانتهاء — تُحدّث عند طلب إشعارات الإدارة */
 async function refreshSubscriptionAlerts(adminId) {
   const { subscriptions, users } = await Store.load('subscriptions', 'users');
@@ -264,6 +283,33 @@ function pageOpts(req, extra = {}) {
   if (Number.isFinite(limit) && limit > 0) opts.limit = Math.min(limit, 1000);
   if (Number.isFinite(offset) && offset > 0) opts.offset = offset;
   return opts;
+}
+
+/* بحث بالاسم/الجوال على القوائم المرتبطة بمتدرب.
+   جدول المستخدمين صغير، فنطابق نصّه هنا بنفس دلالات بحث الواجهة
+   (تطابق جزئي) ثم نُصفّي القائمة الكبيرة في القاعدة بالمعرّفات. */
+async function traineeIdsMatching(search) {
+  const q = String(search || '').trim();
+  if (!q) return null;
+  const users = await Store.find('users', { role: 'trainee' });
+  return users
+    .filter((u) => `${u.name || ''} ${u.phone || ''} ${u.username || ''}`.includes(q))
+    .map((u) => u.id);
+}
+
+/* عند طلب ترقيم صريح نُعيد الإجمالي مع الصفحة، وإلا نُعيد المصفوفة كما كانت */
+function pagedResponse(req, rows, total) {
+  return req.query.limit ? { rows, total, limit: Number(req.query.limit), offset: Number(req.query.offset) || 0 } : rows;
+}
+
+/* أسماء متدربي الصفحة الحالية فقط — حتى لا تُحمَّل قائمة المتدربين كاملة
+   في المتصفح لمجرد عرض اسم بجانب كل صف. */
+async function withTraineeNames(rows) {
+  const ids = [...new Set(rows.map((r) => r.traineeId).filter((v) => v != null))];
+  if (!ids.length) return rows;
+  const users = await Store.find('users', { id: { in: ids } });
+  const byId = Object.fromEntries(users.map((u) => [u.id, u]));
+  return rows.map((r) => ({ ...r, traineeName: (byId[r.traineeId] || {}).name || null }));
 }
 
 function saveImage(imageBase64, prefix) {
@@ -479,14 +525,23 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
   const where = {};
   if (req.user.role === 'trainee') where.traineeId = req.user.id;
   if (req.query.branch) where.branchId = Number(req.query.branch);
-  const list = await Store.find('subscriptions', where, pageOpts(req));
+  if (req.query.search) {
+    const ids = await traineeIdsMatching(req.query.search);
+    where.traineeId = where.traineeId !== undefined ? (ids.includes(where.traineeId) ? where.traineeId : -1) : { in: ids };
+  }
+  const [list, total] = await Promise.all([
+    Store.find('subscriptions', where, pageOpts(req)),
+    req.query.limit ? Store.count('subscriptions', where) : Promise.resolve(0),
+  ]);
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية لا يريان قيمة الاشتراك
   const withPrice = clients.canSeePrices(req.user.role);
-  res.json(list.map((s) => {
+  let rows = list.map((s) => {
     const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
     if (!withPrice) delete row.price;
     return row;
-  }));
+  });
+  if (req.query.limit) rows = await withTraineeNames(rows);
+  res.json(pagedResponse(req, rows, total));
 }));
 
 /* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
@@ -551,7 +606,14 @@ app.get('/api/sessions', auth, h(async (req, res) => {
   if (req.query.month) where.date = { gte: req.query.month + '-01', lte: req.query.month + '-31' };
   if (req.query.branch) where.branchId = Number(req.query.branch);
   if (req.query.trainee) where.traineeId = Number(req.query.trainee);
-  res.json(await Store.find('sessions', where, pageOpts(req)));
+  if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
+  const opts = pageOpts(req, req.query.limit ? { order: [['date', 'desc'], ['time', 'desc']] } : {});
+  const [found, total] = await Promise.all([
+    Store.find('sessions', where, opts),
+    req.query.limit ? Store.count('sessions', where) : Promise.resolve(0),
+  ]);
+  const rows = req.query.limit ? await withTraineeNames(found) : found;
+  res.json(pagedResponse(req, rows, total));
 }));
 
 app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, res) => {

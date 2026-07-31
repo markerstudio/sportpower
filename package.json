@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "seed": "node server/reseed.js",
+    "db:setup": "node scripts/db-setup.js",
     "db:check": "node scripts/db-check.js",
     "db:backup": "bash scripts/db-backup.sh",
     "db:restore": "bash scripts/db-restore.sh",

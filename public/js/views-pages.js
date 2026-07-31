@@ -249,20 +249,17 @@ async function viewSubscriptions(root) {
 
   async function render() {
     container.innerHTML = '';
-    container.append(spinnerCard());
-    const [subs, trainees, sessions] = await Promise.all([
-      API.get('/api/subscriptions'),
-      API.get('/api/users?role=trainee'),
-      API.get('/api/sessions?month=' + thisMonthISO()),
-    ]);
-    container.innerHTML = '';
-
-    const byName = (id) => (trainees.find((t) => t.id === id) || {}).name || '#' + id;
+    // القوائم الكبيرة تُحمَّل صفحةً صفحة من الخادم مع أسماء متدربيها —
+    // ولا تُحمَّل قائمة المتدربين كاملة إلا عند فتح نافذة تحتاجها.
+    const byName = (s) => s.traineeName || '#' + s.traineeId;
+    const pageQuery = ({ query, page, pageSize }) =>
+      `limit=${pageSize}&offset=${page * pageSize}` + (query ? '&search=' + encodeURIComponent(query) : '');
+    const loadTrainees = () => API.get('/api/users?role=trainee');
 
     const bar = el('div', { class: 'card filters' },
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
-      el('button', { class: 'btn btn--outline', onclick: () => openSubModal(render, trainees) }, 'تجديد اشتراك لمتدرب حالي'));
+      el('button', { class: 'btn btn--outline', onclick: async () => openSubModal(render, await loadTrainees()) }, 'تجديد اشتراك لمتدرب حالي'));
     // تسجيل الحصص للمدرب/الإدارة — وليس المحاسب
     if (API.user.role === 'admin') {
       bar.append(el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة'));
@@ -272,17 +269,17 @@ async function viewSubscriptions(root) {
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كل الاشتراكات'),
       pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة', ''],
-        subs.sort((a, b) => (a.status === 'expired') - (b.status === 'expired')),
+        null,
         (s) => {
-          const nameLink = el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, byName(s.traineeId));
+          const nameLink = el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, byName(s));
           const act = async (action, label) => {
             const doIt = async (reason) => {
               try { await API.post(`/api/subscriptions/${s.id}/action`, { action, reason: reason || '' }); toast('تم — وسُجّل الحدث في المتابعة اليومية والتقارير.'); render(); }
               catch (ex) { toast(ex.message, true); }
             };
             // سبب الإلغاء يُسجَّل لتحليل أسباب خسارة العملاء في تقرير النمو
-            if (action === 'cancel') { openCancelReasonModal(`إلغاء اشتراك ${byName(s.traineeId)}`, doIt); return; }
-            if (!confirm(`${label} اشتراك ${byName(s.traineeId)}؟`)) return;
+            if (action === 'cancel') { openCancelReasonModal(`إلغاء اشتراك ${byName(s)}`, doIt); return; }
+            if (!confirm(`${label} اشتراك ${byName(s)}؟`)) return;
             doIt();
           };
           return [nameLink,
@@ -298,16 +295,28 @@ async function viewSubscriptions(root) {
                 ? el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: () => act('cancel', 'إلغاء') }, 'إلغاء')
                 : el('span'))];
         },
-        { pageSize: 15, searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
+        {
+          pageSize: 15,
+          searchPlaceholder: 'ابحث باسم المتدرب…',
+          remote: async (q) => {
+            const r = await API.get('/api/subscriptions?' + pageQuery(q));
+            // المنتهية أخيرًا داخل الصفحة نفسها
+            r.rows.sort((a, b) => (a.status === 'expired') - (b.status === 'expired'));
+            return r;
+          },
+        })));
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `حصص شهر ${thisMonthISO()}`),
       pagedTable(['التاريخ', 'الساعة', 'المتدرب', 'المدة', 'الأسلوب', 'ملاحظات'],
-        sessions.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)),
+        null,
         (s) => [s.date, s.time,
-          el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none' }, byName(s.traineeId)),
+          el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none' }, byName(s)),
           s.duration + ' د', s.style || '—', s.notes || '—'],
-        { pageSize: 15, emptyText: 'لا حصص هذا الشهر.', searchText: (s) => byName(s.traineeId), searchPlaceholder: 'ابحث باسم المتدرب…' })));
+        {
+          pageSize: 15, emptyText: 'لا حصص هذا الشهر.', searchPlaceholder: 'ابحث باسم المتدرب…',
+          remote: (q) => API.get(`/api/sessions?month=${thisMonthISO()}&` + pageQuery(q)),
+        })));
   }
 
   await render();

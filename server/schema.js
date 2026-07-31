@@ -164,7 +164,7 @@ const SCHEMA = {
       read: col('bool', { default: 'false' }),
       type: col('text'),
     },
-    indexes: [['userId'], ['userId', 'read']],
+    indexes: [['userId'], ['userId', 'read'], ['read', 'date']],
   },
 
   tokens: {

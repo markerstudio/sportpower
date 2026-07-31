@@ -162,11 +162,17 @@ function searchSelect(options, attrs = {}) {
 /* تسمية موحّدة للمتدرب داخل المنتقيات: الاسم — الجوال (لتمييز التشابه) */
 const traineeOption = (t) => [t.id, t.phone ? `${t.name} — ${t.phone}` : `${t.name} — ${t.username}`];
 
-/* جدول مع بحث وترقيم صفحات — للقوائم الكبيرة */
+/* جدول مع بحث وترقيم صفحات — للقوائم الكبيرة.
+   وضعان:
+   - محلي: تُمرَّر البيانات كاملة (opts.searchText للبحث) — للقوائم الصغيرة.
+   - من الخادم: opts.remote({ query, page, pageSize }) → { rows, total }
+     فلا تُنقل إلى المتصفح إلا صفحة واحدة مهما كبر الجدول. */
 function pagedTable(headers, data, rowRender, opts = {}) {
   const pageSize = opts.pageSize || 15;
+  const remote = opts.remote || null;
   let page = 0;
   let query = '';
+  let token = 0; // يتجاهل ردود الطلبات المتجاوَزة
   const wrap = el('div');
   const body = el('div');
   const bar = el('div', { class: 'pt-bar' });
@@ -174,27 +180,23 @@ function pagedTable(headers, data, rowRender, opts = {}) {
   const nav = el('div', { class: 'pt-nav' });
 
   let searchIn = null;
-  if (opts.searchText) {
+  if (opts.searchText || remote) {
     searchIn = input({
       placeholder: opts.searchPlaceholder || 'بحث…',
-      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; draw(); }, 250),
+      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; draw(); }, 300),
     });
     wrap.append(el('div', { style: 'max-width:320px;margin-bottom:12px' }, searchIn));
   }
   wrap.append(body, bar);
 
-  function draw() {
-    const filtered = query ? data.filter((d) => (opts.searchText(d) || '').includes(query)) : data;
-    const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-    if (page >= pages) page = pages - 1;
-    const slice = filtered.slice(page * pageSize, (page + 1) * pageSize);
-
+  function paint(rows, total) {
+    const pages = Math.max(1, Math.ceil(total / pageSize));
     body.innerHTML = '';
-    body.append(dataTable(headers, slice.map(rowRender), opts.emptyText));
+    body.append(dataTable(headers, rows.map(rowRender), opts.emptyText));
 
     bar.innerHTML = '';
-    info.textContent = filtered.length
-      ? `${filtered.length.toLocaleString('en')} سجل` + (pages > 1 ? ` · صفحة ${page + 1} من ${pages}` : '')
+    info.textContent = total
+      ? `${total.toLocaleString('en')} سجل` + (pages > 1 ? ` · صفحة ${page + 1} من ${pages}` : '')
       : '';
     bar.append(info);
     if (pages > 1) {
@@ -206,7 +208,31 @@ function pagedTable(headers, data, rowRender, opts = {}) {
     }
   }
 
+  async function draw() {
+    if (!remote) {
+      const filtered = query ? data.filter((d) => (opts.searchText(d) || '').includes(query)) : data;
+      const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+      if (page >= pages) page = pages - 1;
+      paint(filtered.slice(page * pageSize, (page + 1) * pageSize), filtered.length);
+      return;
+    }
+    const mine = ++token;
+    if (!body.firstChild) body.append(spinnerCard());
+    try {
+      const { rows, total } = await remote({ query, page, pageSize });
+      if (mine !== token) return; // وصل ردّ أحدث
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      if (page >= pages && page > 0) { page = pages - 1; return draw(); }
+      paint(rows, total);
+    } catch (ex) {
+      if (mine !== token) return;
+      body.innerHTML = '';
+      body.append(el('div', { class: 'alert alert--warning' }, ex.message));
+    }
+  }
+
   draw();
+  wrap.reload = () => { page = 0; draw(); };
   return wrap;
 }
 
