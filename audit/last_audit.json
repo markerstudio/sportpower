@@ -1,0 +1,101 @@
+{
+  "project": "sportpower",
+  "risk_tier": 3,
+  "findings": [
+    {
+      "title": "IDOR: any member reads any other member's sessions via /api/sessions?trainee=",
+      "severity": "high",
+      "status": "fixed"
+    },
+    {
+      "title": "Uploaded InBody images written to /tmp on Vercel \u2014 destroyed on every cold start",
+      "severity": "high",
+      "status": "confirmed"
+    },
+    {
+      "title": "InBody health-scan images served from /uploads with no authentication",
+      "severity": "medium",
+      "status": "confirmed"
+    },
+    {
+      "title": "CSP / X-Frame-Options / nosniff absent on the HTML document (Vercel CDN bypasses Express)",
+      "severity": "medium",
+      "status": "fixed"
+    },
+    {
+      "title": "productionSeed falls back to admin/admin123 when ADMIN_PASSWORD is unset",
+      "severity": "medium",
+      "status": "fixed"
+    },
+    {
+      "title": "Login rate limiting is per-instance in-memory \u2014 ineffective on serverless",
+      "severity": "medium",
+      "status": "confirmed"
+    },
+    {
+      "title": "Contract links expose applicant's full personal + health data forever, no expiry",
+      "severity": "medium",
+      "status": "fixed"
+    },
+    {
+      "title": "Repository is public \u2014 publishes auth design, seed data and default credentials",
+      "severity": "medium",
+      "status": "confirmed"
+    },
+    {
+      "title": "Staff password floor is 6 chars; mustChangePassword not enforced server-side",
+      "severity": "medium",
+      "status": "fixed"
+    },
+    {
+      "title": "No privacy policy or explicit consent for collecting health data (PRIVACY)",
+      "severity": "medium",
+      "status": "confirmed"
+    },
+    {
+      "title": "xlsx parses staff-uploaded workbooks; unpatched prototype-pollution advisory",
+      "severity": "medium",
+      "status": "suspected"
+    },
+    {
+      "title": "Fail-open to demo mode with published passwords if DATABASE_URL goes missing",
+      "severity": "low",
+      "status": "confirmed"
+    },
+    {
+      "title": ".gitignore missing .env and *.pem",
+      "severity": "low",
+      "status": "fixed"
+    },
+    {
+      "title": "15 MB JSON body accepted from unauthenticated callers",
+      "severity": "low",
+      "status": "fixed"
+    },
+    {
+      "title": "/api/config and /api/health disclose storage mode without auth",
+      "severity": "low",
+      "status": "confirmed"
+    },
+    {
+      "title": "loginAttempts Map never evicts expired keys \u2014 unbounded growth",
+      "severity": "low",
+      "status": "fixed"
+    },
+    {
+      "title": "Sliding 12h session with no absolute lifetime cap",
+      "severity": "low",
+      "status": "fixed"
+    },
+    {
+      "title": "Legacy static-salt sha256 password verification path still present",
+      "severity": "low",
+      "status": "confirmed"
+    },
+    {
+      "title": "No self-serve data deletion path for a member's record (PRIVACY)",
+      "severity": "low",
+      "status": "confirmed"
+    }
+  ]
+}

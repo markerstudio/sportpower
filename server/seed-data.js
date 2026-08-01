@@ -56,13 +56,21 @@ const DEFAULT_CONTRACT_TERMS = [
 
 /* الحد الأدنى للإنتاج: مدير + الفروع + مكتبة الوجبات */
 function productionSeed(hash) {
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+  /* لا كلمة مرور افتراضية على قاعدة إنتاج. الافتراضي القديم («admin123»)
+     كان منشورًا في التوثيق، فأي قاعدة تُزرع بلا ADMIN_PASSWORD كانت تفتح
+     حساب الإدارة لأي شخص قرأ الملف. نتوقف بوضوح بدل أن نُكمل بحساب مكشوف. */
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword || String(adminPassword).length < 12) {
+    throw new Error(
+      'ADMIN_PASSWORD غير مضبوط (أو أقصر من 12 حرفًا). اضبطه في متغيرات البيئة '
+      + 'قبل زرع قاعدة إنتاج — لا يوجد كلمة مرور افتراضية لحساب الإدارة.');
+  }
   return {
     branches: BRANCHES,
     users: [{
       id: 1, username: 'admin', password: hash(adminPassword), role: 'admin',
       name: 'إدارة سبورت باور', phone: '', branchId: null,
-      mustChangePassword: !process.env.ADMIN_PASSWORD,
+      mustChangePassword: false,
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],

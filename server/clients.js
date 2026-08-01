@@ -187,7 +187,14 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       currency: s.currency || 'ILS',
       terms: s.contractTerms || seedData.DEFAULT_CONTRACT_TERMS,
       packages: list, // بكل الأسعار — الزبون يرى كل شيء قبل أن يشترك
-      submission: ['submitted', 'converted'].includes(contract.status) ? contract.submission : null,
+      /* تأكيد الاستلام فقط — لا نُعيد ملف البيانات كاملًا (الميلاد، السكن،
+         الملاحظات الصحية، رقم الطوارئ). الرابط يُرسَل على واتساب ويُعاد
+         توجيهه، ومن يملكه لاحقًا ليس بالضرورة صاحب البيانات. */
+      submission: contract.status === 'submitted' && !expired && contract.submission
+        ? { name: contract.submission.name, packageName: contract.submission.packageName,
+            sessions: contract.submission.sessions, price: contract.submission.price,
+            agreedAt: contract.submission.agreedAt }
+        : null,
     });
   }));
 

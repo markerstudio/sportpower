@@ -3,3 +3,12 @@ data/
 uploads/
 .DS_Store
 backups/
+
+# أسرار وبيانات اعتماد — يجب ألا تدخل المستودع أبدًا
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+.vercel/

@@ -16,7 +16,10 @@ const PORT = process.env.PORT || 3000;
 const UPLOADS = process.env.VERCEL ? '/tmp/sportpower-uploads' : path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOADS, { recursive: true });
 
-const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 ساعة
+const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 ساعة (تُمدَّد مع النشاط)
+/* سقف مطلق لعمر الجلسة: التمديد التلقائي وحده يُبقي جلسة مسروقة حيّة إلى
+   الأبد ما دام المهاجم نشطًا — بعد هذه المدة تنتهي الجلسة مهما كان النشاط. */
+const TOKEN_ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000; // 7 أيام
 
 app.disable('x-powered-by');
 
@@ -35,7 +38,13 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '15mb' }));
+/* حدود حجم الطلب: المسارات التي ترفع صورًا أو ملفات تحتاج سقفًا عاليًا،
+   وبقية المسارات — ومنها تسجيل الدخول المفتوح للجميع — لا تحتاج أكثر من
+   بضع مئات الكيلوبايتات. سقف واحد عالٍ للجميع يعني أن أي زائر غير مسجَّل
+   يستطيع إجبار الخادم على تحليل 15 ميغابايت في كل طلب. */
+const UPLOAD_ROUTES = ['/api/inbody', '/api/inbody/ocr', '/api/meals', '/api/frozen/import'];
+app.use(UPLOAD_ROUTES, express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '256kb' }));
 
 /* ملفات PWA — بأنواع وترويسات صحيحة */
 app.get('/manifest.webmanifest', (req, res) => {
@@ -50,7 +59,13 @@ app.get('/sw.js', (req, res) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 app.use('/marketing', express.static(path.join(__dirname, '..', 'marketing')));
-app.use('/uploads', express.static(UPLOADS));
+/* الصور المرفوعة (قراءات InBody) بيانات صحية شخصية: لا تُخزَّن في وسيط
+   مشترك ولا تُفهرَس في محركات البحث، والوصول إليها محمي بعشوائية الاسم. */
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  next();
+}, express.static(UPLOADS, { index: false, dotfiles: 'deny' }));
 
 /* غلاف موحد لالتقاط الأخطاء في المعالجات غير المتزامنة */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -64,7 +79,8 @@ const auth = h(async (req, res, next) => {
   const hash = Store.sha256(raw);
   // بحث مفهرس بالبصمة — لا يُسحب جدول الجلسات كاملًا في كل طلب
   const t = (await Store.find('tokens', { hash }, { limit: 1 }))[0];
-  if (!t || t.expiresAt < Date.now()) {
+  const tooOld = t && t.issuedAt && Date.now() - t.issuedAt > TOKEN_ABSOLUTE_MS;
+  if (!t || t.expiresAt < Date.now() || tooOld) {
     if (t) await Store.remove('tokens', t.id);
     return res.status(401).json({ error: 'انتهت الجلسة — يرجى تسجيل الدخول من جديد.' });
   }
@@ -93,8 +109,15 @@ const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, 
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
+let lastAttemptSweep = 0;
 function rateLimited(key, max, windowMs) {
   const now = Date.now();
+  /* كنس المفاتيح المنتهية: بلا هذا تنمو الخريطة بلا سقف مع كل اسم مستخدم
+     أو IP جديد يُجرَّب — وهو ما يستغلّه هجوم استنزاف الذاكرة. */
+  if (now - lastAttemptSweep > 5 * 60 * 1000) {
+    lastAttemptSweep = now;
+    for (const [k, v] of loginAttempts) if (v.resetAt < now) loginAttempts.delete(k);
+  }
   const rec = loginAttempts.get(key);
   if (!rec || rec.resetAt < now) {
     loginAttempts.set(key, { count: 1, resetAt: now + windowMs });
@@ -178,7 +201,7 @@ app.post('/api/login', h(async (req, res) => {
   }
   loginAttempts.delete('user:' + uname);
   const token = crypto.randomBytes(32).toString('hex');
-  await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, expiresAt: Date.now() + TOKEN_TTL_MS });
+  await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, issuedAt: Date.now(), expiresAt: Date.now() + TOKEN_TTL_MS });
   // تنظيف دوري: الجلسات المنتهية، والإشعارات المقروءة القديمة
   await Store.deleteWhere('tokens', { expiresAt: { lt: Date.now() } });
   await sweepOldNotifications();
@@ -316,7 +339,9 @@ function saveImage(imageBase64, prefix) {
   if (!imageBase64) return null;
   const m = imageBase64.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/);
   if (!m) return null;
-  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+  /* الصور تُخدَم من مسار عام، فاسم الملف نفسه هو ما يحمي القراءة —
+     16 بايت عشوائية (128 بت) بدل 4 حتى يستحيل تخمين الاسم عمليًا. */
+  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
   fs.writeFileSync(path.join(UPLOADS, name), Buffer.from(m[2], 'base64'));
   return name;
 }
@@ -365,7 +390,7 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
   if (!['trainee', 'trainer', 'accountant', 'nutritionist', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'نوع مستخدم غير صحيح.' });
   }
-  if (String(password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'كلمة المرور 8 أحرف على الأقل.' });
   const users = await Store.all('users');
   if (users.some((u) => u.username === String(username).toLowerCase())) {
     return res.status(400).json({ error: 'اسم المستخدم موجود مسبقًا.' });
@@ -399,7 +424,7 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
 
   // إعادة تعيين كلمة المرور من الإدارة
   if (req.body.password !== undefined) {
-    if (String(req.body.password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+    if (String(req.body.password).length < 8) return res.status(400).json({ error: 'كلمة المرور 8 أحرف على الأقل.' });
     patch.password = Store.hashPassword(req.body.password);
     patch.mustChangePassword = user.id !== req.user.id;
   }
@@ -605,7 +630,9 @@ app.get('/api/sessions', auth, h(async (req, res) => {
   if (req.user.role === 'trainee') where.traineeId = req.user.id;
   if (req.query.month) where.date = { gte: req.query.month + '-01', lte: req.query.month + '-31' };
   if (req.query.branch) where.branchId = Number(req.query.branch);
-  if (req.query.trainee) where.traineeId = Number(req.query.trainee);
+  /* فلتر المتدرب من الاستعلام لا يجوز أن يوسّع نطاق ما يراه المتدرب عن نفسه —
+     المتدرب مقيَّد بسجلّه هو مهما أرسل في ?trainee= */
+  if (req.query.trainee && req.user.role !== 'trainee') where.traineeId = Number(req.query.trainee);
   if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
   const opts = pageOpts(req, req.query.limit ? { order: [['date', 'desc'], ['time', 'desc']] } : {});
   const [found, total] = await Promise.all([
