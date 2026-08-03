@@ -41,6 +41,7 @@ const SCHEMA = {
       active: col('bool'),
       mustChangePassword: col('bool'),
       referralCode: col('text'),
+      sourceTrainerId: col('int'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },

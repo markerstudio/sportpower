@@ -107,6 +107,7 @@ async function renderShell(route, renderView) {
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
       el('button', { class: 'iconbtn menu-btn', onclick: toggleSidebar }, icon('menu')),
+      el('button', { class: 'iconbtn', title: 'عودة للصفحة السابقة', onclick: () => history.back() }, icon('back')),
       el('div', { class: 'topbar__title' }, TITLES[route] || (route.startsWith('#/trainee/') ? 'ملف المتدرب' : 'نظام سبورت باور')),
       el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,

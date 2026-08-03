@@ -411,7 +411,7 @@ async function viewMyPoints(root) {
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'كيف أكسب النقاط؟'),
       el('div', { class: 'macros' },
-        el('span', { class: 'macro' }, 'حضور حصة ', el('b', {}, `+${data.pts.session}`)),
+        el('span', { class: 'macro' }, 'نتيجة منشورة على السوشال ميديا 📣 ', el('b', {}, `+${data.pts.result}`)),
         el('span', { class: 'macro' }, 'تجديد الاشتراك ', el('b', {}, `+${data.pts.renewal}`)),
         el('span', { class: 'macro' }, 'إحالة صديق ', el('b', {}, `+${data.pts.referral}`)),
         el('span', { class: 'macro' }, 'تحقيق هدف الوزن/القياسات ', el('b', {}, 'مكافأة من المدرب 🎯')))));
@@ -484,25 +484,29 @@ async function viewLoyalty(root) {
       kpiTile(t.approvedReferrals, 'إحالات معتمدة', 'users'),
       kpiTile(t.pendingReferrals, 'إحالات بانتظار الاعتماد', 'alert', t.pendingReferrals ? 'warn' : undefined)));
 
-    /* إعداد قيم النقاط — تتحكم بها الإدارة */
-    const sessionPts = input({ type: 'number', min: 0, value: data.pts.session, disabled: !isAdmin || null });
+    /* إعداد قيم النقاط — تتحكم بها الإدارة.
+       «نتيجة منشورة على السوشال ميديا» حلّت محل نقاط حضور الحصة:
+       تُمنح يدويًا عند وصول المتدرب لنتيجة ونشرها. */
+    const resultPts = input({ type: 'number', min: 0, value: data.pts.result, disabled: !isAdmin || null });
     const renewalPts = input({ type: 'number', min: 0, value: data.pts.renewal, disabled: !isAdmin || null });
     const referralPts = input({ type: 'number', min: 0, value: data.pts.referral, disabled: !isAdmin || null });
     const settingsCard = el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'قيم النقاط (تحكم الإدارة)'),
       el('div', { class: 'filters' },
-        field('حضور حصة', sessionPts),
+        field('نتيجة منشورة على السوشال ميديا 📣', resultPts),
         field('تجديد الاشتراك', renewalPts),
         field('إحالة صديق', referralPts),
         isAdmin ? el('button', {
           class: 'btn btn--accent',
           onclick: async () => {
             try {
-              await API.put('/api/settings', { ptsSession: sessionPts.value, ptsRenewal: renewalPts.value, ptsReferral: referralPts.value });
+              await API.put('/api/settings', { ptsResult: resultPts.value, ptsRenewal: renewalPts.value, ptsReferral: referralPts.value });
               toast('حُفظت قيم النقاط — وتسري على العمليات القادمة.');
             } catch (ex) { toast(ex.message, true); }
           },
-        }, 'حفظ') : el('span')));
+        }, 'حفظ') : el('span')),
+      el('div', { style: 'font-size:12px;color:var(--app-muted)' },
+        'نقاط النتيجة تُمنح من زر «منح نقاط» عند تحقيق المتدرب نتيجة ونشرها على صفحات السوشال ميديا.'));
     container.append(settingsCard);
 
     const statusTagOf = (s) => s === 'approved' ? el('span', { class: 'tag tag--accent' }, 'معتمد ✓')
@@ -601,6 +605,7 @@ async function openAwardModal(onDone, preselectId) {
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: preselectId || '' });
   const pointsIn = input({ type: 'number', placeholder: 'موجب للمنح — سالب للتصحيح' });
   const reasonSel = select([
+    ['نتيجة منشورة على السوشال ميديا 📣', 'نتيجة منشورة على السوشال ميديا 📣'],
     ['تحقيق هدف الوزن 🎯', 'تحقيق هدف الوزن 🎯'],
     ['تحقيق هدف القياسات 📏', 'تحقيق هدف القياسات 📏'],
     ['الالتزام الكامل بالحصص 💪', 'الالتزام الكامل بالحصص 💪'],
