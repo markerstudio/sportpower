@@ -41,6 +41,11 @@ npm run seed       # إعادة تهيئة البيانات التجريبية
    ```
 4. في **Environment Variables** أضف:
    - `DATABASE_URL` — الرابط المجمَّع. (`POSTGRES_URL` مدعوم أيضًا.)
+   - `PGSSL_CA` — **إلزامي مع Supabase**: شهادة الجذر الخاصة بهم (Project
+     Settings → Database → SSL → Download certificate) — محتوى ملف `.crt`
+     كاملًا. بدونها يفشل الاتصال بخطأ `SELF_SIGNED_CERT_IN_CHAIN` لأن
+     النظام يتحقق من هوية الخادم ولا يقبل شهادة غير موثوقة. (Neon يستخدم
+     شهادات عامة فلا يحتاجها.)
    - `ADMIN_PASSWORD` — كلمة مرور قوية لحساب `admin` (إن لم تُضبط يبدأ الحساب
      بكلمة `admin123` مع تحذير إلزامي بتغييرها من داخل النظام).
 5. أعد النشر، ثم تحقق:
