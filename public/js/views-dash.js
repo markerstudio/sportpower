@@ -14,8 +14,9 @@ function viewLogin(root) {
       e.preventDefault();
       err.textContent = '';
       try {
-        const u = await API.login(user.value.trim(), pass.value);
-        location.hash = homeRoute(u.role);
+        const res = await API.login(user.value.trim(), pass.value);
+        if (res && (res.mfaRequired || res.mfaSetupRequired)) { showMfaStep(res); return; }
+        location.hash = homeRoute(res.role);
       } catch (ex) { err.textContent = ex.message; }
     },
     style: 'display:flex;flex-direction:column;gap:14px',
@@ -24,6 +25,77 @@ function viewLogin(root) {
     field('كلمة المرور', pass),
     err,
     el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'دخول النظام'));
+
+  /* التحقق الثنائي: إدخال رمز التطبيق — أو التسجيل الأول بمفتاح المصادقة */
+  function showMfaStep(res) {
+    form.style.display = 'none';
+    demoBox.innerHTML = '';
+    const codeIn = input({
+      placeholder: res.mfaSetupRequired ? '123456' : 'رمز التطبيق أو رمز احتياطي',
+      dir: 'ltr', style: 'text-align:center;font-family:var(--font-mono);font-size:18px;letter-spacing:3px',
+      autocomplete: 'one-time-code', inputmode: 'latin',
+    });
+    const mfaErr = el('div', { style: 'color:var(--status-danger);font-size:13px;min-height:18px' });
+    const box = el('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+
+    if (res.mfaSetupRequired) {
+      box.append(
+        el('div', { class: 'alert alert--info', style: 'display:block' },
+          el('b', {}, 'تفعيل التحقق الثنائي (مرة واحدة)'), el('br'),
+          '١. ثبّت تطبيق مصادقة (Google Authenticator أو Authy).', el('br'),
+          '٢. أضف حسابًا بخيار «إدخال مفتاح الإعداد» والصق المفتاح، أو افتح الرابط من الجوال.', el('br'),
+          '٣. أدخل الرمز المكوّن من 6 أرقام الظاهر في التطبيق.'),
+        el('div', { style: 'display:flex;gap:8px;align-items:center' },
+          el('code', { style: 'flex:1;direction:ltr;text-align:center;font-family:var(--font-mono);font-size:15px;letter-spacing:2px;padding:10px;background:var(--app-hover);border-radius:8px;word-break:break-all' }, res.secret),
+          el('button', {
+            class: 'btn btn--outline btn--sm', type: 'button',
+            onclick: () => navigator.clipboard.writeText(res.secret).then(() => toast('نُسخ المفتاح.')),
+          }, 'نسخ')),
+        el('a', { class: 'btn btn--ghost btn--sm', href: res.otpauth }, 'فتح في تطبيق المصادقة (من الجوال)'));
+    } else {
+      box.append(el('div', { class: 'alert alert--info' }, 'أدخل الرمز من تطبيق المصادقة — أو أحد رموزك الاحتياطية.'));
+    }
+
+    box.append(el('form', {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        mfaErr.textContent = '';
+        try {
+          const data = await API.loginMfa(res.mfaToken, codeIn.value);
+          if (data.backupCodes) { showBackupCodes(data); return; }
+          location.hash = homeRoute(data.user.role);
+        } catch (ex) { mfaErr.textContent = ex.message; }
+      },
+      style: 'display:flex;flex-direction:column;gap:14px',
+    },
+      field('رمز التحقق', codeIn),
+      mfaErr,
+      el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'تحقق ودخول')));
+    form.after(box);
+    codeIn.focus();
+  }
+
+  /* الرموز الاحتياطية — تظهر مرة واحدة فقط بعد التسجيل الأول */
+  function showBackupCodes(data) {
+    const wrap = el('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    wrap.append(
+      el('div', { class: 'alert alert--warning', style: 'display:block' },
+        el('b', {}, '⚠️ رموزك الاحتياطية — تظهر مرة واحدة فقط.'), el('br'),
+        'احفظها في مكان آمن: كل رمز يفتح الدخول مرة واحدة إذا فقدت جوالك.'),
+      el('code', { style: 'direction:ltr;text-align:center;font-family:var(--font-mono);font-size:14px;line-height:2;padding:12px;background:var(--app-hover);border-radius:8px' },
+        ...data.backupCodes.flatMap((c, i) => (i ? [el('br'), c] : [c]))),
+      el('button', {
+        class: 'btn btn--outline btn--full', type: 'button',
+        onclick: () => navigator.clipboard.writeText(data.backupCodes.join('\n')).then(() => toast('نُسخت الرموز الاحتياطية.')),
+      }, 'نسخ الرموز'),
+      el('button', {
+        class: 'btn btn--accent btn--lg btn--full', type: 'button',
+        onclick: () => { location.hash = homeRoute(data.user.role); },
+      }, 'حفظتها — دخول النظام'));
+    const card = document.querySelector('.login-card');
+    card.innerHTML = '';
+    card.append(el('h2', {}, 'تم تفعيل التحقق الثنائي ✅'), wrap);
+  }
 
   root.append(el('div', { class: 'login-screen' },
     el('div', { class: 'login-brand' },
@@ -195,6 +267,8 @@ async function openLogSessionModal(onDone, prefill = {}) {
   const durIn = input({ type: 'number', value: 60, min: 15, step: 15 });
   const styleIn = input({ placeholder: 'مثال: قوة — دفع / HIIT / مرونة' });
   const weightIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
+  const fatIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
+  const muscleIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const notesIn = textarea({ placeholder: 'ملاحظات المدرب…' });
 
   const saveBtn = el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك');
@@ -217,6 +291,8 @@ async function openLogSessionModal(onDone, prefill = {}) {
             date: dateIn.value, time: timeIn.value, duration: Number(durIn.value),
             style: styleIn.value, notes: notesIn.value,
             weight: weightIn.value || null,
+            bodyFatPct: fatIn.value || null,
+            muscleMass: muscleIn.value || null,
             appointmentId: prefill.appointmentId || null,
           });
           close();
@@ -234,6 +310,10 @@ async function openLogSessionModal(onDone, prefill = {}) {
       field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn),
       field('الوزن الحالي (كغ)', weightIn),
+      field('نسبة الدهون %', fatIn),
+      field('كتلة العضلات (كغ)', muscleIn),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'أي قياس يُدخل هنا يُحفظ تلقائيًا قراءةً في سجل InBody الخاص بالمتدرب.'),
       el('div', { class: 'span-2' }, field('الأسلوب التدريبي', styleIn)),
       el('div', { class: 'span-2' }, field('ملاحظات المدرب', notesIn)),
       el('div', { class: 'span-2' }, saveBtn)),
@@ -315,7 +395,8 @@ async function viewAccountantDash(root) {
           data.payments,
           (p) => {
             const sub = data.subscriptions.find((s) => s.id === p.subscriptionId) || {};
-            return [sub.traineeName || '—', fmtMoney(p.amount), p.date, p.method,
+            return [sub.traineeName || '—', fmtMoney(p.amount), p.date,
+              p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(render, data.subscriptions, p) }, 'تعديل')];
           },
           { pageSize: 10, emptyText: 'لا دفعات في هذا الشهر.',
@@ -336,10 +417,34 @@ async function viewAccountantDash(root) {
 }
 
 async function openPaymentModal(onDone, subscriptions, existing) {
-  const subOptions = subscriptions.map((s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})`]);
-  const subSel = existing
-    ? select(subOptions, { value: existing.subscriptionId })
-    : searchSelect(subOptions, { placeholder: 'اكتب اسم المتدرب للبحث…' });
+  const optOf = (s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})`];
+  /* دفعة من الاشتراك الحالي أو سداد دين سابق — سداد الدين يُنسب للاشتراك
+     القديم غير المسدَّد فلا يمسّ ما هو مستحق على الاشتراك الحالي */
+  const isOld = (s) => ['expired', 'cancelled'].includes(s.status);
+  const currentSubs = subscriptions.filter((s) => !isOld(s));
+  const debtSubs = subscriptions.filter((s) => isOld(s) && s.remaining > 0);
+  const typeSel = select([
+    ['current', 'دفعة من الاشتراك الحالي'],
+    ['debt', `سداد دين سابق${debtSubs.length ? '' : ' (لا ديون قديمة)'}`],
+  ], { value: existing && existing.debt ? 'debt' : 'current' });
+  const subField = el('div', { class: 'span-2' });
+  let subSel;
+  const buildSubSel = () => {
+    if (existing) {
+      subSel = select(subscriptions.map(optOf), { value: existing.subscriptionId });
+      subSel.disabled = true;
+    } else {
+      const pool = typeSel.value === 'debt' ? debtSubs : currentSubs;
+      subSel = searchSelect(pool.map(optOf), {
+        placeholder: pool.length ? 'اكتب اسم المتدرب للبحث…' : 'لا اشتراكات مطابقة لهذا الخيار',
+      });
+    }
+    subField.innerHTML = '';
+    subField.append(field(typeSel.value === 'debt' ? 'الاشتراك القديم المدين' : 'الاشتراك', subSel));
+  };
+  typeSel.addEventListener('change', buildSubSel);
+  buildSubSel();
+
   const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']], { value: existing ? existing.method : 'كاش' });
@@ -356,22 +461,26 @@ async function openPaymentModal(onDone, subscriptions, existing) {
             await API.put('/api/payments/' + existing.id, { amount: amountIn.value, date: dateIn.value, method: methodSel.value, note: noteIn.value });
             toast('تم تعديل الدفعة.');
           } else {
-            await API.post('/api/payments', { subscriptionId: Number(subSel.value), amount: amountIn.value, date: dateIn.value, method: methodSel.value, note: noteIn.value });
-            toast('تمت إضافة الدفعة — تحدّثت الأرقام تلقائيًا.');
+            await API.post('/api/payments', {
+              subscriptionId: Number(subSel.value), amount: amountIn.value, date: dateIn.value,
+              method: methodSel.value, note: noteIn.value, debt: typeSel.value === 'debt',
+            });
+            toast(typeSel.value === 'debt' ? 'سُجّل سداد الدين على الاشتراك القديم — دون المساس بالاشتراك الحالي.' : 'تمت إضافة الدفعة — تحدّثت الأرقام تلقائيًا.');
           }
           close();
           onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
-      el('div', { class: 'span-2' }, field('الاشتراك', subSel)),
+      el('div', { class: 'span-2' }, field('نوع الدفعة', typeSel)),
+      subField,
       field(`المبلغ (${curInfo().name})`, amountIn),
       field('تاريخ الدفع', dateIn),
       field('طريقة الدفع', methodSel),
       field('ملاحظة', noteIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'حفظ الدفعة'))),
   ]);
-  if (existing) subSel.disabled = true;
+  if (existing) typeSel.disabled = true;
 }
 
 /* ============================================================
@@ -389,6 +498,12 @@ async function viewTraineePage(root, traineeId) {
   const isStaff = ['admin', 'trainer', 'accountant', 'nutritionist'].includes(API.user.role);
   const showPrices = data.showPrices !== false; // المدرب لا يرى الأسعار
   const refreshPage = () => { root.innerHTML = ''; viewTraineePage(root, traineeId); };
+  const isMoneyStaff = ['admin', 'accountant'].includes(API.user.role);
+  const paidOf = (sid) => (data.payments || []).filter((p) => p.subscriptionId === sid).reduce((s, p) => s + p.amount, 0);
+  const subsForPay = isMoneyStaff && data.payments ? data.subscriptions.map((s) => ({
+    id: s.id, traineeName: t.name, price: s.price, status: s.status,
+    paid: paidOf(s.id), remaining: Math.max(0, s.price - paidOf(s.id)),
+  })) : [];
   const infoChip = (label, value) => el('span', { class: 'macro' }, label + ' ', el('b', {}, value || '—'));
 
   const headCard = el('div', { class: 'card', style: 'display:flex;gap:26px;align-items:center;flex-wrap:wrap' },
@@ -447,12 +562,23 @@ async function viewTraineePage(root, traineeId) {
       }, 'تعديل البيانات'));
     }
     if (['admin', 'accountant'].includes(API.user.role) && data.payments) {
-      const paidOf = (sid) => data.payments.filter((p) => p.subscriptionId === sid).reduce((s, p) => s + p.amount, 0);
-      const subsForPay = data.subscriptions.filter((s) => s.status !== 'cancelled').map((s) => ({
-        id: s.id, traineeName: t.name, price: s.price, paid: paidOf(s.id), remaining: Math.max(0, s.price - paidOf(s.id)),
-      }));
       if (subsForPay.length) {
         actions.append(el('button', { class: 'btn btn--outline btn--sm', onclick: () => openPaymentModal(refresh, subsForPay) }, '+ دفعة جديدة'));
+      }
+      if (sub) {
+        actions.append(el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditSubscriptionModal(refresh, sub, t.name) }, 'تعديل الاشتراك'));
+        if (sub.status === 'active') {
+          actions.append(el('button', { class: 'btn btn--outline btn--sm', onclick: () => openFreezeSubModal(refresh, sub, t.name) }, 'تجميد (سفر/ظرف)'));
+        } else if (sub.status === 'frozen') {
+          actions.append(el('button', {
+            class: 'btn btn--outline btn--sm',
+            onclick: async () => {
+              if (!confirm(`فك تجميد اشتراك ${t.name}؟`)) return;
+              try { await API.post(`/api/subscriptions/${sub.id}/action`, { action: 'unfreeze', reason: '' }); toast('فُكّ التجميد.'); refresh(); }
+              catch (ex) { toast(ex.message, true); }
+            },
+          }, 'فك التجميد'));
+        }
       }
     }
     if (t.phone) {
@@ -502,7 +628,7 @@ async function viewTraineePage(root, traineeId) {
           el('span', { class: 'kpi__ic' }, icon('star')),
           el('div', {},
             el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:var(--app-ink)' }, `${loyalty.balance} نقطة 🎁`),
-            el('div', { style: 'font-size:12px;color:var(--app-muted)' }, 'اكسب نقاطًا بحضور حصصك وتجديد اشتراكك ودعوة أصدقائك — واستبدلها بمكافآت.'))),
+            el('div', { style: 'font-size:12px;color:var(--app-muted)' }, 'اكسب نقاطًا بتحقيق نتائج تُنشر على السوشال ميديا وتجديد اشتراكك ودعوة أصدقائك — واستبدلها بمكافآت.'))),
         el('a', { class: 'btn btn--accent', href: '#/points' }, 'نقاطي ومكافآتي ←')));
     } catch (e) { /* تجاهل */ }
   }
@@ -526,8 +652,20 @@ async function viewTraineePage(root, traineeId) {
   if (data.payments) {
     historyGrid.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'سجل الدفعات'),
-      dataTable(['التاريخ', 'المبلغ', 'الطريقة', 'ملاحظة'],
-        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount), p.method, p.note || '—']),
+      dataTable(['التاريخ', 'المبلغ', 'الطريقة', 'ملاحظة', ...(isMoneyStaff ? [''] : [])],
+        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount),
+          p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
+          p.note || '—',
+          ...(isMoneyStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(refreshPage, subsForPay, p) }, 'تعديل'),
+            el('button', {
+              class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+              onclick: async () => {
+                if (!confirm(`حذف دفعة ${fmtMoney(p.amount)} بتاريخ ${p.date}؟`)) return;
+                try { await API.del('/api/payments/' + p.id); toast('حُذفت الدفعة وتحدّثت الأرقام.'); refreshPage(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'حذف'))] : [])]),
         'لا دفعات مسجلة.')));
   }
   container.append(historyGrid);
@@ -555,17 +693,48 @@ async function viewTraineePage(root, traineeId) {
   if (rs.length) {
     inbodyCard.append(lineChart(rs.map((r) => r.date.slice(5)), rs.map((r) => r.weight), rs.map((r) => r.bodyFatPct)));
     inbodyCard.append(inbodyComparisonTable(rs));
+    // تعديل القراءات وحذفها — للإدارة والمدرب
+    if (['admin', 'trainer'].includes(API.user.role)) {
+      inbodyCard.append(el('h4', { style: 'margin:14px 0 6px;font-size:13px;color:var(--app-muted)' }, 'كل القراءات — تعديل وحذف'),
+        dataTable(['التاريخ', 'الوزن', 'دهون %', 'عضل', 'ملاحظة', ''],
+          rs.slice().reverse().map((r) => [r.date, r.weight ?? '—', r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.notes || '—',
+            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+              el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openInbodyEditModal(refreshPage, r) }, 'تعديل'),
+              el('button', {
+                class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+                onclick: async () => {
+                  if (!confirm(`حذف قراءة ${r.date}؟`)) return;
+                  try { await API.del('/api/inbody/' + r.id); toast('حُذفت القراءة.'); refreshPage(); }
+                  catch (ex) { toast(ex.message, true); }
+                },
+              }, 'حذف'))])));
+    }
   } else {
     inbodyCard.append(el('div', { class: 'empty' }, 'لا قراءات InBody بعد.'));
   }
   container.append(inbodyCard);
 
-  // سجل الحصص
+  // سجل الحصص — الإدارة تعدّل وتحذف (الحذف يعيد الحصة لرصيد الاشتراك)
+  const canEditSession = (s) => API.user.role === 'admin' || (API.user.role === 'trainer' && s.trainerId === API.user.id);
+  const sessionActions = isStaff;
   container.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'سجل الحصص'),
-    pagedTable(['التاريخ', 'الساعة', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات'],
+    pagedTable(['التاريخ', 'الساعة', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات', ...(sessionActions ? [''] : [])],
       data.sessions,
-      (s) => [s.date, s.time, s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—', s.notes || '—'],
+      (s) => [s.date, s.time, s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—', s.notes || '—',
+        ...(sessionActions ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+          canEditSession(s) ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openSessionEditModal(refreshPage, s) }, 'تعديل') : el('span'),
+          API.user.role === 'admin' ? el('button', {
+            class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+            onclick: async () => {
+              if (!confirm(`حذف حصة ${s.date} ${s.time}؟ الحصة العادية تُعاد لرصيد الاشتراك.`)) return;
+              try {
+                const r = await API.del('/api/sessions/' + s.id);
+                toast(r.refunded ? 'حُذفت الحصة وأُعيدت لرصيد الاشتراك.' : 'حُذفت الحصة.');
+                refreshPage();
+              } catch (ex) { toast(ex.message, true); }
+            },
+          }, 'حذف') : el('span'))] : [])],
       { pageSize: 10, emptyText: 'لا حصص مسجلة بعد.' })));
 
   // البرنامج الغذائي
@@ -577,6 +746,123 @@ async function viewTraineePage(root, traineeId) {
         ? el('div', { class: 'meals-grid' }, ...data.mealPlans.map((p) => mealCard(p.meal, { slotLabel: MEAL_TYPES[p.slot] })))
         : el('div', { class: 'empty' }, 'لم يُربط برنامج غذائي بعد — تصفح مكتبة التغذية حسب هدفك.')));
   }
+}
+
+/* تعديل بيانات اشتراك قائم — الحصص والقيمة والتواريخ (إدارة/محاسب) */
+function openEditSubscriptionModal(onDone, sub, traineeName) {
+  const totalIn = input({ type: 'number', min: sub.usedSessions || 1, value: sub.totalSessions });
+  const priceIn = input({ type: 'number', min: 0, value: sub.price });
+  const startIn = input({ type: 'date', value: sub.startDate });
+  const endIn = input({ type: 'date', value: sub.endDate });
+  const close = modal(`تعديل اشتراك «${traineeName}»`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/subscriptions/' + sub.id, {
+            totalSessions: totalIn.value, price: priceIn.value,
+            startDate: startIn.value, endDate: endIn.value,
+          });
+          toast('حُفظ الاشتراك وتحدّثت الأرقام.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field(`عدد الحصص (المستخدم: ${sub.usedSessions})`, totalIn),
+      field(`القيمة (${curInfo().name})`, priceIn),
+      field('تاريخ البدء', startIn),
+      field('تاريخ الانتهاء', endIn),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
+}
+
+/* تجميد اشتراك بسبب مسجَّل (سفر/ظرف) — يظهر في المتابعة والتقارير */
+function openFreezeSubModal(onDone, sub, traineeName) {
+  const reasonSel = select([['سفر ✈️', 'سفر ✈️'], ['ظرف صحي', 'ظرف صحي'], ['ظرف شخصي', 'ظرف شخصي'], ['أخرى', 'أخرى']]);
+  const noteIn = input({ placeholder: 'تفصيل اختياري' });
+  const close = modal(`تجميد اشتراك «${traineeName}»`, [
+    el('form', {
+      style: 'display:flex;flex-direction:column;gap:14px',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const reason = reasonSel.value + (noteIn.value ? ' — ' + noteIn.value : '');
+          await API.post(`/api/subscriptions/${sub.id}/action`, { action: 'freeze', reason });
+          toast('جُمّد الاشتراك — وسُجّل السبب في المتابعة.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('السبب', reasonSel),
+      field('تفصيل', noteIn),
+      el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تجميد الاشتراك')),
+  ]);
+}
+
+/* تعديل حصة مسجلة — البيانات الوصفية فقط */
+function openSessionEditModal(onDone, s) {
+  const dateIn = input({ type: 'date', value: s.date });
+  const timeIn = input({ type: 'time', value: s.time });
+  const durIn = input({ type: 'number', min: 15, step: 15, value: s.duration });
+  const styleIn = input({ value: s.style || '' });
+  const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
+  const notesIn = textarea({ value: s.notes || '' });
+  const close = modal('تعديل الحصة', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/sessions/' + s.id, {
+            date: dateIn.value, time: timeIn.value, duration: durIn.value,
+            style: styleIn.value, notes: notesIn.value, weight: weightIn.value || null,
+          });
+          toast('حُفظت الحصة.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('التاريخ', dateIn), field('الساعة', timeIn),
+      field('المدة (دقيقة)', durIn), field('الوزن (كغ)', weightIn),
+      el('div', { class: 'span-2' }, field('الأسلوب', styleIn)),
+      el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
+}
+
+/* تعديل قراءة InBody */
+function openInbodyEditModal(onDone, r) {
+  const dateIn = input({ type: 'date', value: r.date });
+  const nums = {};
+  const numField = (key, label, val) => { nums[key] = input({ type: 'number', step: '0.1', value: val ?? '' }); return field(label, nums[key]); };
+  const notesIn = input({ value: r.notes || '' });
+  const close = modal('تعديل قراءة InBody', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (!nums.weight.value) { toast('الوزن مطلوب على الأقل.', true); return; }
+        try {
+          const body = { date: dateIn.value, notes: notesIn.value };
+          for (const [k, inp] of Object.entries(nums)) body[k] = inp.value === '' ? null : inp.value;
+          await API.put('/api/inbody/' + r.id, body);
+          toast('حُفظت القراءة.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('التاريخ', dateIn),
+      numField('weight', 'الوزن (كغ)', r.weight),
+      numField('bodyFatPct', 'نسبة الدهون %', r.bodyFatPct),
+      numField('muscleMass', 'كتلة العضلات (كغ)', r.muscleMass),
+      numField('fatMass', 'دهون الجسم (كغ)', r.fatMass),
+      numField('water', 'الماء (لتر)', r.water),
+      numField('bmi', 'BMI', r.bmi),
+      numField('score', 'النقاط', r.score),
+      el('div', { class: 'span-2' }, field('ملاحظة', notesIn)),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
 }
 
 function inbodyComparisonTable(readings) {

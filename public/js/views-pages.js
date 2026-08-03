@@ -181,6 +181,7 @@ async function openOnboardModal(onDone, prefill = {}) {
   const branchSel = select(branches.map((b) => [b.id, b.name]), prefill.branchId ? { value: prefill.branchId } : {});
   const goalSel = select(Object.entries(GOAL_LABELS), prefill.goal ? { value: prefill.goal } : {});
   const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
+  const sourceTrainerSel = select([['', 'لا — قناة أخرى'], ...trainers.map((t) => [t.id, t.name])]);
 
   /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي */
   const active = packages.filter((p) => p.active !== false);
@@ -206,6 +207,7 @@ async function openOnboardModal(onDone, prefill = {}) {
   startIn.addEventListener('change', () => { if (pkgSel.value) applyPackage(); });
 
   const payIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا إن لم يدفع الآن' });
+  const payDateIn = input({ type: 'date', value: todayISO() });
   const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']]);
 
   const apptTrainerSel = select([['', 'بدون موعد الآن'], ...trainers.map((t) => [t.id, t.name])]);
@@ -230,11 +232,12 @@ async function openOnboardModal(onDone, prefill = {}) {
             branchId: Number(branchSel.value), goal: goalSel.value,
             referralCode: referralIn.value || null, leadId: prefill.leadId || null,
             contractId: prefill.contractId || null,
+            sourceTrainerId: sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null,
             subscription: {
               totalSessions: Number(totalSel.value), price: Number(priceIn.value),
               packageId: pkgSel.value || null, startDate: startIn.value, endDate: endIn.value,
             },
-            payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value } : null,
+            payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value, date: payDateIn.value } : null,
             appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
           });
           showSuccess(res);
@@ -245,12 +248,14 @@ async function openOnboardModal(onDone, prefill = {}) {
       field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
       field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
       field('الهدف', goalSel), field('كود إحالة صديق', referralIn),
+      el('div', { class: 'span-2' }, field('جاء عن طريق مدرب؟ (يُحتسب للمدرب في تقريره)', sourceTrainerSel)),
       section('٢ — الاشتراك والباقة'),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
       field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
       field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
       section('٣ — الدفعة الأولى (اختياري)'),
-      field('المبلغ المدفوع الآن', payIn), field('طريقة الدفع', methodSel),
+      field('المبلغ المدفوع الآن', payIn), field('تاريخ الدفعة', payDateIn),
+      el('div', { class: 'span-2' }, field('طريقة الدفع', methodSel)),
       section('٤ — أول حصة (اختياري)'),
       el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px' },
         field('المدرب', apptTrainerSel), field('التاريخ', apptDate), field('الساعة', apptTime)),
@@ -289,6 +294,8 @@ async function openOnboardModal(onDone, prefill = {}) {
 async function viewSubscriptions(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
+  const state = { branch: '' };
+  const branches = await API.get('/api/branches').catch(() => []);
 
   async function render() {
     container.innerHTML = '';
@@ -296,10 +303,15 @@ async function viewSubscriptions(root) {
     // ولا تُحمَّل قائمة المتدربين كاملة إلا عند فتح نافذة تحتاجها.
     const byName = (s) => s.traineeName || '#' + s.traineeId;
     const pageQuery = ({ query, page, pageSize }) =>
-      `limit=${pageSize}&offset=${page * pageSize}` + (query ? '&search=' + encodeURIComponent(query) : '');
+      `limit=${pageSize}&offset=${page * pageSize}` + (query ? '&search=' + encodeURIComponent(query) : '')
+      + (state.branch ? `&branch=${state.branch}` : '');
     const loadTrainees = () => API.get('/api/users?role=trainee');
 
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
     const bar = el('div', { class: 'card filters' },
+      field('الفرع', branchSel),
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
       el('button', { class: 'btn btn--outline', onclick: async () => openSubModal(render, await loadTrainees()) }, 'تجديد اشتراك لمتدرب حالي'));
@@ -450,44 +462,63 @@ async function viewBranches(root) {
     });
     container.append(grid);
 
-    container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, 'كل المتدربين'),
-      pagedTable(['الاسم', 'الجوال', 'الفرع', 'الهدف', ''],
-        users.filter((u) => u.role === 'trainee'),
+    const traineesWrap = el('div');
+    let branchFilter = '';
+    const renderTraineesTable = () => {
+      const list = users.filter((u) => u.role === 'trainee' && (!branchFilter || u.branchId === Number(branchFilter)));
+      traineesWrap.innerHTML = '';
+      traineesWrap.append(pagedTable(['الاسم', 'الجوال', 'الفرع', 'الهدف', ''],
+        list,
         (t) => [t.name, t.phone || '—',
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
             el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))],
-        { pageSize: 15, searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' })));
+        { pageSize: 15, searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' }));
+    };
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'كل المتدربين',
+        select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+          style: 'width:170px', onchange: (e) => { branchFilter = e.target.value; renderTraineesTable(); },
+        })),
+      traineesWrap));
+    renderTraineesTable();
   }
 
   await render();
 }
 
-/* تعديل متدرب: الفرع / الهدف / الجوال (المدربون بالتناوب — لا إسناد ثابتًا) */
+/* تعديل متدرب: الاسم والتواريخ والفرع والهدف والجوال (المدربون بالتناوب — لا إسناد ثابتًا) */
 function openEditTraineeModal(onDone, trainee, users, branches) {
+  const nameIn = input({ value: trainee.name || '' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), { value: trainee.branchId || '' });
   const goalSel = select(Object.entries(GOAL_LABELS), { value: trainee.goal || 'loss' });
   const phoneIn = input({ value: trainee.phone || '', dir: 'ltr', style: 'text-align:end' });
+  const birthIn = input({ type: 'date', value: trainee.birthDate || '' });
+  const joinedIn = input({ type: 'date', value: trainee.joinedAt || '' });
 
   const close = modal(`تعديل «${trainee.name}»`, [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        if (!nameIn.value.trim()) { toast('الاسم مطلوب.', true); return; }
         try {
           await API.put('/api/users/' + trainee.id, {
-            branchId: Number(branchSel.value), goal: goalSel.value, phone: phoneIn.value,
+            name: nameIn.value.trim(), branchId: Number(branchSel.value), goal: goalSel.value,
+            phone: phoneIn.value, birthDate: birthIn.value || null, joinedAt: joinedIn.value || null,
           });
           toast('تم حفظ التعديلات.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
+      el('div', { class: 'span-2' }, field('الاسم الكامل', nameIn)),
       field('الفرع', branchSel),
       field('الهدف', goalSel),
+      field('تاريخ الميلاد', birthIn),
+      field('تاريخ الانضمام', joinedIn),
       el('div', { class: 'span-2' }, field('الجوال', phoneIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
@@ -840,12 +871,15 @@ async function viewReports(root) {
     const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `تقرير المدربين — ${report.month} (إجمالي الحصص: ${report.totalSessions})`),
-      dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'إنجاز المهام', 'KPI'],
+      dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'ساعات مكتبية', 'زبائن عن طريقه', 'إنجاز المهام', 'KPI'],
         report.trainers.map((t) => {
           const k = kpiOf(t.trainer);
           return [t.trainer, t.branch || '—',
             el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
             el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours)),
+            // من سجل الحضور/الانصراف في المتابعة اليومية
+            el('span', { class: 'num' }, String(t.officeHours ?? 0)),
+            el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.referredMonth ?? 0} · ${t.referredTotal ?? 0}`),
             t.tasksPct !== null && t.tasksPct !== undefined ? progressBar(t.tasksPct) : '—',
             k.kpi !== null && k.kpi !== undefined
               ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, k.kpi + '%')
@@ -958,6 +992,14 @@ async function viewSettings(root) {
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserEditModal(render, u, branches) }, 'تعديل'),
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
+            u.mfaEnrolled ? el('button', {
+              class: 'btn btn--outline btn--sm',
+              onclick: async () => {
+                if (!confirm(`تصفير التحقق الثنائي لـ «${u.name}»؟ سيسجّل تطبيق المصادقة من جديد عند دخوله القادم.`)) return;
+                try { await API.put('/api/users/' + u.id, { mfaReset: true }); toast('صُفّر التحقق الثنائي.'); render(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'تصفير 2FA') : el('span'),
             u.id !== API.user.id ? el('button', {
               class: 'btn btn--ghost btn--sm', style: u.active ? 'color:var(--status-danger)' : 'color:var(--accent-hover)',
               onclick: async () => {
@@ -1065,10 +1107,21 @@ async function viewMyTrainees(root) {
     API.get('/api/branches'),
   ]);
   container.innerHTML = '';
-  container.append(el('div', { class: 'card' },
+  const state = { branch: '' };
+  const listWrap = el('div');
+  const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+    value: state.branch, onchange: (e) => { state.branch = e.target.value; renderList(); },
+  });
+  container.append(el('div', { class: 'card filters' }, field('الفرع', branchSel)));
+  container.append(listWrap);
+
+  function renderList() {
+    const list = state.branch ? trainees.filter((t) => t.branchId === Number(state.branch)) : trainees;
+    listWrap.innerHTML = '';
+    listWrap.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'المتدربون'),
     pagedTable(['الاسم', 'الفرع', 'الهدف', 'الرصيد المتبقي', 'الحالة', ''],
-      trainees,
+      list,
       (t) => {
         const sub = subs.filter((s) => s.traineeId === t.id && s.status === 'active')[0];
         return [t.name,
@@ -1079,4 +1132,6 @@ async function viewMyTrainees(root) {
           el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←')];
       },
       { pageSize: 15, emptyText: 'لا متدربين بعد.', searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' })));
+  }
+  renderList();
 }

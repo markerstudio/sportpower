@@ -20,7 +20,9 @@ async function loyaltyPts() {
   const rows = await Store.all('settings');
   const s = rows[0] || {};
   return {
-    session: Number(s.ptsSession) || 5,
+    // «نتيجة منشورة على السوشال ميديا» حلّت محل نقاط حضور الحصة —
+    // المفتاح القديم ptsSession يبقى قيمةً افتراضية للقواعد القائمة
+    result: Number(s.ptsResult ?? s.ptsSession) || 25,
     renewal: Number(s.ptsRenewal) || 50,
     referral: Number(s.ptsReferral) || 100,
   };
