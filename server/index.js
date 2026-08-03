@@ -604,6 +604,12 @@ app.get('/api/sessions', auth, h(async (req, res) => {
   if (req.user.role === 'trainer') where.trainerId = req.user.id;
   if (req.user.role === 'trainee') where.traineeId = req.user.id;
   if (req.query.month) where.date = { gte: req.query.month + '-01', lte: req.query.month + '-31' };
+  if (req.query.from || req.query.to) {
+    where.date = {};
+    if (req.query.from) where.date.gte = req.query.from;
+    if (req.query.to) where.date.lte = req.query.to;
+  }
+  if (req.query.trainer && req.user.role === 'admin') where.trainerId = Number(req.query.trainer);
   if (req.query.branch) where.branchId = Number(req.query.branch);
   if (req.query.trainee) where.traineeId = Number(req.query.trainee);
   if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
