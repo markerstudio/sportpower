@@ -43,11 +43,23 @@ const API = {
 
   async login(username, password) {
     const data = await this.post('/api/login', { username, password });
+    // أدوار المال والإدارة تكمل بالتحقق الثنائي قبل فتح الجلسة
+    if (data.mfaRequired || data.mfaSetupRequired) return data;
+    this._storeSession(data);
+    return data.user;
+  },
+
+  async loginMfa(mfaToken, code) {
+    const data = await this.post('/api/login/mfa', { mfaToken, code });
+    this._storeSession(data);
+    return data;
+  },
+
+  _storeSession(data) {
     this.token = data.token;
     this.user = data.user;
     localStorage.setItem('sp-token', data.token);
     localStorage.setItem('sp-user', JSON.stringify(data.user));
-    return data.user;
   },
 
   async logout() {

@@ -992,6 +992,14 @@ async function viewSettings(root) {
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserEditModal(render, u, branches) }, 'تعديل'),
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
+            u.mfaEnrolled ? el('button', {
+              class: 'btn btn--outline btn--sm',
+              onclick: async () => {
+                if (!confirm(`تصفير التحقق الثنائي لـ «${u.name}»؟ سيسجّل تطبيق المصادقة من جديد عند دخوله القادم.`)) return;
+                try { await API.put('/api/users/' + u.id, { mfaReset: true }); toast('صُفّر التحقق الثنائي.'); render(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'تصفير 2FA') : el('span'),
             u.id !== API.user.id ? el('button', {
               class: 'btn btn--ghost btn--sm', style: u.active ? 'color:var(--status-danger)' : 'color:var(--accent-hover)',
               onclick: async () => {

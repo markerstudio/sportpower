@@ -68,6 +68,8 @@ const auth = h(async (req, res, next) => {
     if (t) await Store.remove('tokens', t.id);
     return res.status(401).json({ error: 'انتهت الجلسة — يرجى تسجيل الدخول من جديد.' });
   }
+  // رموز التحقق الثنائي المؤقتة ليست جلسات
+  if (t.kind) return res.status(401).json({ error: 'غير مصرّح — يرجى تسجيل الدخول.' });
   const user = await Store.get('users', t.userId);
   if (!user) return res.status(401).json({ error: 'المستخدم غير موجود.' });
   if (user.active === false) return res.status(401).json({ error: 'هذا الحساب معطّل.' });
@@ -89,7 +91,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, sourceTrainerId: u.sourceTrainerId || null, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, sourceTrainerId: u.sourceTrainerId || null, mfaEnrolled: !!u.mfaSecret, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
@@ -162,6 +164,68 @@ app.get('/api/health', h(async (req, res) => {
   });
 }));
 
+/* ============================================================
+   التحقق الثنائي TOTP (تطبيق مصادقة) — إلزامي للإدارة والمحاسب
+   بلا اعتماد خارجي: HMAC-SHA1 وفق RFC 6238، سر Base32 يُدخل يدويًا
+   في تطبيق المصادقة أو عبر رابط otpauth. الطوارئ: MFA_DISABLE=1.
+   ============================================================ */
+const MFA_ROLES = ['admin', 'accountant'];
+const MFA_TOKEN_TTL_MS = 10 * 60 * 1000;
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Encode(buf) {
+  let bits = 0, value = 0, out = '';
+  for (const b of buf) {
+    value = (value << 8) | b; bits += 8;
+    while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+
+function base32Decode(str) {
+  let bits = 0, value = 0;
+  const out = [];
+  for (const ch of str.toUpperCase().replace(/[^A-Z2-7]/g, '')) {
+    value = (value << 5) | B32.indexOf(ch); bits += 5;
+    if (bits >= 8) { out.push((value >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(out);
+}
+
+function totpCode(secret, slot) {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(slot));
+  const digest = crypto.createHmac('sha1', base32Decode(secret)).update(msg).digest();
+  const offset = digest[digest.length - 1] & 0xf;
+  return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1e6).padStart(6, '0');
+}
+
+/* يقبل النافذة الحالية والسابقة والتالية (انحراف ساعة الجوال) ويمنع
+   إعادة استخدام رمز نافذته استُهلكت */
+function verifyTotp(secret, code, lastSlot) {
+  const now = Math.floor(Date.now() / 30000);
+  for (const slot of [now, now - 1, now + 1]) {
+    if (slot > (lastSlot || 0) && totpCode(secret, slot) === String(code || '').trim()) return slot;
+  }
+  return null;
+}
+
+/* إلزامي على الإنتاج (Postgres)؛ وضع العرض المحلي بلا احتكاك.
+   MFA_FORCE=1 يفعّله محليًا للاختبار، وMFA_DISABLE=1 للطوارئ فقط. */
+const mfaRequiredFor = (user) => MFA_ROLES.includes(user.role)
+  && process.env.MFA_DISABLE !== '1'
+  && (Store.IS_PG || process.env.MFA_FORCE === '1');
+
+async function issueSession(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, expiresAt: Date.now() + TOKEN_TTL_MS });
+  // تنظيف دوري: الجلسات المنتهية، والإشعارات المقروءة القديمة
+  await Store.deleteWhere('tokens', { expiresAt: { lt: Date.now() } });
+  await sweepOldNotifications();
+  return token;
+}
+
 app.post('/api/login', h(async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
   const { username, password } = req.body || {};
@@ -177,11 +241,83 @@ app.post('/api/login', h(async (req, res) => {
     return res.status(403).json({ error: 'هذا الحساب معطّل — تواصل مع الإدارة.' });
   }
   loginAttempts.delete('user:' + uname);
-  const token = crypto.randomBytes(32).toString('hex');
-  await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, expiresAt: Date.now() + TOKEN_TTL_MS });
-  // تنظيف دوري: الجلسات المنتهية، والإشعارات المقروءة القديمة
-  await Store.deleteWhere('tokens', { expiresAt: { lt: Date.now() } });
-  await sweepOldNotifications();
+
+  /* كلمة المرور صحيحة — أدوار المال والإدارة تكمل بالتحقق الثنائي */
+  if (mfaRequiredFor(user)) {
+    const raw = crypto.randomBytes(32).toString('hex');
+    if (!user.mfaSecret) {
+      // أول دخول بعد التفعيل: تسجيل تطبيق المصادقة (السر يُحفظ مع الرمز
+      // المؤقت ولا يُثبَّت على الحساب إلا بعد رمز صحيح)
+      const secret = base32Encode(crypto.randomBytes(20));
+      await Store.insert('tokens', {
+        hash: Store.sha256(raw), userId: user.id,
+        expiresAt: Date.now() + MFA_TOKEN_TTL_MS, kind: 'mfa-setup', secret,
+      });
+      const label = encodeURIComponent('SportPower:' + user.username);
+      return res.json({
+        mfaSetupRequired: true, mfaToken: raw, secret,
+        otpauth: `otpauth://totp/${label}?secret=${secret}&issuer=SportPower&digits=6&period=30`,
+      });
+    }
+    await Store.insert('tokens', {
+      hash: Store.sha256(raw), userId: user.id,
+      expiresAt: Date.now() + MFA_TOKEN_TTL_MS, kind: 'mfa',
+    });
+    return res.json({ mfaRequired: true, mfaToken: raw });
+  }
+
+  const token = await issueSession(user);
+  res.json({ token, user: publicUser(user) });
+}));
+
+app.post('/api/login/mfa', h(async (req, res) => {
+  const { mfaToken, code } = req.body || {};
+  if (!mfaToken || !code) return res.status(400).json({ error: 'الرمز مطلوب.' });
+  const t = (await Store.find('tokens', { hash: Store.sha256(String(mfaToken)) }, { limit: 1 }))[0];
+  if (!t || !String(t.kind || '').startsWith('mfa') || t.expiresAt < Date.now()) {
+    if (t && t.expiresAt < Date.now()) await Store.remove('tokens', t.id);
+    return res.status(401).json({ error: 'انتهت مهلة التحقق — سجّل الدخول من جديد.' });
+  }
+  if (rateLimited('mfa:' + t.userId, 8, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
+  }
+  const user = await Store.get('users', t.userId);
+  if (!user || user.active === false) return res.status(401).json({ error: 'الحساب غير متاح.' });
+
+  /* أول تسجيل: تأكيد أن تطبيق المصادقة يولّد الرموز الصحيحة */
+  if (t.kind === 'mfa-setup') {
+    const slot = verifyTotp(t.secret, code, 0);
+    if (!slot) return res.status(401).json({ error: 'الرمز غير صحيح — تأكد أنك أدخلت المفتاح في تطبيق المصادقة وأن ساعة الجوال مضبوطة.' });
+    // رموز احتياطية تُعرض مرة واحدة — تُخزن مُجزّأة كأي كلمة مرور
+    const backupCodes = Array.from({ length: 10 }, () =>
+      crypto.randomBytes(4).toString('hex').toUpperCase().match(/.{4}/g).join('-'));
+    await Store.update('users', user.id, {
+      mfaSecret: t.secret, mfaEnrolledAt: todayStr(),
+      mfaBackup: backupCodes.map((c) => Store.hashPassword(c)),
+      mfaLastSlot: slot,
+    });
+    await Store.remove('tokens', t.id);
+    loginAttempts.delete('mfa:' + user.id);
+    const token = await issueSession(user);
+    return res.json({ token, user: publicUser({ ...user, mfaSecret: t.secret }), backupCodes });
+  }
+
+  /* دخول اعتيادي: رمز التطبيق أو رمز احتياطي يُستهلك مرة واحدة */
+  const slot = verifyTotp(user.mfaSecret, code, user.mfaLastSlot);
+  if (slot) {
+    await Store.update('users', user.id, { mfaLastSlot: slot });
+  } else {
+    const backups = user.mfaBackup || [];
+    const idx = backups.findIndex((hash) => Store.verifyPassword(String(code).trim().toUpperCase(), hash));
+    if (idx === -1) return res.status(401).json({ error: 'الرمز غير صحيح.' });
+    await Store.update('users', user.id, { mfaBackup: backups.filter((_, i) => i !== idx) });
+    if (backups.length - 1 <= 2) {
+      await notify(user.id, `تبقى لديك ${backups.length - 1} رمز احتياطي فقط للتحقق الثنائي — اطلب من الإدارة تصفير التحقق وأعد التسجيل.`, 'security');
+    }
+  }
+  await Store.remove('tokens', t.id);
+  loginAttempts.delete('mfa:' + user.id);
+  const token = await issueSession(user);
   res.json({ token, user: publicUser(user) });
 }));
 
@@ -389,6 +525,14 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   });
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
+
+  // تصفير التحقق الثنائي: يعيد التسجيل من الصفر عند فقدان الجوال/الرموز
+  if (req.body.mfaReset === true) {
+    patch.mfaSecret = null;
+    patch.mfaEnrolledAt = null;
+    patch.mfaBackup = null;
+    patch.mfaLastSlot = null;
+  }
 
   // تفعيل / تعطيل الحساب (يمنع تسجيل الدخول ويُنهي الجلسات)
   if (req.body.active !== undefined) {

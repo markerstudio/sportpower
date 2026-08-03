@@ -42,6 +42,8 @@ const SCHEMA = {
       mustChangePassword: col('bool'),
       referralCode: col('text'),
       sourceTrainerId: col('int'),
+      mfaSecret: col('text'),
+      mfaEnrolledAt: col('text'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },

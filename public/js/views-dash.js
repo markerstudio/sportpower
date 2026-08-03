@@ -14,8 +14,9 @@ function viewLogin(root) {
       e.preventDefault();
       err.textContent = '';
       try {
-        const u = await API.login(user.value.trim(), pass.value);
-        location.hash = homeRoute(u.role);
+        const res = await API.login(user.value.trim(), pass.value);
+        if (res && (res.mfaRequired || res.mfaSetupRequired)) { showMfaStep(res); return; }
+        location.hash = homeRoute(res.role);
       } catch (ex) { err.textContent = ex.message; }
     },
     style: 'display:flex;flex-direction:column;gap:14px',
@@ -24,6 +25,77 @@ function viewLogin(root) {
     field('كلمة المرور', pass),
     err,
     el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'دخول النظام'));
+
+  /* التحقق الثنائي: إدخال رمز التطبيق — أو التسجيل الأول بمفتاح المصادقة */
+  function showMfaStep(res) {
+    form.style.display = 'none';
+    demoBox.innerHTML = '';
+    const codeIn = input({
+      placeholder: res.mfaSetupRequired ? '123456' : 'رمز التطبيق أو رمز احتياطي',
+      dir: 'ltr', style: 'text-align:center;font-family:var(--font-mono);font-size:18px;letter-spacing:3px',
+      autocomplete: 'one-time-code', inputmode: 'latin',
+    });
+    const mfaErr = el('div', { style: 'color:var(--status-danger);font-size:13px;min-height:18px' });
+    const box = el('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+
+    if (res.mfaSetupRequired) {
+      box.append(
+        el('div', { class: 'alert alert--info', style: 'display:block' },
+          el('b', {}, 'تفعيل التحقق الثنائي (مرة واحدة)'), el('br'),
+          '١. ثبّت تطبيق مصادقة (Google Authenticator أو Authy).', el('br'),
+          '٢. أضف حسابًا بخيار «إدخال مفتاح الإعداد» والصق المفتاح، أو افتح الرابط من الجوال.', el('br'),
+          '٣. أدخل الرمز المكوّن من 6 أرقام الظاهر في التطبيق.'),
+        el('div', { style: 'display:flex;gap:8px;align-items:center' },
+          el('code', { style: 'flex:1;direction:ltr;text-align:center;font-family:var(--font-mono);font-size:15px;letter-spacing:2px;padding:10px;background:var(--app-hover);border-radius:8px;word-break:break-all' }, res.secret),
+          el('button', {
+            class: 'btn btn--outline btn--sm', type: 'button',
+            onclick: () => navigator.clipboard.writeText(res.secret).then(() => toast('نُسخ المفتاح.')),
+          }, 'نسخ')),
+        el('a', { class: 'btn btn--ghost btn--sm', href: res.otpauth }, 'فتح في تطبيق المصادقة (من الجوال)'));
+    } else {
+      box.append(el('div', { class: 'alert alert--info' }, 'أدخل الرمز من تطبيق المصادقة — أو أحد رموزك الاحتياطية.'));
+    }
+
+    box.append(el('form', {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        mfaErr.textContent = '';
+        try {
+          const data = await API.loginMfa(res.mfaToken, codeIn.value);
+          if (data.backupCodes) { showBackupCodes(data); return; }
+          location.hash = homeRoute(data.user.role);
+        } catch (ex) { mfaErr.textContent = ex.message; }
+      },
+      style: 'display:flex;flex-direction:column;gap:14px',
+    },
+      field('رمز التحقق', codeIn),
+      mfaErr,
+      el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'تحقق ودخول')));
+    form.after(box);
+    codeIn.focus();
+  }
+
+  /* الرموز الاحتياطية — تظهر مرة واحدة فقط بعد التسجيل الأول */
+  function showBackupCodes(data) {
+    const wrap = el('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    wrap.append(
+      el('div', { class: 'alert alert--warning', style: 'display:block' },
+        el('b', {}, '⚠️ رموزك الاحتياطية — تظهر مرة واحدة فقط.'), el('br'),
+        'احفظها في مكان آمن: كل رمز يفتح الدخول مرة واحدة إذا فقدت جوالك.'),
+      el('code', { style: 'direction:ltr;text-align:center;font-family:var(--font-mono);font-size:14px;line-height:2;padding:12px;background:var(--app-hover);border-radius:8px' },
+        ...data.backupCodes.flatMap((c, i) => (i ? [el('br'), c] : [c]))),
+      el('button', {
+        class: 'btn btn--outline btn--full', type: 'button',
+        onclick: () => navigator.clipboard.writeText(data.backupCodes.join('\n')).then(() => toast('نُسخت الرموز الاحتياطية.')),
+      }, 'نسخ الرموز'),
+      el('button', {
+        class: 'btn btn--accent btn--lg btn--full', type: 'button',
+        onclick: () => { location.hash = homeRoute(data.user.role); },
+      }, 'حفظتها — دخول النظام'));
+    const card = document.querySelector('.login-card');
+    card.innerHTML = '';
+    card.append(el('h2', {}, 'تم تفعيل التحقق الثنائي ✅'), wrap);
+  }
 
   root.append(el('div', { class: 'login-screen' },
     el('div', { class: 'login-brand' },
