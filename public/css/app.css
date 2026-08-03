@@ -367,6 +367,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .cal-chip small { color: var(--green-300); }
 .cal-chip.done { opacity: .5; border-inline-start-color: var(--grey-400); box-shadow: none; }
 .cal-chip.cancelled { opacity: .35; text-decoration: line-through; box-shadow: none; }
+.cal-chip.session { background: var(--accent-soft); color: var(--petrol-700); border-inline-start-color: var(--green-600); box-shadow: none; }
+.cal-chip.session small { color: var(--green-600); }
+[data-theme="dark"] .cal-chip.session { background: var(--petrol-600); color: #fff; }
+[data-theme="dark"] .cal-chip.session small { color: var(--green-300); }
+.cal-legend { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; }
+.cal-legend .cal-chip { margin-bottom: 0; cursor: default; }
 
 /* ---------- بطاقات الوجبات ---------- */
 .meals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 16px; }

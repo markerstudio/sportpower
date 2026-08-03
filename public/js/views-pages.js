@@ -15,11 +15,24 @@ async function viewCalendar(root) {
     const end = new Date(state.start); end.setDate(end.getDate() + 6);
     const to = iso(end);
 
-    const reqs = [API.get(`/api/appointments?from=${from}&to=${to}` + (state.trainer ? `&trainer=${state.trainer}` : ''))];
+    const trainerQ = state.trainer ? `&trainer=${state.trainer}` : '';
+    const reqs = [
+      API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ),
+      API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ),
+    ];
     const isAdmin = API.user.role === 'admin';
     if (isAdmin) reqs.push(API.get('/api/users?role=trainer'), API.get('/api/users?role=trainee'));
     else if (API.user.role === 'trainer') reqs.push(Promise.resolve([]), API.get('/api/users?role=trainee'));
-    const [appts, trainers = [], trainees = []] = await Promise.all(reqs);
+    const [appts, weekSessions = [], trainers = [], trainees = []] = await Promise.all(reqs);
+    // الحصة المسجلة من موعد لا تُعرض مرتين — يكفي الموعد المنفذ
+    const linkedSessionIds = new Set(appts.map((a) => a.sessionId).filter(Boolean));
+    const sessions = weekSessions.filter((s) => !linkedSessionIds.has(s.id));
+    const personName = (id) => {
+      const t = trainees.find((x) => x.id === id);
+      if (t) return t.name;
+      if (API.user.role === 'trainee' && id === API.user.id) return API.user.name;
+      return 'متدرب #' + id;
+    };
     container.innerHTML = '';
 
     const title = `أسبوع ${from} → ${to}`;
@@ -52,20 +65,50 @@ async function viewCalendar(root) {
         appts.filter((a) => a.date === iso(d) && Number(a.time.slice(0, 2)) === h)
           .sort((a, b) => a.time.localeCompare(b.time))
           .forEach((a) => {
-            const trainee = trainees.find((t) => t.id === a.traineeId);
             const trainer = trainers.find((t) => t.id === a.trainerId);
             const chip = el('button', { class: 'cal-chip ' + a.status, onclick: () => openApptModal(render, trainers, trainees, a) },
-              el('b', {}, trainee ? trainee.name : 'متدرب #' + a.traineeId),
+              el('b', {}, personName(a.traineeId)),
               el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
+            cell.append(chip);
+          });
+        sessions.filter((s) => s.date === iso(d) && Number((s.time || '').slice(0, 2)) === h)
+          .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+          .forEach((s) => {
+            const trainer = trainers.find((t) => t.id === s.trainerId);
+            const chip = el('button', { class: 'cal-chip session', onclick: () => openSessionInfoModal(s, personName(s.traineeId), trainer && trainer.name) },
+              el('b', {}, personName(s.traineeId)),
+              el('small', {}, ` ${s.time} · حصة منفذة` + (s.kind === 'makeup' ? ' · تعويض' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
             cell.append(chip);
           });
         grid.append(cell);
       });
     });
     container.append(el('div', { class: 'card', style: 'padding:0;overflow-x:auto' }, grid));
+    container.append(el('div', { class: 'card cal-legend' },
+      el('span', { class: 'cal-chip', style: 'display:inline-block;width:auto' }, 'موعد مجدول'),
+      el('span', { class: 'cal-chip done', style: 'display:inline-block;width:auto' }, 'موعد منفذ'),
+      el('span', { class: 'cal-chip session', style: 'display:inline-block;width:auto' }, 'حصة مسجلة')));
   }
 
   await render();
+}
+
+/* بطاقة معلومات لحصة مسجلة — عرض فقط (تُدار الحصص من صفحة الاشتراكات والحصص) */
+function openSessionInfoModal(s, traineeName, trainerName) {
+  const row = (label, val) => (val || val === 0)
+    ? el('div', { class: 'span-2', style: 'display:flex;gap:8px' }, el('b', {}, label + ':'), el('span', {}, String(val)))
+    : el('span');
+  modal('تفاصيل الحصة المسجلة', [
+    el('div', { class: 'form-grid' },
+      row('المتدرب', traineeName),
+      row('المدرب', trainerName),
+      row('التاريخ', s.date + ' · ' + s.time),
+      row('المدة', s.duration ? s.duration + ' دقيقة' : ''),
+      row('النوع', s.kind === 'makeup' ? 'تعويضية' : 'عادية'),
+      row('الأسلوب', s.style),
+      row('الوزن المسجل', s.weight ? s.weight + ' كغ' : ''),
+      row('ملاحظات', s.notes)),
+  ]);
 }
 
 function weekStart(d) { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); return x; } // الأحد بداية الأسبوع
