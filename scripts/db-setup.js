@@ -46,8 +46,10 @@ function inspectUrl(raw) {
     bad('لم يُضبط DATABASE_URL.');
     console.log(`
   الخطوات:
-    1. أنشئ قاعدة على https://neon.tech (الخطة المجانية تكفي للبداية).
-    2. انسخ رابط الاتصال المجمَّع (Pooled) — المضيف يحوي «-pooler».
+    1. أنشئ مشروعًا على https://supabase.com (الخطة المجانية تكفي للبداية).
+    2. انسخ رابط الاتصال المجمَّع (Pooled) — المضيف يحوي «pooler».
+       (للسكربتات المحلية: Session pooler منفذ 5432،
+        وللاستضافة اللحظية: Transaction pooler منفذ 6543)
     3. شغّل:  DATABASE_URL="postgres://…" npm run db:setup
 `);
     process.exit(1);
