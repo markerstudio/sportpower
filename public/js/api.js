@@ -6,6 +6,14 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => { /* بيئات لا تدعم */ });
   });
+  // نشرة جديدة استلمت التحكم → تحديث الصفحة مرة واحدة حتى لا تختلط
+  // ملفات نسختين (كانت تسبب شاشة بيضاء بعد كل نشر)
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swReloaded) return;
+    swReloaded = true;
+    location.reload();
+  });
 }
 
 /* عميل الواجهة البرمجية */
