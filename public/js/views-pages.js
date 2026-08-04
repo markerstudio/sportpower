@@ -544,7 +544,7 @@ function openBranchModal(onDone) {
 }
 
 function openUserModal(onDone, branches, users) {
-  const roleSel = select([['trainee', 'متدرب'], ['trainer', 'مدرب'], ['accountant', 'محاسب'], ['nutritionist', 'أخصائية تغذية']]);
+  const roleSel = select([['trainee', 'متدرب'], ['trainer', 'مدرب'], ['accountant', 'محاسب'], ['nutritionist', 'أخصائية تغذية'], ['admin', 'إدارة — صلاحيات كاملة']]);
   const nameIn = input({ placeholder: 'الاسم الكامل' });
   const userIn = input({ placeholder: 'username', dir: 'ltr', style: 'text-align:end' });
   const passIn = input({ placeholder: 'كلمة المرور', dir: 'ltr', style: 'text-align:end' });

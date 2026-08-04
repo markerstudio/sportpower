@@ -52,15 +52,20 @@ const API = {
   del(url) { return this.request('DELETE', url); },
 
   async login(username, password) {
-    const data = await this.post('/api/login', { username, password });
+    // رمز الجهاز الموثوق (إن وُجد لهذا المستخدم) يعفي من رمز التطبيق
+    const deviceToken = localStorage.getItem('sp-device-' + username) || undefined;
+    const data = await this.post('/api/login', { username, password, deviceToken });
     // أدوار المال والإدارة تكمل بالتحقق الثنائي قبل فتح الجلسة
     if (data.mfaRequired || data.mfaSetupRequired) return data;
     this._storeSession(data);
     return data.user;
   },
 
-  async loginMfa(mfaToken, code) {
-    const data = await this.post('/api/login/mfa', { mfaToken, code });
+  async loginMfa(mfaToken, code, trustDevice, username) {
+    const data = await this.post('/api/login/mfa', { mfaToken, code, trustDevice: !!trustDevice });
+    if (data.deviceToken && username) {
+      localStorage.setItem('sp-device-' + username, data.deviceToken);
+    }
     this._storeSession(data);
     return data;
   },
