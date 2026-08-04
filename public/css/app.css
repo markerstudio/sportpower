@@ -374,6 +374,25 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .cal-legend { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; }
 .cal-legend .cal-chip { margin-bottom: 0; cursor: default; }
 
+/* ---------- التحقق الثنائي ---------- */
+.mfa-box { display: flex; flex-direction: column; gap: 14px; }
+.mfa-head { display: flex; flex-direction: column; gap: 3px; text-align: center; }
+.mfa-head b { font-family: var(--font-display); font-size: 1.1rem; color: var(--app-ink); }
+.mfa-head span { font-size: 12.5px; color: var(--app-muted); }
+.mfa-qr { width: 190px; margin: 0 auto; padding: 10px; background: #fff; border-radius: 14px; border: 1.5px solid var(--app-line); box-shadow: 0 4px 14px rgba(21, 49, 49, .08); }
+.mfa-qr svg { display: block; width: 100%; height: auto; }
+.mfa-steps { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: var(--app-ink); }
+.mfa-steps i { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-inline-end: 4px; border-radius: 50%; background: var(--accent-soft); color: var(--petrol-700); font-style: normal; font-size: 11px; font-weight: 800; }
+.mfa-alt { display: flex; flex-direction: column; gap: 6px; }
+.mfa-alt__label { font-size: 12px; color: var(--app-muted); }
+.mfa-secret { display: flex; gap: 8px; align-items: center; }
+.mfa-secret code { flex: 1; direction: ltr; text-align: center; font-family: var(--font-mono); font-size: 13.5px; letter-spacing: 1px; padding: 9px; background: var(--app-hover); border-radius: 8px; word-break: break-all; }
+.mfa-code { text-align: center; direction: ltr; font-family: var(--font-mono); font-size: 26px; letter-spacing: 10px; font-weight: 700; padding: 12px; }
+.mfa-code::placeholder { letter-spacing: 4px; font-size: 20px; color: var(--app-muted); opacity: .6; }
+.backup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.backup-grid code { direction: ltr; text-align: center; font-family: var(--font-mono); font-size: 13.5px; padding: 8px 4px; background: var(--app-hover); border: 1px dashed var(--app-line); border-radius: 8px; }
+[data-theme="dark"] .mfa-qr { border-color: transparent; }
+
 /* ---------- بطاقات الوجبات ---------- */
 .meals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 16px; }
 .meal-card { display: flex; flex-direction: column; gap: 10px; transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
