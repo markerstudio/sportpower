@@ -193,6 +193,9 @@ async function openNotifications() {
 async function route() {
   const hash = location.hash || '#/login';
   const app = document.getElementById('app');
+  // نافذة مفتوحة أثناء التنقل (زر العودة مثلًا) كانت تترك غشاءها عالقًا فوق الصفحة الجديدة
+  const modalRoot = document.getElementById('modal-root');
+  if (modalRoot) modalRoot.innerHTML = '';
 
   /* العقد الإلكتروني: صفحة عامة يفتحها الزبون بلا تسجيل دخول */
   const contractMatch = hash.match(/^#\/contract\/([\w-]+)$/);

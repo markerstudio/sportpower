@@ -650,6 +650,11 @@ function openInbodyModal(onDone, traineeId, trainees) {
     water: input({ type: 'number', step: '0.1', placeholder: 'لتر' }),
     bmi: input({ type: 'number', step: '0.1' }),
     score: input({ type: 'number' }),
+    waist: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
+    chest: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
+    arm: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
+    hips: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
+    leg: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
   };
   const notesIn = input({ placeholder: 'اختياري' });
   let imageBase64 = null;
@@ -686,13 +691,9 @@ function openInbodyModal(onDone, traineeId, trainees) {
         e.preventDefault();
         if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
-          await API.post('/api/inbody', {
-            traineeId: Number(traineeSel.value), date: dateIn.value,
-            weight: fields.weight.value, bodyFatPct: fields.bodyFatPct.value,
-            muscleMass: fields.muscleMass.value, fatMass: fields.fatMass.value,
-            water: fields.water.value, bmi: fields.bmi.value, score: fields.score.value,
-            notes: notesIn.value, imageBase64,
-          });
+          const body = { traineeId: Number(traineeSel.value), date: dateIn.value, notes: notesIn.value, imageBase64 };
+          for (const [k, inp] of Object.entries(fields)) body[k] = inp.value;
+          await API.post('/api/inbody', body);
           toast('تم حفظ القراءة في صفحة المتدرب.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -703,6 +704,10 @@ function openInbodyModal(onDone, traineeId, trainees) {
       field('كتلة العضلات', fields.muscleMass), field('دهون الجسم', fields.fatMass),
       field('الماء', fields.water), field('BMI', fields.bmi),
       field('النقاط', fields.score), field('ملاحظات', notesIn),
+      el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم)'),
+      el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
+        field('الخصر', fields.waist), field('الصدر', fields.chest), field('اليد', fields.arm),
+        field('الحوض', fields.hips), field('الرجل', fields.leg)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ القراءة'))),
   ], { wide: true });
 }
