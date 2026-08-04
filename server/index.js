@@ -42,9 +42,25 @@ app.get('/manifest.webmanifest', (req, res) => {
   res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
   res.sendFile(path.join(__dirname, '..', 'public', 'manifest.webmanifest'));
 });
+/* إصدار عامل الخدمة = بصمة محتوى ملفات الواجهة: يتغير تلقائيًا مع كل نشر
+   يلمس الواجهة، وثابت عبر كل نسخ الخادم للنشرة الواحدة — فلا يعلق متصفح
+   على نسخة قديمة (الشاشة البيضاء) ولا يُعاد التثبيت بلا داعٍ */
+const SW_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+const SW_VERSION = (() => {
+  const h = crypto.createHash('sha256');
+  const pub = path.join(__dirname, '..', 'public');
+  for (const dir of ['js', 'css']) {
+    for (const f of fs.readdirSync(path.join(pub, dir)).sort()) {
+      h.update(fs.readFileSync(path.join(pub, dir, f)));
+    }
+  }
+  h.update(fs.readFileSync(path.join(pub, 'index.html')));
+  return h.digest('hex').slice(0, 12);
+})();
 app.get('/sw.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache'); // ليصل تحديث العامل فورًا
-  res.sendFile(path.join(__dirname, '..', 'public', 'sw.js'));
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.send(SW_SOURCE.replace('__SW_VERSION__', SW_VERSION));
 });
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
