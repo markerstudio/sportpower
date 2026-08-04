@@ -814,7 +814,9 @@ app.get('/api/sessions', auth, h(async (req, res) => {
 }));
 
 app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, res) => {
-  const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass, appointmentId } = req.body;
+  const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass,
+    waist, chest, arm, hips, leg, appointmentId } = req.body;
+  const measurements = { weight, bodyFatPct, muscleMass, waist, chest, arm, hips, leg };
   const kind = req.body.kind === 'makeup' ? 'makeup' : 'regular';
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
@@ -837,8 +839,9 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
       if (appt) await Store.update('appointments', appt.id, { status: 'done', sessionId: session.id });
     }
     await notify(trainee.id, `تم تسجيل حصة تعويضية لك بتاريخ ${date} — دون خصم من رصيد اشتراكك.`, 'session');
-    await recordSessionMeasurements(trainee.id, date, { weight, bodyFatPct, muscleMass }, req.user.id);
-    return res.json({ session, makeup: true });
+    const recorded = await recordSessionMeasurements(trainee.id, date, measurements, req.user.id);
+    const measureReminder = await measurementsDue(trainee, trainerId, recorded);
+    return res.json({ session, makeup: true, measureReminder });
   }
 
   const subs = (await Store.all('subscriptions'))
@@ -869,7 +872,8 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   });
 
   await notify(trainee.id, `تم تسجيل حصتك بتاريخ ${date} — متبقي ${result.remaining} حصة من أصل ${result.total}.`, 'session');
-  await recordSessionMeasurements(trainee.id, date, { weight, bodyFatPct, muscleMass }, req.user.id);
+  const recorded = await recordSessionMeasurements(trainee.id, date, measurements, req.user.id);
+  result.measureReminder = await measurementsDue(trainee, trainerId, recorded);
   if (result.remaining <= 2 && result.remaining > 0) {
     const admin = (await Store.find('users', { role: 'admin' }, { limit: 1 }))[0];
     if (admin) await notify(admin.id, `اشتراك ${trainee.name} يوشك على الانتهاء (متبقي ${result.remaining} حصة).`, 'subscription');
@@ -877,17 +881,37 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   res.json(result);
 }));
 
-/* قياسات الحصة (وزن/دهون/عضل) تُحفظ تلقائيًا قراءةً في سجل InBody */
+/* قياسات الحصة (وزن/دهون/عضل + شريط القياس) تُحفظ تلقائيًا قراءةً في سجل InBody */
+const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
 async function recordSessionMeasurements(traineeId, date, m, byId) {
-  const weight = m.weight ? Number(m.weight) : null;
-  const fat = m.bodyFatPct ? Number(m.bodyFatPct) : null;
-  const muscle = m.muscleMass ? Number(m.muscleMass) : null;
-  if (!weight && !fat && !muscle) return;
+  const vals = {};
+  let any = false;
+  for (const k of SESSION_MEASURE_KEYS) {
+    vals[k] = m[k] ? Number(m[k]) : null;
+    if (vals[k]) any = true;
+  }
+  if (!any) return false;
   await Store.insert('inbody', {
-    traineeId, date, weight, bodyFatPct: fat, muscleMass: muscle,
+    traineeId, date, ...vals,
     fatMass: null, water: null, bmi: null, score: null,
     notes: 'قياسات مسجلة مع الحصة', createdBy: byId,
   });
+  return true;
+}
+
+/* تذكير القياسات: كل 3 حصص دون قياس جديد → تنبيه للمدرب مع إشارة في الرد */
+async function measurementsDue(trainee, trainerId, justRecorded) {
+  if (justRecorded) return false;
+  const readings = await Store.find('inbody', { traineeId: trainee.id });
+  const lastDate = readings.reduce((m, r) => (r.date > m ? r.date : m), '');
+  const since = await Store.count('sessions',
+    lastDate ? { traineeId: trainee.id, date: { gt: lastDate } } : { traineeId: trainee.id });
+  if (since < 3) return false;
+  if (trainerId) {
+    await notify(trainerId,
+      `مرّت ${since} حصص منذ آخر قياس لـ${trainee.name} — سجّل الوزن والقياسات (الخصر/الصدر/اليد/الحوض/الرجل).`, 'inbody');
+  }
+  return true;
 }
 
 /* تعديل حصة (الإدارة، أو المدرب لحصصه) — البيانات الوصفية فقط لا المتدرب */
@@ -903,6 +927,12 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
   });
   if (req.body.duration !== undefined) patch.duration = Number(req.body.duration) || session.duration;
   if (req.body.weight !== undefined) patch.weight = req.body.weight ? Number(req.body.weight) : null;
+  // نقل الحصة لمدرب آخر — للإدارة فقط (تصحيح نسبة الحصة لمن نفّذها)
+  if (req.body.trainerId !== undefined && req.user.role === 'admin') {
+    const newTrainer = await Store.get('users', Number(req.body.trainerId));
+    if (!newTrainer || newTrainer.role !== 'trainer') return res.status(400).json({ error: 'المدرب غير موجود.' });
+    patch.trainerId = newTrainer.id;
+  }
   res.json(await Store.update('sessions', session.id, patch));
 }));
 
@@ -1066,7 +1096,7 @@ app.get('/api/inbody', auth, h(async (req, res) => {
 }));
 
 app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
-  const { traineeId, date, weight, bodyFatPct, muscleMass, fatMass, water, bmi, score, notes, imageBase64 } = req.body;
+  const { traineeId, date, weight, bodyFatPct, muscleMass, fatMass, water, bmi, score, waist, chest, arm, hips, leg, notes, imageBase64 } = req.body;
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!date || !weight) return res.status(400).json({ error: 'التاريخ والوزن مطلوبان على الأقل.' });
@@ -1074,6 +1104,7 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
     traineeId: trainee.id, date,
     weight: Number(weight), bodyFatPct: numOrNull(bodyFatPct), muscleMass: numOrNull(muscleMass),
     fatMass: numOrNull(fatMass), water: numOrNull(water), bmi: numOrNull(bmi), score: numOrNull(score),
+    waist: numOrNull(waist), chest: numOrNull(chest), arm: numOrNull(arm), hips: numOrNull(hips), leg: numOrNull(leg),
     notes: notes || '', image: saveImage(imageBase64, `inbody-${trainee.id}`),
     createdBy: req.user.id,
   });
@@ -1088,7 +1119,7 @@ app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, 
   const patch = {};
   if (req.body.date !== undefined) patch.date = req.body.date;
   if (req.body.notes !== undefined) patch.notes = req.body.notes;
-  ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'water', 'bmi', 'score'].forEach((k) => {
+  ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'water', 'bmi', 'score', 'waist', 'chest', 'arm', 'hips', 'leg'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = numOrNull(req.body[k]);
   });
   if (patch.weight === null) return res.status(400).json({ error: 'الوزن مطلوب على الأقل.' });

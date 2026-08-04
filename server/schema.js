@@ -126,6 +126,12 @@ const SCHEMA = {
       water: col('num'),
       bmi: col('num'),
       score: col('num'),
+      /* قياسات شريط القياس (سم) — بطلب العميل */
+      waist: col('num'),
+      chest: col('num'),
+      arm: col('num'),
+      hips: col('num'),
+      leg: col('num'),
       notes: col('text'),
       image: col('text'),
       createdBy: col('int'),

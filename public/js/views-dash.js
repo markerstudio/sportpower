@@ -315,6 +315,8 @@ async function openLogSessionModal(onDone, prefill = {}) {
   const weightIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const fatIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const muscleIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
+  const tape = {};
+  for (const k of ['waist', 'chest', 'arm', 'hips', 'leg']) tape[k] = input({ type: 'number', step: '0.5', placeholder: 'سم' });
   const notesIn = textarea({ placeholder: 'ملاحظات المدرب…' });
 
   const saveBtn = el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك');
@@ -339,12 +341,17 @@ async function openLogSessionModal(onDone, prefill = {}) {
             weight: weightIn.value || null,
             bodyFatPct: fatIn.value || null,
             muscleMass: muscleIn.value || null,
+            waist: tape.waist.value || null, chest: tape.chest.value || null,
+            arm: tape.arm.value || null, hips: tape.hips.value || null, leg: tape.leg.value || null,
             appointmentId: prefill.appointmentId || null,
           });
           close();
           toast(res.makeup
             ? 'سُجّلت الحصة التعويضية — دون خصم من رصيد المتدرب.'
             : `تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
+          if (res.measureReminder) {
+            toast('⏱️ مرّت 3 حصص أو أكثر منذ آخر قياس لهذا المتدرب — سجّل الوزن والقياسات.', true);
+          }
           onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -358,6 +365,10 @@ async function openLogSessionModal(onDone, prefill = {}) {
       field('الوزن الحالي (كغ)', weightIn),
       field('نسبة الدهون %', fatIn),
       field('كتلة العضلات (كغ)', muscleIn),
+      el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
+      el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
+        field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
+        field('الحوض', tape.hips), field('الرجل', tape.leg)),
       el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
         'أي قياس يُدخل هنا يُحفظ تلقائيًا قراءةً في سجل InBody الخاص بالمتدرب.'),
       el('div', { class: 'span-2' }, field('الأسلوب التدريبي', styleIn)),
@@ -742,8 +753,8 @@ async function viewTraineePage(root, traineeId) {
     // تعديل القراءات وحذفها — للإدارة والمدرب
     if (['admin', 'trainer'].includes(API.user.role)) {
       inbodyCard.append(el('h4', { style: 'margin:14px 0 6px;font-size:13px;color:var(--app-muted)' }, 'كل القراءات — تعديل وحذف'),
-        dataTable(['التاريخ', 'الوزن', 'دهون %', 'عضل', 'ملاحظة', ''],
-          rs.slice().reverse().map((r) => [r.date, r.weight ?? '—', r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.notes || '—',
+        dataTable(['التاريخ', 'الوزن', 'دهون %', 'عضل', 'الخصر', 'ملاحظة', ''],
+          rs.slice().reverse().map((r) => [r.date, r.weight ?? '—', r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.waist ?? '—', r.notes || '—',
             el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openInbodyEditModal(refreshPage, r) }, 'تعديل'),
               el('button', {
@@ -846,14 +857,19 @@ function openFreezeSubModal(onDone, sub, traineeName) {
   ]);
 }
 
-/* تعديل حصة مسجلة — البيانات الوصفية فقط */
-function openSessionEditModal(onDone, s) {
+/* تعديل حصة مسجلة — البيانات الوصفية، والإدارة تنقلها لمدرب آخر */
+async function openSessionEditModal(onDone, s) {
   const dateIn = input({ type: 'date', value: s.date });
   const timeIn = input({ type: 'time', value: s.time });
   const durIn = input({ type: 'number', min: 15, step: 15, value: s.duration });
   const styleIn = input({ value: s.style || '' });
   const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
   const notesIn = textarea({ value: s.notes || '' });
+  let trainerSel = null;
+  if (API.user.role === 'admin') {
+    const trainers = await API.get('/api/users?role=trainer');
+    trainerSel = select(trainers.map((t) => [t.id, t.name]), { value: s.trainerId || '' });
+  }
   const close = modal('تعديل الحصة', [
     el('form', {
       class: 'form-grid',
@@ -863,12 +879,14 @@ function openSessionEditModal(onDone, s) {
           await API.put('/api/sessions/' + s.id, {
             date: dateIn.value, time: timeIn.value, duration: durIn.value,
             style: styleIn.value, notes: notesIn.value, weight: weightIn.value || null,
+            trainerId: trainerSel ? Number(trainerSel.value) : undefined,
           });
           toast('حُفظت الحصة.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
+      trainerSel ? el('div', { class: 'span-2' }, field('المدرب المنفّذ (تُنسب له الحصة في تقاريره)', trainerSel)) : el('span'),
       field('التاريخ', dateIn), field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn), field('الوزن (كغ)', weightIn),
       el('div', { class: 'span-2' }, field('الأسلوب', styleIn)),
@@ -906,6 +924,11 @@ function openInbodyEditModal(onDone, r) {
       numField('water', 'الماء (لتر)', r.water),
       numField('bmi', 'BMI', r.bmi),
       numField('score', 'النقاط', r.score),
+      numField('waist', 'الخصر (سم)', r.waist),
+      numField('chest', 'الصدر (سم)', r.chest),
+      numField('arm', 'اليد (سم)', r.arm),
+      numField('hips', 'الحوض (سم)', r.hips),
+      numField('leg', 'الرجل (سم)', r.leg),
       el('div', { class: 'span-2' }, field('ملاحظة', notesIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
@@ -916,12 +939,15 @@ function inbodyComparisonTable(readings) {
   const rows = [
     ['الوزن (كغ)', 'weight'], ['نسبة الدهون %', 'bodyFatPct'], ['كتلة العضلات (كغ)', 'muscleMass'],
     ['دهون الجسم (كغ)', 'fatMass'], ['الماء (لتر)', 'water'], ['BMI', 'bmi'], ['النقاط', 'score'],
+    ['الخصر (سم)', 'waist'], ['الصدر (سم)', 'chest'], ['اليد (سم)', 'arm'],
+    ['الحوض (سم)', 'hips'], ['الرجل (سم)', 'leg'],
   ].filter(([, k]) => last[k] != null || first[k] != null);
   return dataTable(['المؤشر', `أول قراءة (${first.date})`, `آخر قراءة (${last.date})`, 'التغير'],
     rows.map(([label, k]) => {
       const a = first[k], b = last[k];
       const delta = a != null && b != null ? +(b - a).toFixed(1) : null;
-      const good = (k === 'muscleMass' || k === 'water' || k === 'score') ? delta > 0 : delta < 0;
+      // العضل والماء والصدر واليد والرجل: الزيادة تقدم — والخصر والحوض والدهون: النقصان تقدم
+      const good = ['muscleMass', 'water', 'score', 'chest', 'arm', 'leg'].includes(k) ? delta > 0 : delta < 0;
       return [label, a ?? '—', b ?? '—',
         delta === null ? '—' : el('span', { class: 'tag ' + (delta === 0 ? 'tag--neutral' : good ? 'tag--accent' : 'tag--danger') },
           (delta > 0 ? '+' : '') + delta)];
