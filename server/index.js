@@ -44,8 +44,10 @@ app.get('/manifest.webmanifest', (req, res) => {
 });
 /* إصدار عامل الخدمة = بصمة محتوى ملفات الواجهة: يتغير تلقائيًا مع كل نشر
    يلمس الواجهة، وثابت عبر كل نسخ الخادم للنشرة الواحدة — فلا يعلق متصفح
-   على نسخة قديمة (الشاشة البيضاء) ولا يُعاد التثبيت بلا داعٍ */
-const SW_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+   على نسخة قديمة (الشاشة البيضاء) ولا يُعاد التثبيت بلا داعٍ.
+   القالب خارج public عمدًا: طبقة Vercel الثابتة كانت تقدّم public/sw.js
+   كما هو فلا يصل الطلب للخادم ولا يُحقن الإصدار إطلاقًا. */
+const SW_SOURCE = fs.readFileSync(path.join(__dirname, 'sw-template.js'), 'utf8');
 const SW_VERSION = (() => {
   const h = crypto.createHash('sha256');
   const pub = path.join(__dirname, '..', 'public');
