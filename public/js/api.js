@@ -17,7 +17,9 @@ const API = {
     const headers = { 'Content-Type': 'application/json' };
     if (this.token) headers.Authorization = 'Bearer ' + this.token;
     const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    if (res.status === 401 && !url.endsWith('/login')) {
+    // 401 أثناء الدخول (كلمة مرور أو رمز تحقق خاطئ) رسالته تُعرض في مكانها —
+    // وليس «انتهاء جلسة» يعيد التوجيه
+    if (res.status === 401 && !url.startsWith('/api/login')) {
       this.clear();
       location.hash = '#/login';
       throw new Error('انتهت الجلسة — يرجى تسجيل الدخول من جديد.');
