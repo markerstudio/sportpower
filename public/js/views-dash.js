@@ -45,6 +45,12 @@ function viewLogin(root) {
     const mfaErr = el('div', { style: 'color:var(--status-danger);font-size:13px;min-height:18px;text-align:center' });
     const box = el('div', { class: 'mfa-box' });
 
+    // متصفح موثوق: لا يُطلب رمز التطبيق عليه لثلاثين يومًا
+    const trustChk = el('input', { type: 'checkbox', id: 'mfa-trust' });
+    trustChk.checked = true;
+    const trustRow = el('label', { class: 'mfa-trust', for: 'mfa-trust' },
+      trustChk, 'الوثوق بهذا المتصفح ٣٠ يومًا — لا يُطلب الرمز عليه');
+
     const codeForm = el('form', {
       onsubmit: async (e) => {
         e.preventDefault();
@@ -53,7 +59,7 @@ function viewLogin(root) {
         vbtn.disabled = true;
         mfaErr.textContent = '';
         try {
-          const data = await API.loginMfa(res.mfaToken, codeIn.value);
+          const data = await API.loginMfa(res.mfaToken, codeIn.value, trustChk.checked, user.value.trim().toLowerCase());
           if (data.backupCodes) { showBackupCodes(data); return; }
           location.hash = homeRoute(data.user.role);
         } catch (ex) { mfaErr.textContent = ex.message; vbtn.disabled = false; codeIn.select(); }
@@ -61,6 +67,7 @@ function viewLogin(root) {
       style: 'display:flex;flex-direction:column;gap:12px',
     },
       codeIn,
+      trustRow,
       mfaErr,
       el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, isSetup ? 'تفعيل ودخول' : 'تحقق ودخول'));
 

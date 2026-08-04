@@ -262,6 +262,14 @@ app.post('/api/login', h(async (req, res) => {
 
   /* كلمة المرور صحيحة — أدوار المال والإدارة تكمل بالتحقق الثنائي */
   if (mfaRequiredFor(user)) {
+    /* متصفح موثوق: رمز جهاز صالح يعفي من إدخال رمز التطبيق */
+    if (user.mfaSecret && req.body.deviceToken) {
+      const d = (await Store.find('tokens', { hash: Store.sha256(String(req.body.deviceToken)) }, { limit: 1 }))[0];
+      if (d && d.kind === 'device' && d.userId === user.id && d.expiresAt > Date.now()) {
+        const token = await issueSession(user);
+        return res.json({ token, user: publicUser(user) });
+      }
+    }
     const raw = crypto.randomBytes(32).toString('hex');
     if (!user.mfaSecret) {
       // أول دخول بعد التفعيل: تسجيل تطبيق المصادقة (السر يُحفظ مع الرمز
@@ -317,7 +325,8 @@ app.post('/api/login/mfa', h(async (req, res) => {
     await Store.remove('tokens', t.id);
     loginAttempts.delete('mfa:' + user.id);
     const token = await issueSession(user);
-    return res.json({ token, user: publicUser({ ...user, mfaSecret: t.secret }), backupCodes });
+    const deviceToken = await maybeTrustDevice(user, req.body.trustDevice);
+    return res.json({ token, user: publicUser({ ...user, mfaSecret: t.secret }), backupCodes, ...(deviceToken ? { deviceToken } : {}) });
   }
 
   /* دخول اعتيادي: رمز التطبيق أو رمز احتياطي يُستهلك مرة واحدة */
@@ -336,8 +345,22 @@ app.post('/api/login/mfa', h(async (req, res) => {
   await Store.remove('tokens', t.id);
   loginAttempts.delete('mfa:' + user.id);
   const token = await issueSession(user);
-  res.json({ token, user: publicUser(user) });
+  const deviceToken = await maybeTrustDevice(user, req.body.trustDevice);
+  res.json({ token, user: publicUser(user), ...(deviceToken ? { deviceToken } : {}) });
 }));
+
+/* «الوثوق بهذا المتصفح»: رمز جهاز لثلاثين يومًا يُعفي من رمز التطبيق —
+   يسقط بانتهاء مدته أو بتصفير التحقق الثنائي من الإدارة */
+const DEVICE_TRUST_MS = 30 * 24 * 60 * 60 * 1000;
+async function maybeTrustDevice(user, wanted) {
+  if (!wanted) return null;
+  const raw = crypto.randomBytes(32).toString('hex');
+  await Store.insert('tokens', {
+    hash: Store.sha256(raw), userId: user.id,
+    expiresAt: Date.now() + DEVICE_TRUST_MS, kind: 'device',
+  });
+  return raw;
+}
 
 app.post('/api/logout', auth, h(async (req, res) => {
   await Store.remove('tokens', req.tokenId);
@@ -529,6 +552,8 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
     name, role, phone: phone || '', branchId: branchId || null,
     trainerId: trainerId || null, goal: goal || null, specialty: specialty || null,
     joinedAt: todayStr(),
+    // كلمة المرور المؤقتة تصل شفويًا — تُغيَّر إلزاميًا عند أول دخول
+    mustChangePassword: true,
   });
   res.json(publicUser(user));
 }));
@@ -544,12 +569,14 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
 
-  // تصفير التحقق الثنائي: يعيد التسجيل من الصفر عند فقدان الجوال/الرموز
+  // تصفير التحقق الثنائي: يعيد التسجيل من الصفر عند فقدان الجوال/الرموز —
+  // وتسقط معه المتصفحات الموثوقة
   if (req.body.mfaReset === true) {
     patch.mfaSecret = null;
     patch.mfaEnrolledAt = null;
     patch.mfaBackup = null;
     patch.mfaLastSlot = null;
+    await Store.deleteWhere('tokens', { userId: user.id, kind: 'device' });
   }
 
   // تفعيل / تعطيل الحساب (يمنع تسجيل الدخول ويُنهي الجلسات)
