@@ -309,7 +309,8 @@ async function openLogSessionModal(onDone, prefill = {}) {
   const kindSel = select([['regular', 'عادية — تُخصم من الاشتراك'], ['makeup', 'تعويض — لا تُخصم من الاشتراك']],
     { value: prefill.kind === 'makeup' ? 'makeup' : 'regular' });
   const dateIn = input({ type: 'date', value: todayISO() });
-  const timeIn = input({ type: 'time', value: prefill.time || '17:00' });
+  // ساعة الحصة تُسجَّل تلقائيًا وقت الحفظ (أو من الموعد المرتبط) — بطلب العميل حُذفت من النموذج
+  const autoTime = () => prefill.time || new Date().toTimeString().slice(0, 5);
   const durIn = input({ type: 'number', value: 60, min: 15, step: 15 });
   const styleIn = input({ placeholder: 'مثال: قوة — دفع / HIIT / مرونة' });
   const weightIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
@@ -336,7 +337,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
             traineeId: Number(traineeSel.value),
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
             kind: kindSel.value,
-            date: dateIn.value, time: timeIn.value, duration: Number(durIn.value),
+            date: dateIn.value, time: autoTime(), duration: Number(durIn.value),
             style: styleIn.value, notes: notesIn.value,
             weight: weightIn.value || null,
             bodyFatPct: fatIn.value || null,
@@ -360,7 +361,6 @@ async function openLogSessionModal(onDone, prefill = {}) {
       trainerSel ? field('المدرب', trainerSel) : el('span'),
       el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       field('التاريخ', dateIn),
-      field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn),
       field('الوزن الحالي (كغ)', weightIn),
       field('نسبة الدهون %', fatIn),
