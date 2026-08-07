@@ -44,6 +44,7 @@ const SCHEMA = {
       sourceTrainerId: col('int'),
       mfaSecret: col('text'),
       mfaEnrolledAt: col('text'),
+      mfaExempt: col('bool'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },

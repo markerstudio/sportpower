@@ -109,7 +109,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, sourceTrainerId: u.sourceTrainerId || null, mfaEnrolled: !!u.mfaSecret, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, sourceTrainerId: u.sourceTrainerId || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
@@ -230,8 +230,10 @@ function verifyTotp(secret, code, lastSlot) {
 }
 
 /* إلزامي على الإنتاج (Postgres)؛ وضع العرض المحلي بلا احتكاك.
+   حساب مُعفى (بقرار الإدارة) يدخل بكلمة المرور فقط.
    MFA_FORCE=1 يفعّله محليًا للاختبار، وMFA_DISABLE=1 للطوارئ فقط. */
 const mfaRequiredFor = (user) => MFA_ROLES.includes(user.role)
+  && user.mfaExempt !== true
   && process.env.MFA_DISABLE !== '1'
   && (Store.IS_PG || process.env.MFA_FORCE === '1');
 
@@ -568,6 +570,9 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   });
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
+
+  // إعفاء من التحقق الثنائي — قرار إداري لمن يصعب عليه تطبيق المصادقة
+  if (req.body.mfaExempt !== undefined) patch.mfaExempt = !!req.body.mfaExempt;
 
   // تصفير التحقق الثنائي: يعيد التسجيل من الصفر عند فقدان الجوال/الرموز —
   // وتسقط معه المتصفحات الموثوقة
