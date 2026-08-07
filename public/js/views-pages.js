@@ -1005,6 +1005,21 @@ async function viewSettings(root) {
                 catch (ex) { toast(ex.message, true); }
               },
             }, 'تصفير 2FA') : el('span'),
+            // إعفاء من رمز التحقق — لمن يصعب عليه تطبيق المصادقة (قرار إداري)
+            ['admin', 'accountant'].includes(u.role) ? el('button', {
+              class: 'btn btn--ghost btn--sm', style: u.mfaExempt ? 'color:var(--status-danger)' : '',
+              onclick: async () => {
+                const msg = u.mfaExempt
+                  ? `إعادة إلزام «${u.name}» برمز التحقق عند الدخول؟`
+                  : `إعفاء «${u.name}» من رمز التحقق نهائيًا؟ سيدخل بكلمة المرور فقط — حماية أقل لحساب يرى البيانات المالية.`;
+                if (!confirm(msg)) return;
+                try {
+                  await API.put('/api/users/' + u.id, { mfaExempt: !u.mfaExempt });
+                  toast(u.mfaExempt ? 'أُعيد الإلزام بالتحقق الثنائي.' : 'أُعفي من التحقق الثنائي — يدخل بكلمة المرور فقط.');
+                  render();
+                } catch (ex) { toast(ex.message, true); }
+              },
+            }, u.mfaExempt ? '2FA: معفى ⚠️' : 'إعفاء 2FA') : el('span'),
             u.id !== API.user.id ? el('button', {
               class: 'btn btn--ghost btn--sm', style: u.active ? 'color:var(--status-danger)' : 'color:var(--accent-hover)',
               onclick: async () => {
