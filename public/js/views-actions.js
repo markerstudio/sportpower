@@ -15,6 +15,9 @@ const ACTION_TYPE_LABELS = {
   rating: 'تقييم متدرب', measurements: 'قياسات ناقصة', progress: 'تعثّر النتائج',
   retention: 'نسبة التجديد', 'absence-rate': 'نسبة الغياب', revenue: 'التحصيل',
   attendance: 'معدل الحضور',
+  'weekly-gap': 'نقص حصص الأسبوع', pace: 'إيقاع أسرع من الباقة',
+  weighing: 'الميزان الأسبوعي', payment: 'متابعة دفعة',
+  'trainer-log': 'إدخال المدرب', 'no-input': 'يوم بلا إدخال',
 };
 
 const THRESHOLD_FIELDS = [
@@ -27,6 +30,10 @@ const THRESHOLD_FIELDS = [
   ['acAbsenceRatePct', 'الحد الأقصى لنسبة الغياب', '%'],
   ['acAttendancePct', 'الحد الأدنى لمعدل الحضور', '%'],
   ['acRevenueTolerance', 'تسامح التحصيل عن الهدف', '%'],
+  ['acWeighDays', 'أيام بلا وزن قبل تنبيه الميزان', 'يوم'],
+  ['acPayFollowDays', 'أيام بلا دفعة على مستحق قبل المتابعة', 'يوم'],
+  ['acTrainerLogDays', 'أيام عمل المدرب بلا إدخال ساعاته', 'يوم'],
+  ['acWeeklyGapWeeks', 'أسابيع فحص انضباط الحصص', 'أسبوع'],
 ];
 
 async function viewActionCenter(root) {

@@ -183,6 +183,31 @@ async function openOnboardModal(onDone, prefill = {}) {
   const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
   const sourceTrainerSel = select([['', 'لا — قناة أخرى'], ...trainers.map((t) => [t.id, t.name])]);
 
+  /* كيف وصلنا هذا المتدرب؟ — يظهر في KPI المبيعات وفي «كيف وصلنا المشتركون» */
+  const trainees = await API.get('/api/users?role=trainee').catch(() => []);
+  const activeTrainees = trainees.filter((t) => t.active !== false);
+  const sourceTypeSel = select([
+    ['new', 'زبون جديد — جاء مباشرة'],
+    ['social', 'سوشال ميديا'],
+    ['trainee', 'عن طريق متدرب عندنا'],
+    ['friend', 'عن طريق صديق'],
+    ['returned', 'عائد من التجميد'],
+    ['trainer', 'عن طريق مدرب'],
+  ], { value: prefill.sourceType || 'new' });
+  const sourcePersonSel = searchSelect(activeTrainees.map(traineeOption), { placeholder: 'اكتب اسم المتدرب…' });
+  const sourceNameIn = input({ placeholder: 'اسم الصديق إن لم يكن مشتركًا عندنا' });
+  const sourcePersonField = field('اسم المتدرب المُحيل', sourcePersonSel);
+  const sourceNameField = field('اسم الصديق (خارج النظام)', sourceNameIn);
+  const syncSource = () => {
+    const v = sourceTypeSel.value;
+    // متدرب/صديق: نختاره من المسجّلين إن كان فعّالًا عندنا، وإلا نكتب اسمه
+    sourcePersonField.style.display = ['trainee', 'friend'].includes(v) ? '' : 'none';
+    sourceNameField.style.display = ['friend', 'social'].includes(v) ? '' : 'none';
+    if (v === 'social') sourceNameField.querySelector('label').textContent = 'المنصة (انستغرام/تيك توك/فيسبوك…)';
+    else sourceNameField.querySelector('label').textContent = 'اسم الصديق (خارج النظام)';
+  };
+  sourceTypeSel.addEventListener('change', syncSource);
+
   /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي */
   const active = packages.filter((p) => p.active !== false);
   const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
@@ -233,6 +258,11 @@ async function openOnboardModal(onDone, prefill = {}) {
             referralCode: referralIn.value || null, leadId: prefill.leadId || null,
             contractId: prefill.contractId || null,
             sourceTrainerId: sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null,
+            sourceType: sourceTypeSel.value,
+            sourceRefId: ['trainee', 'friend'].includes(sourceTypeSel.value) && sourcePersonSel.value
+              ? Number(sourcePersonSel.value)
+              : (sourceTypeSel.value === 'trainer' && sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null),
+            sourceName: sourceNameIn.value || null,
             subscription: {
               totalSessions: Number(totalSel.value), price: Number(priceIn.value),
               packageId: pkgSel.value || null, startDate: startIn.value, endDate: endIn.value,
@@ -248,6 +278,9 @@ async function openOnboardModal(onDone, prefill = {}) {
       field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
       field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
       field('الهدف', goalSel), field('كود إحالة صديق', referralIn),
+      el('div', { class: 'span-2 sidebar__caption', style: 'padding:6px 0 0' }, 'كيف وصلنا هذا المتدرب؟'),
+      field('القناة', sourceTypeSel),
+      sourcePersonField, sourceNameField,
       el('div', { class: 'span-2' }, field('جاء عن طريق مدرب؟ (يُحتسب للمدرب في تقريره)', sourceTrainerSel)),
       section('٢ — الاشتراك والباقة'),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
@@ -261,6 +294,7 @@ async function openOnboardModal(onDone, prefill = {}) {
         field('المدرب', apptTrainerSel), field('التاريخ', apptDate), field('الساعة', apptTime)),
       el('div', { class: 'span-2' },
         el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'إنشاء الحساب وتفعيل الاشتراك'))));
+    syncSource();
   }
 
   function showSuccess(res) {
@@ -528,17 +562,22 @@ function openBranchModal(onDone) {
   const nameIn = input({ placeholder: 'اسم الفرع' });
   const addrIn = input({ placeholder: 'العنوان' });
   const phoneIn = input({ placeholder: 'الهاتف', dir: 'ltr', style: 'text-align:end' });
+  const freezeIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا = بلا سقف' });
   const close = modal('فرع جديد', [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await API.post('/api/branches', { name: nameIn.value, address: addrIn.value, phone: phoneIn.value });
+          await API.post('/api/branches', {
+            name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
+            freezeLimit: freezeIn.value || null,
+          });
           toast('تمت إضافة الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
+      field('سقف التجميد المسموح للفرع', freezeIn),
       el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'إضافة')),
   ]);
 }
@@ -589,6 +628,39 @@ function openUserModal(onDone, branches, users) {
 /* ============================================================
    InBody — رفع وقراءة OCR وحفظ ومقارنة
    ============================================================ */
+/* ملخّص النتائج والمشاكل بالفرع — أعلى صفحة القراءات، وسرّي عن المتدرب */
+async function inbodyFlagsSummaryCard(onDone) {
+  let s;
+  try { s = await API.get('/api/trainee-flags/summary'); }
+  catch (e) { return el('span'); }
+  const t = s.totals;
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'النتائج والمشاكل — حصيلة الفروع 🔒',
+      el('a', { class: 'btn btn--outline btn--sm', href: '#/reports' }, 'التقرير الشهري ←')),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+      'يُرصد من ملف المشترك ومن القراءات. سرّي — لا يظهر للمتدرب في صفحته.'),
+    el('div', { class: 'kpis' },
+      kpiTile(t.results, 'نتيجة مسجّلة', 'target', 'green'),
+      kpiTile(t.resultPeople, 'متدرب وصل لنتيجة', 'check', 'green'),
+      kpiTile(t.problemPeople, 'متدرب عنده مشكلة', 'alert', t.problemPeople ? 'danger' : undefined),
+      kpiTile(t.closedProblems, 'مشكلة عولجت', 'check')),
+    dataTable(['الفرع', 'النتائج', 'متدربون وصلوا لنتيجة', 'مشاكل مفتوحة', 'أشخاص عندهم مشاكل'],
+      s.byBranch.map((b) => [b.branch,
+        el('span', { class: 'num' }, String(b.results)),
+        el('span', { class: 'num' }, String(b.resultPeople)),
+        el('span', { class: 'num', style: b.problems ? 'color:var(--status-danger)' : '' }, String(b.problems)),
+        el('span', { class: 'num', style: b.problemPeople ? 'color:var(--status-danger)' : '' }, String(b.problemPeople))]),
+      'لا فروع.'));
+  if (s.recent.length) {
+    card.append(el('h4', { style: 'margin:14px 0 6px;font-size:13px;color:var(--app-muted)' }, 'آخر ما رُصد'),
+      dataTable(['المتدرب', 'النوع', 'الرصد', 'التاريخ'],
+        s.recent.slice(0, 10).map((f) => [
+          el('a', { href: '#/trainee/' + f.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, f.traineeName),
+          flagTag(f), f.title, f.date])));
+  }
+  return card;
+}
+
 async function viewInbody(root) {
   const isStaff = ['admin', 'trainer'].includes(API.user.role);
   const container = el('div', { class: 'content' });
@@ -598,6 +670,9 @@ async function viewInbody(root) {
   const trainees = API.user.role === 'trainee' ? [] : await API.get('/api/users?role=trainee');
   const state = { trainee: API.user.role === 'trainee' ? API.user.id : (trainees[0] || {}).id };
   container.innerHTML = '';
+
+  // حصيلة النتائج والمشاكل بالفرع — للموظفين وحدهم
+  if (isStaff) container.append(await inbodyFlagsSummaryCard(() => { root.innerHTML = ''; viewInbody(root); }));
 
   const listCard = el('div', { class: 'card' });
   const traineeSel = trainees.length
@@ -625,10 +700,21 @@ async function viewInbody(root) {
         el('span', {}, el('i', { style: 'background:var(--accent)' }), 'الوزن (كغ)'),
         el('span', {}, el('i', { style: 'background:var(--blue-500)' }), 'نسبة الدهون %')),
       lineChart(readings.map((r) => r.date.slice(5)), readings.map((r) => r.weight), readings.map((r) => r.bodyFatPct)),
-      dataTable(['التاريخ', 'الوزن', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة'],
+      dataTable(['التاريخ', 'الوزن', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة',
+        ...(isStaff ? ['رصد (سرّي)'] : [])],
         readings.map((r) => [r.date, r.weight, r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
-          r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—'])),
+          r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—',
+          // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟
+          ...(isStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('button', {
+              class: 'btn btn--ghost btn--sm', title: 'رصد نتيجة من هذه القراءة',
+              onclick: () => openFlagModal(renderList, r.traineeId, 'result', { inbodyId: r.id, date: r.date }),
+            }, '🎯 نتيجة'),
+            el('button', {
+              class: 'btn btn--ghost btn--sm', title: 'رصد مشكلة من هذه القراءة',
+              onclick: () => openFlagModal(renderList, r.traineeId, 'problem', { inbodyId: r.id, date: r.date }),
+            }, '⚠️ مشكلة'))] : [])])),
       el('h3', { class: 'card__title', style: 'margin-top:18px' }, 'مقارنة أول قراءة بآخر قراءة'),
       inbodyComparisonTable(readings));
   }
@@ -667,15 +753,28 @@ function openInbodyModal(onDone, traineeId, trainees) {
       imageBase64 = reader.result;
       preview.style.display = '';
       preview.innerHTML = `<img src="${imageBase64}" style="max-height:160px;border-radius:8px">`;
-      ocrStatus.textContent = 'جارٍ محاولة القراءة التلقائية (OCR)…';
+      ocrStatus.textContent = 'جارٍ قراءة كل قيم الورقة تلقائيًا (OCR)…';
       try {
         const res = await API.post('/api/inbody/ocr', { imageBase64 });
         if (res.ocr) {
-          let filled = 0;
-          Object.entries(res.fields).forEach(([k, v]) => { if (v != null && fields[k]) { fields[k].value = v; filled++; } });
-          ocrStatus.textContent = filled
-            ? `✓ قُرئت ${filled} قيمة تلقائيًا — راجعها وعدّل ما يلزم.`
-            : 'لم يتعرف OCR على قيم واضحة — يرجى الإدخال اليدوي.';
+          /* تُملأ كل الخانات التي عرفها المحرك — لا الوزن وحده — ويُقرأ
+             تاريخ الورقة أيضًا إن كان مطبوعًا عليها. */
+          const filledNames = [];
+          const LABELS = {
+            weight: 'الوزن', bodyFatPct: 'الدهون %', muscleMass: 'العضلات', fatMass: 'دهون الجسم',
+            water: 'الماء', bmi: 'BMI', score: 'النقاط', waist: 'الخصر', chest: 'الصدر',
+            arm: 'اليد', hips: 'الحوض', leg: 'الرجل',
+          };
+          Object.entries(res.fields || {}).forEach(([k, v]) => {
+            if (v == null || !fields[k]) return;
+            fields[k].value = v;
+            fields[k].classList.add('field__input--ocr');
+            filledNames.push(LABELS[k] || k);
+          });
+          if (res.date) dateIn.value = res.date;
+          ocrStatus.textContent = filledNames.length
+            ? `✓ قُرئت ${filledNames.length} قيمة تلقائيًا (${filledNames.join('، ')})${res.date ? ` وتاريخ الورقة ${res.date}` : ''} — راجعها وعدّل ما يلزم.`
+            : 'لم يتعرف OCR على قيم واضحة — جرّب صورة أوضح أو أدخل القيم يدويًا.';
         } else {
           ocrStatus.textContent = res.reason;
         }
@@ -875,21 +974,28 @@ async function viewReports(root) {
 
     const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `تقرير المدربين — ${report.month} (إجمالي الحصص: ${report.totalSessions})`),
-      dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'ساعات مكتبية', 'زبائن عن طريقه', 'إنجاز المهام', 'KPI'],
-        report.trainers.map((t) => {
-          const k = kpiOf(t.trainer);
-          return [t.trainer, t.branch || '—',
-            el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
-            el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours)),
-            // من سجل الحضور/الانصراف في المتابعة اليومية
-            el('span', { class: 'num' }, String(t.officeHours ?? 0)),
-            el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.referredMonth ?? 0} · ${t.referredTotal ?? 0}`),
-            t.tasksPct !== null && t.tasksPct !== undefined ? progressBar(t.tasksPct) : '—',
-            k.kpi !== null && k.kpi !== undefined
-              ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, k.kpi + '%')
-              : '—'];
-        }))));
+      el('h3', { class: 'card__title' },
+        `تقرير المدربين — ${report.month} (إجمالي الحصص: ${report.totalSessions}`
+        + (report.totalAbsences ? ` · غيابات مخصومة: ${report.totalAbsences})` : ')')),
+      el('div', { style: 'overflow-x:auto' },
+        dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'ساعات مكتبية',
+          'ستوري', 'ريلز', 'نتائج', 'مشاكل', 'زبائن عن طريقه', 'إنجاز المهام', 'KPI'],
+          report.trainers.map((t) => {
+            const k = kpiOf(t.trainer);
+            return [t.trainer, t.branch || '—',
+              el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
+              el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours)),
+              // من سجل الحضور/الانصراف في المتابعة اليومية
+              el('span', { class: 'num' }, String(t.officeHours ?? 0)),
+              el('span', { class: 'num' }, String(t.stories ?? 0)), el('span', { class: 'num' }, String(t.reels ?? 0)),
+              el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results ?? 0)),
+              el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems ?? 0)),
+              el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.referredMonth ?? 0} · ${t.referredTotal ?? 0}`),
+              t.tasksPct !== null && t.tasksPct !== undefined ? progressBar(t.tasksPct) : '—',
+              k.kpi !== null && k.kpi !== undefined
+                ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, k.kpi + '%')
+                : '—'];
+          })))));
 
     const delta = (cur, prevVal, money) => {
       const d = cur - prevVal;
@@ -905,6 +1011,30 @@ async function viewReports(root) {
           el('span', { class: 'num', style: b.missed ? 'color:var(--status-danger)' : '' }, String(b.missed)),
           b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
           delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true)]))));
+
+    /* نتائج المشتركين ومشاكلهم — قسم ثابت في التقرير الشهري (سرّي عن المتدرب) */
+    if (report.flags) {
+      const f = report.flags;
+      const flagTable = (rows, empty) => dataTable(['المتدرب', 'الفرع', 'الرصد', 'التفصيل', 'التاريخ', 'الحالة'],
+        rows.map((r) => [
+          el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName),
+          r.branchName, r.title, r.note || '—', r.date,
+          r.status === 'closed' ? el('span', { class: 'tag tag--neutral' }, 'مغلق') : el('span', { class: 'tag tag--warning' }, 'مفتوح')]),
+        empty);
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `نتائج المشتركين ومشاكلهم — ${report.month} 🔒`),
+        el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+          'رصد داخلي من ملف المشترك ومن القراءات — لا يظهر للمتدرب.'),
+        dataTable(['الفرع', 'نتائج', 'مشاكل', 'مشاكل مفتوحة'],
+          f.byBranch.map((b) => [b.branch,
+            el('span', { class: 'num' }, String(b.results)),
+            el('span', { class: 'num' }, String(b.problems)),
+            el('span', { class: 'num', style: b.openProblems ? 'color:var(--status-danger)' : '' }, String(b.openProblems))])),
+        el('h4', { style: 'margin:16px 0 6px;font-size:13px;color:var(--app-muted)' }, `🎯 النتائج (${f.results.length})`),
+        flagTable(f.results, 'لا نتائج مسجّلة هذا الشهر.'),
+        el('h4', { style: 'margin:16px 0 6px;font-size:13px;color:var(--app-muted)' }, `⚠️ المشاكل (${f.problems.length})`),
+        flagTable(f.problems, 'لا مشاكل مرصودة هذا الشهر.')));
+    }
 
     // تقرير النمو الشهري: KPI الفرع + أسباب الإلغاء + المصاريف وصافي الربح + مقارنة الأهداف
     if (growthReport) renderGrowthReport(container, growthReport);
@@ -957,10 +1087,11 @@ async function viewSettings(root) {
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'الفروع',
         el('button', { class: 'btn btn--accent btn--sm', onclick: () => openBranchModal(render) }, '+ فرع جديد')),
-      dataTable(['الفرع', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', ''],
+      dataTable(['الفرع', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', 'سقف التجميد', ''],
         branches.map((b) => [b.name, b.address || '—', b.phone || '—',
           String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
           String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
+          b.freezeLimit ? String(b.freezeLimit) : el('span', { class: 'tag tag--neutral' }, 'بلا سقف'),
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openBranchEditModal(render, b) }, 'تعديل'),
             el('button', {
@@ -1052,17 +1183,24 @@ function openBranchEditModal(onDone, branch) {
   const nameIn = input({ value: branch.name });
   const addrIn = input({ value: branch.address || '' });
   const phoneIn = input({ value: branch.phone || '', dir: 'ltr', style: 'text-align:end' });
+  const freezeIn = input({ type: 'number', min: 0, value: branch.freezeLimit ?? '', placeholder: 'اتركه فارغًا = بلا سقف' });
   const close = modal(`تعديل «${branch.name}»`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await API.put('/api/branches/' + branch.id, { name: nameIn.value, address: addrIn.value, phone: phoneIn.value });
+          await API.put('/api/branches/' + branch.id, {
+            name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
+            freezeLimit: freezeIn.value === '' ? null : freezeIn.value,
+          });
           toast('تم حفظ الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
+      field('سقف التجميد المسموح للفرع', freezeIn),
+      el('div', { style: 'font-size:12px;color:var(--app-muted)' },
+        'تجاوز المجمّدين لهذا السقف يظهر بالأحمر في KPI الفروع.'),
       el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ')),
   ]);
 }

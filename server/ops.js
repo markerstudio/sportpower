@@ -24,7 +24,12 @@ function monthInPeriod(period, month) {
   return inPeriod(period, month + '-15');
 }
 
-const hoursOf = (sessions) => new Set(sessions.map((s) => `${s.trainerId}|${s.date}|${s.time.slice(0, 2)}`)).size;
+/* حصة نُفّذت فعلًا — الغياب مخصوم من رصيد المتدرب لكنه ليس تدريبًا مُنجَزًا */
+const delivered = (s) => s.kind !== 'absence';
+
+/* الساعة المميزة = مدرب + يوم + ساعة البدء: أربعة متدربين في الساعة
+   نفسها ساعةٌ واحدة على المدرب، لا أربع. */
+const hoursOf = (sessions) => new Set(sessions.filter(delivered).map((s) => `${s.trainerId}|${s.date}|${s.time.slice(0, 2)}`)).size;
 
 const prevMonthStr = (m) => {
   const [y, mm] = m.split('-').map(Number);
@@ -82,9 +87,9 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
         .reduce((sum, p) => sum + p.amount, 0);
     }
     case 'sessions':
-      return sessions.filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId)).length;
+      return sessions.filter(delivered).filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId)).length;
     case 'uniqueTrainees':
-      return new Set(sessions.filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId))
+      return new Set(sessions.filter(delivered).filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId))
         .map((s) => s.traineeId)).size;
     case 'newSubs':
       return subEvents.filter((e) => ['new', 'renewal'].includes(e.type) && inPeriod(t.period, e.date) && scopeBranch(e.branchId)).length;
@@ -274,6 +279,155 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   }));
 
   /* ============================================================
+     لوحة KPI الكاملة — أربع زوايا لنفس الشهر:
+       المدرب · الفرع · المحاسب (بالفرع) · المبيعات
+     كل رقم فيها مشتقّ من بيانات النظام لا من إدخال يدوي.
+     ============================================================ */
+  async function buildKpiBoard(month, branch) {
+    const period = { gte: month + '-01', lte: month + '-31' };
+    const [users, branches, subscriptions, sessionsAll, payments, subEvents,
+      trainerLogs, tasks, targets, flags, mealPlans, leads, programs] = await Promise.all([
+      Store.all('users'),
+      Store.all('branches'),
+      Store.all('subscriptions'),
+      Store.find('sessions', { date: period }),
+      Store.find('payments', { date: period }),
+      Store.find('subEvents', { date: period }),
+      Store.find('trainerLogs', { date: period }),
+      Store.find('tasks', { month }),
+      Store.all('targets'),
+      Store.find('traineeFlags', { date: period }),
+      Store.all('mealPlans'),
+      Store.find('leads', { contactDate: period }),
+      Store.all('programs'),
+    ]);
+
+    const inBranch = (x) => !branch || x.branchId === branch;
+    const sessions = sessionsAll.filter(delivered).filter(inBranch);
+    const absences = sessionsAll.filter((s) => !delivered(s)).filter(inBranch);
+    const scopedPayments = payments.filter((p) => p.subscriptionId != null && inBranch(p));
+    const scopedEvents = subEvents.filter(inBranch);
+    const scopedBranches = branches.filter((b) => !branch || b.id === branch);
+    const trainees = users.filter((u) => u.role === 'trainee');
+    const traineeById = Object.fromEntries(trainees.map((t) => [t.id, t]));
+
+    /* ---------- المدرب ---------- */
+    const trainerRows = users
+      .filter((u) => u.role === 'trainer' && u.active !== false && inBranch(u))
+      .map((t) => {
+        const ts = sessions.filter((s) => s.trainerId === t.id);
+        const myTraineeIds = new Set(ts.map((s) => s.traineeId));
+        const logs = trainerLogs.filter((l) => l.trainerId === t.id);
+        const myTasks = tasks.filter((x) => x.trainerId === t.id);
+        // الزبائن الذين جاؤوا عن طريقه — والتحصيل الناتج عنهم هذا الشهر
+        const mine = trainees.filter((u) => u.sourceTrainerId === t.id
+          || (u.sourceType === 'trainer' && u.sourceRefId === t.id));
+        const mineIds = new Set(mine.map((u) => u.id));
+        const collected = scopedPayments
+          .filter((p) => mineIds.has(p.traineeId)).reduce((s, p) => s + p.amount, 0);
+        const myFlags = flags.filter((f) => myTraineeIds.has(f.traineeId));
+        const myEvents = scopedEvents.filter((e) => myTraineeIds.has(e.traineeId) || mineIds.has(e.traineeId));
+        const goalsOf = (g) => [...myTraineeIds].filter((id) => (traineeById[id] || {}).goal === g).length;
+
+        const targetPcts = targets
+          .filter((x) => x.scope === 'trainer' && x.refId === t.id && monthInPeriod(x.period, month))
+          .map((x) => Math.min(Math.round(((computeActual(x, { payments, sessions: sessionsAll, subscriptions, subEvents, subStatus }) || 0) / x.value) * 100), 120));
+
+        return {
+          trainerId: t.id, name: t.name, branchId: t.branchId,
+          branch: (branches.find((b) => b.id === t.branchId) || {}).name || '—',
+          officeHours: Math.round(logs.reduce((s, l) => s + (Number(l.workHours) || 0), 0) * 10) / 10,
+          trainingHours: hoursOf(ts),
+          sessions: ts.length,
+          absences: absences.filter((s) => s.trainerId === t.id).length,
+          trainedPeople: myTraineeIds.size,
+          collected,
+          stories: logs.reduce((s, l) => s + (Number(l.stories) || 0), 0),
+          reels: logs.reduce((s, l) => s + (Number(l.reels) || 0), 0),
+          newClients: mine.filter((u) => (u.joinedAt || '').startsWith(month)).length,
+          newClientsTotal: mine.length,
+          freezes: myEvents.filter((e) => e.type === 'freeze').length,
+          renewals: myEvents.filter((e) => e.type === 'renewal').length,
+          results: myFlags.filter((f) => f.kind === 'result').length,
+          problems: myFlags.filter((f) => f.kind === 'problem').length,
+          traineeGoals: { loss: goalsOf('loss'), muscle: goalsOf('muscle'), maintain: goalsOf('maintain') },
+          goalsCreated: logs.reduce((s, l) => s + (Number(l.goalsCreated) || 0), 0),
+          mealPlans: mealPlans.filter((p) => p.createdBy === t.id && (p.date || '').startsWith(month)).length,
+          programs: programs.filter((p) => p.trainerId === t.id && (p.createdAt || '').startsWith(month)).length,
+          tasksTotal: myTasks.length,
+          tasksDone: myTasks.filter((x) => x.status === 'done').length,
+          tasksPct: myTasks.length ? Math.round((myTasks.filter((x) => x.status === 'done').length / myTasks.length) * 100) : null,
+          targetsPct: targetPcts.length ? Math.round(targetPcts.reduce((a, b) => a + b, 0) / targetPcts.length) : null,
+        };
+      });
+
+    /* ---------- الفرع ---------- */
+    const branchRows = scopedBranches.map((b) => {
+      const ev = subEvents.filter((e) => e.branchId === b.id);
+      const subs = subscriptions.filter((s) => s.branchId === b.id);
+      const frozenNow = new Set(subs.filter((s) => subStatus(s) === 'frozen').map((s) => s.traineeId)).size;
+      const ended = subs.filter((s) => monthOf(s.endDate) === month && s.status !== 'cancelled').length;
+      const renewals = ev.filter((e) => e.type === 'renewal').length;
+      const limit = Number(b.freezeLimit) > 0 ? Number(b.freezeLimit) : null;
+      return {
+        branchId: b.id, branch: b.name,
+        newSubs: ev.filter((e) => e.type === 'new').length,
+        renewals,
+        returnedFromFreeze: ev.filter((e) => e.type === 'unfreeze').length,
+        freezesMonth: ev.filter((e) => e.type === 'freeze').length,
+        frozenNow,
+        freezeLimit: limit,
+        // «التجميد مسموح عدد معين للفرع» — نُظهر التجاوز صراحةً
+        freezeOverLimit: limit !== null ? Math.max(0, frozenNow - limit) : 0,
+        collected: payments.filter((p) => p.branchId === b.id && p.subscriptionId != null).reduce((s, p) => s + p.amount, 0),
+        activeTrainees: new Set(subs.filter((s) => subStatus(s) === 'active').map((s) => s.traineeId)).size,
+        endedSubs: ended,
+        retentionPct: ended ? Math.min(100, Math.round((renewals / ended) * 100)) : null,
+        sessions: sessionsAll.filter(delivered).filter((s) => s.branchId === b.id).length,
+        results: flags.filter((f) => f.kind === 'result' && f.branchId === b.id).length,
+        problems: flags.filter((f) => f.kind === 'problem' && f.branchId === b.id).length,
+      };
+    });
+
+    /* ---------- المحاسب: نفس الأرقام مختصرةً بالفرع ---------- */
+    const accountantRows = branchRows.map((b) => ({
+      branchId: b.branchId, branch: b.branch,
+      collected: b.collected, newSubs: b.newSubs,
+      returnedFromFreeze: b.returnedFromFreeze, freezesMonth: b.freezesMonth, frozenNow: b.frozenNow,
+    }));
+
+    /* ---------- المبيعات ---------- */
+    const scopedLeads = leads.filter((l) => !branch || l.branchId === branch);
+    const subscribed = scopedLeads.filter((l) => l.stage === 'subscribed').length;
+    const sales = {
+      newNumbers: scopedLeads.length,
+      closingRate: scopedLeads.length ? Math.round((subscribed / scopedLeads.length) * 1000) / 10 : null,
+      newClients: subscribed,
+      returnedFromFreeze: scopedEvents.filter((e) => e.type === 'unfreeze').length,
+      tests: scopedLeads.filter((l) => ['trial-booked', 'trial-attended'].includes(l.stage)).length,
+      testsAttended: scopedLeads.filter((l) => l.stage === 'trial-attended').length,
+      noShow: scopedLeads.filter((l) => l.stage === 'no-show').length,
+      byChannel: scopedLeads.reduce((acc, l) => { if (l.channel) acc[l.channel] = (acc[l.channel] || 0) + 1; return acc; }, {}),
+    };
+
+    /* ---------- كيف وصلنا المشتركون الجدد هذا الشهر ---------- */
+    const joinedThisMonth = trainees.filter((u) => (u.joinedAt || '').startsWith(month) && inBranch(u));
+    const acquisition = joinedThisMonth.reduce((acc, u) => {
+      const key = u.sourceType || (u.sourceTrainerId ? 'trainer' : 'new');
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    return { month, branch: branch || null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition };
+  }
+
+  app.get('/api/kpi/board', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    const month = req.query.month || thisMonthStr();
+    const branch = req.query.branch ? Number(req.query.branch) : null;
+    res.json(await buildKpiBoard(month, branch));
+  }));
+
+  /* ============================================================
      ثانيًا: لوحة المتابعة اليومية
      ============================================================ */
   app.get('/api/daily', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -282,7 +436,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     /* لوحة يوم واحد: كل الجداول الكبيرة تُصفّى بالتاريخ في القاعدة،
        عدا المواعيد فنحتاج نافذة 30 يومًا لرصد الغياب المتكرر. */
     const absenceFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const [payments, subEvents, sessions, dayAppts, windowAppts, trainerLogs, tasks, users, branches] = await Promise.all([
+    const [payments, subEvents, allDaySessions, dayAppts, windowAppts, trainerLogs, tasks, users, branches] = await Promise.all([
       Store.find('payments', { date }),
       Store.find('subEvents', { date }),
       Store.find('sessions', { date }),
@@ -293,6 +447,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('users'),
       Store.all('branches'),
     ]);
+    const sessions = allDaySessions.filter(delivered);
+    const daySessionAbsences = allDaySessions.filter((s) => !delivered(s));
     const data = { payments, subEvents, sessions, users, branches, trainerLogs, tasks };
 
     // التحصيل اليومي لكل فرع
@@ -311,13 +467,16 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       };
     });
 
-    // حضور وغياب اليوم
+    // حضور وغياب اليوم — الغياب المسجَّل كحصة يُعلِّم موعده أيضًا فلا يُعدّ مرتين
+    const absSessionIds = new Set(daySessionAbsences.map((s) => s.id));
     const attendance = {
       sessions: data.sessions.length,
       uniqueTrainees: new Set(data.sessions.map((s) => s.traineeId)).size,
       scheduled: dayAppts.length,
       done: dayAppts.filter((a) => a.status === 'done').length,
-      missed: dayAppts.filter((a) => isMissed(a, nowIso)).length,
+      missed: daySessionAbsences.length
+        + dayAppts.filter((a) => isMissed(a, nowIso) && !absSessionIds.has(a.sessionId)).length,
+      absenceSessions: daySessionAbsences.length,
     };
 
     // من غاب أكثر من مرة خلال 30 يومًا → تنبيه للإدارة ومدرب الحصص
@@ -372,6 +531,16 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       };
     });
 
+    /* «يوم بلا إدخال»: لا حصص ولا دفعات ولا أحداث اشتراك ولا سجل مدرب.
+       على يوم عمل هذا لا يعني هدوءًا — يعني أن أحدًا لم يُدخل شيئًا. */
+    const noInput = !data.sessions.length && !daySessionAbsences.length && !data.payments.length
+      && !data.subEvents.length && !data.trainerLogs.length;
+
+    /* مدرب لم يُدخل ساعاته ولا أنجز مهمة يومية — يظهر باسمه لا كرقم */
+    const trainersMissingLog = trainerRows
+      .filter((t) => !t.checkIn && !t.workHours && !t.tasksDone && !t.sessions)
+      .map((t) => ({ trainerId: t.trainerId, name: t.name }));
+
     res.json({
       date,
       totals: {
@@ -383,6 +552,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         returns: branchRows.reduce((s, b) => s + b.returns, 0),
       },
       branches: branchRows, attendance, absentees, trainerRows,
+      noInput, trainersMissingLog,
     });
   }));
 

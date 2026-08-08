@@ -272,14 +272,25 @@ const MIGRATIONS = [
   },
 ];
 
-/* مزامنة المخطط: تضيف أي عمود أو فهرس جديد أُضيف إلى schema.js لاحقًا.
-   بهذا لا يحتاج إدخال حقل جديد إلى ترحيل يدوي — تكفي إضافته للمخطط.
+/* مزامنة المخطط: تنشئ أي **مجموعة** جديدة أُضيفت إلى schema.js، وتضيف أي
+   عمود أو فهرس جديد لجدول قائم. بهذا لا يحتاج إدخال حقل — ولا جدول — جديد
+   إلى ترحيل يدوي؛ تكفي إضافته للمخطط.
    الأعمدة المضافة لجدول فيه بيانات تُنشأ nullable (لا يمكن فرض NOT NULL
    على صفوف قائمة)، ويبقى القيد كاملًا على القواعد الجديدة. */
 async function syncSchema(c, log) {
   for (const col of CREATE_ORDER) {
     const t = tableName(col);
-    if (!(await tableExists(c, t))) continue;
+    if (!(await tableExists(c, t))) {
+      // مجموعة جديدة على قاعدة قائمة: الجدول بقيوده كاملة، فلا صفوف تخالفها
+      await c.query(createTableSql(col));
+      for (const sql of indexSqls(col)) await c.query(sql);
+      for (const fk of foreignKeySqls(col)) {
+        const exists = await c.query('SELECT 1 FROM pg_constraint WHERE conname = $1', [fk.name]);
+        if (!exists.rows.length) await c.query(fk.sql);
+      }
+      log(`  + جدول ${t}`);
+      continue;
+    }
     const { rows } = await c.query(
       'SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2', ['public', t]);
     const present = new Set(rows.map((r) => r.column_name));

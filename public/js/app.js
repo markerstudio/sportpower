@@ -100,6 +100,7 @@ async function renderShell(route, renderView) {
       ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '', onclick: closeSidebar }, icon(ic), label))),
     el('div', { class: 'sidebar__foot' },
       el('b', {}, 'سبورت باور © 2026'),
+      el('div', { class: 'sidebar__slogan' }, 'change your life'),
       'جسم أقوى. حياة أصحّ. نظام يبقى معك.'));
   const backdrop = el('div', { class: 'sidebar-backdrop', onclick: closeSidebar });
 

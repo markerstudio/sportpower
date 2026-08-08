@@ -147,7 +147,7 @@ function viewLogin(root) {
     el('div', { class: 'login-brand' },
       el('img', { class: 'login-brand__mark', src: '/assets/mark-green.svg', alt: '' }),
       el('img', { class: 'logo', src: '/assets/logo-white.svg', alt: 'سبورت باور' }),
-      el('h1', { html: 'نظام الإدارة الداخلي<br><em>جسم أقوى. حياة أصحّ. نظام يبقى معك.</em>' }),
+      el('h1', { html: 'نظام الإدارة الداخلي<br><em>change your life</em><br><em>جسم أقوى. حياة أصحّ. نظام يبقى معك.</em>' }),
       el('p', {}, 'إدارة الفروع والمدربين والمتدربين والاشتراكات والحصص وقراءات InBody ومكتبة التغذية — في مكان واحد.')),
     el('div', { class: 'login-form-side' },
       el('div', { class: 'login-card' },
@@ -262,7 +262,11 @@ async function viewTrainerDash(root) {
     container.append(el('div', { class: 'kpis' },
       kpiTile(k.today, 'مواعيد اليوم', 'calendar'),
       kpiTile(k.persons, 'أشخاص دربتهم', 'users'),
-      kpiTile(k.uniqueTrainees, 'متدربون فريدون', 'user', 'blue')));
+      kpiTile(k.uniqueTrainees, 'متدربون فريدون', 'user', 'blue'),
+      kpiTile(k.absences || 0, 'غيابات سجّلتها', 'alert', k.absences ? 'warn' : undefined)));
+    container.append(el('div', { class: 'alert alert--info' },
+      'إن درّبت أكثر من متدرب في الساعة نفسها فهي ساعة تدريب واحدة عليك — والعدد الفعلي للأشخاص يُحتسب كما هو. '
+      + 'وتسجيل الغياب يخصم حصة من المتدرب دون أن يُحتسب حصة منفَّذة لك.'));
 
     // المتابعة اليومية: سجل اليوم + مهامي (KPI)
     await renderTrainerOps(container);
@@ -285,11 +289,27 @@ async function viewTrainerDash(root) {
           'لا مواعيد لهذا اليوم.')),
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'آخر الحصص المسجلة',
-          el('button', { class: 'btn btn--accent btn--sm', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة')),
-        dataTable(['التاريخ', 'الساعة', 'الأسلوب', 'المدة'],
-          data.recentSessions.map((s) => [s.date, s.time,
-            s.kind === 'makeup' ? el('span', {}, el('span', { class: 'tag tag--info' }, 'تعويض'), ' ', s.style || '') : (s.style || '—'),
-            s.duration + ' د']),
+          el('div', { style: 'display:flex;gap:8px' },
+            el('button', { class: 'btn btn--accent btn--sm', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة'),
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openLogSessionModal(render, { kind: 'absence' }) }, '+ تسجيل غياب'))),
+        // المدرب يعدّل حصصه (بتاريخها) ويحذفها من هنا
+        dataTable(['التاريخ', 'الساعة', 'النوع', 'المتدرب', 'الأسلوب', 'المدة', ''],
+          data.recentSessions.map((s) => [s.date, s.time, sessionKindTag(s),
+            s.traineeName ? el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none' }, s.traineeName) : '—',
+            s.style || '—', s.duration + ' د',
+            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+              el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openSessionEditModal(render, s) }, 'تعديل'),
+              el('button', {
+                class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+                onclick: async () => {
+                  if (!confirm(`حذف حصة ${s.date} ${s.time}؟ الحصة العادية أو الغياب تُعاد لرصيد المتدرب.`)) return;
+                  try {
+                    const r = await API.del('/api/sessions/' + s.id);
+                    toast(r.refunded ? 'حُذفت الحصة وأُعيدت لرصيد الاشتراك.' : 'حُذفت الحصة.');
+                    render();
+                  } catch (ex) { toast(ex.message, true); }
+                },
+              }, 'حذف'))]),
           'لم تسجل حصصًا هذا الشهر بعد.'))));
   }
 
@@ -306,8 +326,14 @@ async function openLogSessionModal(onDone, prefill = {}) {
 
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: prefill.traineeId || '' });
   const trainerSel = trainers.length ? select(trainers.map((t) => [t.id, t.name])) : null;
-  const kindSel = select([['regular', 'عادية — تُخصم من الاشتراك'], ['makeup', 'تعويض — لا تُخصم من الاشتراك']],
-    { value: prefill.kind === 'makeup' ? 'makeup' : 'regular' });
+  /* الغياب نوع ثالث: يُخصم من الاشتراك كالحصة تمامًا، لكنه يُسجَّل غيابًا
+     فلا يُحتسب حضورًا ولا ساعةَ تدريب للمدرب. */
+  const kindSel = select([
+    ['regular', 'عادية — تُخصم من الاشتراك'],
+    ['absence', 'غياب — تُخصم من الاشتراك وتُسجَّل غيابًا'],
+    ['makeup', 'تعويض — لا تُخصم من الاشتراك'],
+  ], { value: ['makeup', 'absence'].includes(prefill.kind) ? prefill.kind : 'regular' });
+  const absenceReasonIn = input({ placeholder: 'مثال: لم يحضر دون إشعار / اعتذر متأخرًا' });
   const dateIn = input({ type: 'date', value: todayISO() });
   // ساعة الحصة تُسجَّل تلقائيًا وقت الحفظ (أو من الموعد المرتبط) — بطلب العميل حُذفت من النموذج
   const autoTime = () => prefill.time || new Date().toTimeString().slice(0, 5);
@@ -321,10 +347,28 @@ async function openLogSessionModal(onDone, prefill = {}) {
   const notesIn = textarea({ placeholder: 'ملاحظات المدرب…' });
 
   const saveBtn = el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك');
-  kindSel.addEventListener('change', () => {
-    saveBtn.textContent = kindSel.value === 'makeup' ? 'حفظ الحصة التعويضية (بلا خصم)' : 'حفظ الحصة وخصمها من الاشتراك';
-  });
-  if (prefill.kind === 'makeup') saveBtn.textContent = 'حفظ الحصة التعويضية (بلا خصم)';
+  const absenceField = el('div', { class: 'span-2' }, field('سبب الغياب (اختياري)', absenceReasonIn));
+  /* حقول التدريب والقياس لا معنى لها في الغياب — تختفي بدل أن تُترك فارغة */
+  const trainingFields = [
+    field('الوزن الحالي (كغ)', weightIn),
+    field('نسبة الدهون %', fatIn),
+    field('كتلة العضلات (كغ)', muscleIn),
+    el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
+    el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
+      field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
+      field('الحوض', tape.hips), field('الرجل', tape.leg)),
+    el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+      'أي قياس يُدخل هنا يُحفظ تلقائيًا قراءةً في سجل InBody الخاص بالمتدرب.'),
+    el('div', { class: 'span-2' }, field('الأسلوب التدريبي', styleIn)),
+  ];
+  const syncKind = () => {
+    const k = kindSel.value;
+    saveBtn.textContent = k === 'makeup' ? 'حفظ الحصة التعويضية (بلا خصم)'
+      : k === 'absence' ? 'تسجيل الغياب وخصم الحصة' : 'حفظ الحصة وخصمها من الاشتراك';
+    absenceField.style.display = k === 'absence' ? '' : 'none';
+    trainingFields.forEach((n) => { n.style.display = k === 'absence' ? 'none' : ''; });
+  };
+  kindSel.addEventListener('change', syncKind);
 
   const close = modal('تسجيل حصة منفذة', [
     el('form', {
@@ -333,23 +377,28 @@ async function openLogSessionModal(onDone, prefill = {}) {
         e.preventDefault();
         if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
+          const absent = kindSel.value === 'absence';
           const res = await API.post('/api/sessions', {
             traineeId: Number(traineeSel.value),
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
             kind: kindSel.value,
+            absenceReason: absent ? absenceReasonIn.value : undefined,
             date: dateIn.value, time: autoTime(), duration: Number(durIn.value),
-            style: styleIn.value, notes: notesIn.value,
-            weight: weightIn.value || null,
-            bodyFatPct: fatIn.value || null,
-            muscleMass: muscleIn.value || null,
-            waist: tape.waist.value || null, chest: tape.chest.value || null,
-            arm: tape.arm.value || null, hips: tape.hips.value || null, leg: tape.leg.value || null,
+            style: absent ? '' : styleIn.value, notes: notesIn.value,
+            weight: absent ? null : (weightIn.value || null),
+            bodyFatPct: absent ? null : (fatIn.value || null),
+            muscleMass: absent ? null : (muscleIn.value || null),
+            waist: absent ? null : (tape.waist.value || null), chest: absent ? null : (tape.chest.value || null),
+            arm: absent ? null : (tape.arm.value || null), hips: absent ? null : (tape.hips.value || null),
+            leg: absent ? null : (tape.leg.value || null),
             appointmentId: prefill.appointmentId || null,
           });
           close();
           toast(res.makeup
             ? 'سُجّلت الحصة التعويضية — دون خصم من رصيد المتدرب.'
-            : `تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
+            : res.absent
+              ? `سُجّل الغياب وخُصمت الحصة — متبقي ${res.remaining} حصة من أصل ${res.total}. المتدرب يستحق تعويضًا.`
+              : `تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
           if (res.measureReminder) {
             toast('⏱️ مرّت 3 حصص أو أكثر منذ آخر قياس لهذا المتدرب — سجّل الوزن والقياسات.', true);
           }
@@ -360,21 +409,14 @@ async function openLogSessionModal(onDone, prefill = {}) {
       field('المتدرب', traineeSel),
       trainerSel ? field('المدرب', trainerSel) : el('span'),
       el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
+      absenceField,
       field('التاريخ', dateIn),
       field('المدة (دقيقة)', durIn),
-      field('الوزن الحالي (كغ)', weightIn),
-      field('نسبة الدهون %', fatIn),
-      field('كتلة العضلات (كغ)', muscleIn),
-      el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
-      el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
-        field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
-        field('الحوض', tape.hips), field('الرجل', tape.leg)),
-      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
-        'أي قياس يُدخل هنا يُحفظ تلقائيًا قراءةً في سجل InBody الخاص بالمتدرب.'),
-      el('div', { class: 'span-2' }, field('الأسلوب التدريبي', styleIn)),
+      ...trainingFields,
       el('div', { class: 'span-2' }, field('ملاحظات المدرب', notesIn)),
       el('div', { class: 'span-2' }, saveBtn)),
   ]);
+  syncKind();
 }
 
 /* ============================================================
@@ -388,11 +430,12 @@ async function viewAccountantDash(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [data, branches, expenses, targets] = await Promise.all([
+    const [data, branches, expenses, targets, debts] = await Promise.all([
       API.get(`/api/dashboard/accountant?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
       API.get(`/api/expenses?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')),
       API.get('/api/targets').catch(() => []),
+      API.get('/api/debts' + (state.branch ? `?branch=${state.branch}` : '')).catch(() => null),
     ]);
     container.innerHTML = '';
 
@@ -438,6 +481,37 @@ async function viewAccountantDash(root) {
           }))));
     }
 
+    /* الديون — كل من عليه متبقٍ، بأي حالة اشتراك، وسدادها بضغطة */
+    if (debts && debts.rows.length) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `الديون المستحقة (${debts.totals.count} اشتراكًا · ${debts.totals.people} شخصًا)`,
+          el('button', { class: 'btn btn--accent btn--sm', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ تسجيل سداد')),
+        el('div', { class: 'kpis', style: 'margin-bottom:10px' },
+          kpiTile(fmtMoney(debts.totals.amount), 'إجمالي الديون', 'alert', 'danger'),
+          kpiTile(fmtMoney(debts.totals.oldAmount), 'ديون اشتراكات سابقة', 'card', 'warn'),
+          kpiTile(debts.totals.people, 'أشخاص عليهم دين', 'users')),
+        pagedTable(['المتدرب', 'الفرع', 'الباقة', 'القيمة', 'المدفوع', 'المتبقي', 'ينتهي', 'الحالة', ''],
+          debts.rows,
+          (r) => [
+            el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName),
+            r.branchName, r.packageName, fmtMoney(r.price), fmtMoney(r.paid),
+            el('b', { style: 'color:var(--status-danger)' }, fmtMoney(r.remaining)),
+            r.endDate,
+            r.old ? el('span', { class: 'tag tag--danger' }, 'دين سابق') : statusTag(r.status),
+            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+              el('button', {
+                class: 'btn btn--outline btn--sm',
+                onclick: () => openDebtPaymentModal(render, r),
+              }, 'تسجيل سداد'),
+              r.phone ? el('a', {
+                class: 'btn btn--petrol btn--sm', target: '_blank', rel: 'noopener',
+                href: waLink(r.phone, OPS_SETTINGS.waCountryCode || '970',
+                  `مرحبًا ${r.traineeName} 👋 تذكير ودّي من سبورت باور بخصوص المتبقي على اشتراكك (${fmtMoney(r.remaining)}) — نسعد بترتيب الدفعة في أي وقت يناسبك.`,
+                  r.traineeName),
+              }, 'واتساب') : el('span'))],
+          { pageSize: 10, searchText: (r) => r.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
+    }
+
     /* إدارة المصاريف الشهرية */
     container.append(expensesCard(expenses, branches, state.month, render));
 
@@ -475,14 +549,24 @@ async function viewAccountantDash(root) {
 
 async function openPaymentModal(onDone, subscriptions, existing) {
   const optOf = (s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})`];
-  /* دفعة من الاشتراك الحالي أو سداد دين سابق — سداد الدين يُنسب للاشتراك
-     القديم غير المسدَّد فلا يمسّ ما هو مستحق على الاشتراك الحالي */
+  /* «سداد دين» كان يعرض الاشتراكات المنتهية فقط، فمن عليه متأخرات على
+     اشتراك فعّال لم يكن له خيار في القائمة — والدفعة لا تُسجَّل.
+     الآن نجلب كل ما عليه دين من الخادم (فعّال ومنتهٍ)، ونُقدّم القديم. */
   const isOld = (s) => ['expired', 'cancelled'].includes(s.status);
   const currentSubs = subscriptions.filter((s) => !isOld(s));
-  const debtSubs = subscriptions.filter((s) => isOld(s) && s.remaining > 0);
+  let debtSubs = subscriptions.filter((s) => s.remaining > 0);
+  if (!existing) {
+    try {
+      const d = await API.get('/api/debts');
+      debtSubs = d.rows.map((r) => ({
+        id: r.subscriptionId, traineeName: `${r.traineeName}${r.old ? ' (اشتراك سابق)' : ''}`,
+        price: r.price, remaining: r.remaining, status: r.status,
+      }));
+    } catch (e) { /* نبقى على ما تعرفه الصفحة */ }
+  }
   const typeSel = select([
     ['current', 'دفعة من الاشتراك الحالي'],
-    ['debt', `سداد دين سابق${debtSubs.length ? '' : ' (لا ديون قديمة)'}`],
+    ['debt', `سداد دين${debtSubs.length ? ` (${debtSubs.length} اشتراكًا عليه متبقٍ)` : ' (لا ديون مستحقة)'}`],
   ], { value: existing && existing.debt ? 'debt' : 'current' });
   const subField = el('div', { class: 'span-2' });
   let subSel;
@@ -495,14 +579,20 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       subSel = searchSelect(pool.map(optOf), {
         placeholder: pool.length ? 'اكتب اسم المتدرب للبحث…' : 'لا اشتراكات مطابقة لهذا الخيار',
       });
+      // سداد دين: املأ المبلغ بالمتبقي تلقائيًا عند اختيار الاشتراك
+      subSel.addEventListener('change', () => {
+        const row = pool.find((s) => String(s.id) === String(subSel.value));
+        if (row && typeSel.value === 'debt' && !amountIn.value) amountIn.value = row.remaining;
+      });
     }
     subField.innerHTML = '';
-    subField.append(field(typeSel.value === 'debt' ? 'الاشتراك القديم المدين' : 'الاشتراك', subSel));
+    subField.append(field(typeSel.value === 'debt' ? 'الاشتراك الذي عليه دين' : 'الاشتراك', subSel));
   };
+
+  const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
   typeSel.addEventListener('change', buildSubSel);
   buildSubSel();
 
-  const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']], { value: existing ? existing.method : 'كاش' });
   const noteIn = input({ value: existing ? existing.note : '', placeholder: 'اختياري' });
@@ -518,11 +608,15 @@ async function openPaymentModal(onDone, subscriptions, existing) {
             await API.put('/api/payments/' + existing.id, { amount: amountIn.value, date: dateIn.value, method: methodSel.value, note: noteIn.value });
             toast('تم تعديل الدفعة.');
           } else {
-            await API.post('/api/payments', {
+            const r = await API.post('/api/payments', {
               subscriptionId: Number(subSel.value), amount: amountIn.value, date: dateIn.value,
               method: methodSel.value, note: noteIn.value, debt: typeSel.value === 'debt',
             });
-            toast(typeSel.value === 'debt' ? 'سُجّل سداد الدين على الاشتراك القديم — دون المساس بالاشتراك الحالي.' : 'تمت إضافة الدفعة — تحدّثت الأرقام تلقائيًا.');
+            toast(typeSel.value === 'debt'
+              ? 'سُجّل سداد الدين على الاشتراك المدين — وتحدّث المتبقي تلقائيًا.'
+              : 'تمت إضافة الدفعة — تحدّثت الأرقام تلقائيًا.');
+            // نقطة الولاء: تجديد في وقته + دفعة واحدة كاملة + إكمال الحصص
+            if (r && r.loyaltyPoint) toast('🏅 استحق المشترك نقطة ولاء: جدّد في وقته، دفع دفعة واحدة، وأنهى كل حصصه.');
           }
           close();
           onDone && onDone();
@@ -538,6 +632,37 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'حفظ الدفعة'))),
   ]);
   if (existing) typeSel.disabled = true;
+}
+
+/* سداد دين على اشتراك بعينه — المبلغ يبدأ بالمتبقي كاملًا */
+function openDebtPaymentModal(onDone, debtRow) {
+  const amountIn = input({ type: 'number', min: 1, max: debtRow.remaining, value: debtRow.remaining });
+  const dateIn = input({ type: 'date', value: todayISO() });
+  const methodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']]);
+  const noteIn = input({ placeholder: 'ملاحظة (اختياري)' });
+
+  const close = modal(`سداد دين — ${debtRow.traineeName}`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const r = await API.post('/api/payments', {
+            subscriptionId: debtRow.subscriptionId, amount: amountIn.value, date: dateIn.value,
+            method: methodSel.value, note: noteIn.value || 'سداد دين', debt: true,
+          });
+          toast('سُجّل السداد — وتحدّث المتبقي على الاشتراك.');
+          if (r && r.loyaltyPoint) toast('🏅 استحق المشترك نقطة ولاء.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, el('div', { class: 'alert alert--info' },
+        `${debtRow.packageName} — قيمة ${fmtMoney(debtRow.price)}، مدفوع ${fmtMoney(debtRow.paid)}، متبقٍ ${fmtMoney(debtRow.remaining)}.`)),
+      field(`المبلغ (${curInfo().name})`, amountIn), field('تاريخ السداد', dateIn),
+      field('طريقة الدفع', methodSel), field('ملاحظة', noteIn),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تسجيل السداد'))),
+  ]);
 }
 
 /* ============================================================
@@ -651,6 +776,9 @@ async function viewTraineePage(root, traineeId) {
   const statTiles = el('div', { class: 'kpis' },
     kpiTile(data.attendance.attended, 'حصة حضرها', 'check'),
     kpiTile(data.attendance.missed, 'غياب', 'alert', data.attendance.missed >= 2 ? 'danger' : undefined),
+    // الغياب المسجَّل كحصة: خُصم من الرصيد ويستحق تعويضًا
+    kpiTile(data.attendance.absenceSessions || 0, 'غياب مخصوم (يستحق تعويضًا)', 'alert',
+      data.attendance.absenceSessions ? 'warn' : undefined),
     kpiTile(data.attendance.pct !== null ? data.attendance.pct + '%' : '—', 'نسبة الحضور', 'pulse', 'blue'));
   if (data.finance) {
     statTiles.append(
@@ -658,6 +786,9 @@ async function viewTraineePage(root, traineeId) {
       kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
   }
   container.append(statTiles);
+
+  /* النتائج والمشاكل — رصد داخلي سرّي (الخادم يُرسل null لحساب المتدرب) */
+  if (data.flags) container.append(traineeFlagsCard(data, traineeId, refreshPage));
 
   /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب) */
   container.append(traineePackagesCard(data, traineeId, refreshPage));
@@ -771,20 +902,21 @@ async function viewTraineePage(root, traineeId) {
   }
   container.append(inbodyCard);
 
-  // سجل الحصص — الإدارة تعدّل وتحذف (الحذف يعيد الحصة لرصيد الاشتراك)
+  // سجل الحصص — الإدارة والمدرب يعدّلان ويحذفان (الحذف يعيد الحصة للرصيد)
   const canEditSession = (s) => API.user.role === 'admin' || (API.user.role === 'trainer' && s.trainerId === API.user.id);
   const sessionActions = isStaff;
   container.append(el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'سجل الحصص'),
-    pagedTable(['التاريخ', 'الساعة', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات', ...(sessionActions ? [''] : [])],
+    pagedTable(['التاريخ', 'الساعة', 'النوع', 'المدة', 'الأسلوب', 'الوزن', 'ملاحظات', ...(sessionActions ? [''] : [])],
       data.sessions,
-      (s) => [s.date, s.time, s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—', s.notes || '—',
+      (s) => [s.date, s.time, sessionKindTag(s), s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—',
+        s.kind === 'absence' ? (s.absenceReason || s.notes || '—') : (s.notes || '—'),
         ...(sessionActions ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
           canEditSession(s) ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openSessionEditModal(refreshPage, s) }, 'تعديل') : el('span'),
-          API.user.role === 'admin' ? el('button', {
+          canEditSession(s) ? el('button', {
             class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
             onclick: async () => {
-              if (!confirm(`حذف حصة ${s.date} ${s.time}؟ الحصة العادية تُعاد لرصيد الاشتراك.`)) return;
+              if (!confirm(`حذف حصة ${s.date} ${s.time}؟ الحصة العادية أو الغياب تُعاد لرصيد الاشتراك.`)) return;
               try {
                 const r = await API.del('/api/sessions/' + s.id);
                 toast(r.refunded ? 'حُذفت الحصة وأُعيدت لرصيد الاشتراك.' : 'حُذفت الحصة.');
@@ -865,6 +997,22 @@ async function openSessionEditModal(onDone, s) {
   const styleIn = input({ value: s.style || '' });
   const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
   const notesIn = textarea({ value: s.notes || '' });
+  /* الحصة العادية والغياب كلاهما مخصوم من الرصيد — فالتبديل بينهما تصحيحُ
+     احتساب حضور لا تعديلٌ مالي. التعويضية لا تُبدَّل (بلا خصم أصلًا). */
+  const isMakeup = s.kind === 'makeup';
+  const kindSel = isMakeup ? null : select([
+    ['regular', 'عادية — حضر ونُفّذت'],
+    ['absence', 'غياب — تُحتسب غيابًا وتبقى مخصومة'],
+  ], { value: s.kind === 'absence' ? 'absence' : 'regular' });
+  const absenceReasonIn = input({ value: s.absenceReason || '', placeholder: 'سبب الغياب (اختياري)' });
+  const absenceField = el('div', { class: 'span-2' }, field('سبب الغياب', absenceReasonIn));
+  if (kindSel) {
+    const sync = () => { absenceField.style.display = kindSel.value === 'absence' ? '' : 'none'; };
+    kindSel.addEventListener('change', sync);
+    sync();
+  } else {
+    absenceField.style.display = 'none';
+  }
   let trainerSel = null;
   if (API.user.role === 'admin') {
     const trainers = await API.get('/api/users?role=trainer');
@@ -880,6 +1028,8 @@ async function openSessionEditModal(onDone, s) {
             date: dateIn.value, time: timeIn.value, duration: durIn.value,
             style: styleIn.value, notes: notesIn.value, weight: weightIn.value || null,
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
+            kind: kindSel ? kindSel.value : undefined,
+            absenceReason: kindSel && kindSel.value === 'absence' ? absenceReasonIn.value : undefined,
           });
           toast('حُفظت الحصة.');
           close(); onDone && onDone();
@@ -887,6 +1037,8 @@ async function openSessionEditModal(onDone, s) {
       },
     },
       trainerSel ? el('div', { class: 'span-2' }, field('المدرب المنفّذ (تُنسب له الحصة في تقاريره)', trainerSel)) : el('span'),
+      kindSel ? el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)) : el('span'),
+      absenceField,
       field('التاريخ', dateIn), field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn), field('الوزن (كغ)', weightIn),
       el('div', { class: 'span-2' }, field('الأسلوب', styleIn)),

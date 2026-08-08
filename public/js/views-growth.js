@@ -490,23 +490,29 @@ async function viewLoyalty(root) {
     const resultPts = input({ type: 'number', min: 0, value: data.pts.result, disabled: !isAdmin || null });
     const renewalPts = input({ type: 'number', min: 0, value: data.pts.renewal, disabled: !isAdmin || null });
     const referralPts = input({ type: 'number', min: 0, value: data.pts.referral, disabled: !isAdmin || null });
+    const loyaltyPts = input({ type: 'number', min: 0, value: data.pts.loyalty, disabled: !isAdmin || null });
     const settingsCard = el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'قيم النقاط (تحكم الإدارة)'),
       el('div', { class: 'filters' },
         field('نتيجة منشورة على السوشال ميديا 📣', resultPts),
         field('تجديد الاشتراك', renewalPts),
         field('إحالة صديق', referralPts),
+        field('نقطة الولاء 🏅', loyaltyPts),
         isAdmin ? el('button', {
           class: 'btn btn--accent',
           onclick: async () => {
             try {
-              await API.put('/api/settings', { ptsResult: resultPts.value, ptsRenewal: renewalPts.value, ptsReferral: referralPts.value });
+              await API.put('/api/settings', {
+                ptsResult: resultPts.value, ptsRenewal: renewalPts.value,
+                ptsReferral: referralPts.value, ptsLoyalty: loyaltyPts.value,
+              });
               toast('حُفظت قيم النقاط — وتسري على العمليات القادمة.');
             } catch (ex) { toast(ex.message, true); }
           },
         }, 'حفظ') : el('span')),
       el('div', { style: 'font-size:12px;color:var(--app-muted)' },
-        'نقاط النتيجة تُمنح من زر «منح نقاط» عند تحقيق المتدرب نتيجة ونشرها على صفحات السوشال ميديا.'));
+        'نقاط النتيجة تُمنح من زر «منح نقاط» عند تحقيق المتدرب نتيجة ونشرها على صفحات السوشال ميديا. '
+        + 'ونقطة الولاء تُمنح تلقائيًا لمن جدّد اشتراكه في وقته المحدد، ودفع المبلغ دفعةً واحدة، وكان قد أنهى كل حصص اشتراكه السابق.'));
     container.append(settingsCard);
 
     const statusTagOf = (s) => s === 'approved' ? el('span', { class: 'tag tag--accent' }, 'معتمد ✓')

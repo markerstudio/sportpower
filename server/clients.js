@@ -49,6 +49,16 @@ function publicRateLimited(key, max, windowMs) {
 
 const clean = (v, max) => String(v === undefined || v === null ? '' : v).trim().slice(0, max || 200);
 
+/* أنواع الباقات في العقد — يختار الزبون نوعه أولًا ثم الباقة داخله */
+const PACKAGE_CATEGORIES = ['personal', 'group', 'saver'];
+const CATEGORY_LABELS = {
+  personal: 'تدريب شخصي',
+  group: 'تدريب مجموعات',
+  saver: 'باقات التوفير',
+};
+const catOf = (p) => (PACKAGE_CATEGORIES.includes(p.category) ? p.category : 'personal');
+const withCategory = (p) => ({ ...p, category: catOf(p), categoryLabel: CATEGORY_LABELS[catOf(p)] });
+
 module.exports = function registerClients(app, { auth, requireRole, h, notify }) {
   /* ============================================================
      الباقات (Packages)
@@ -61,7 +71,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       list = list.filter((p) => !p.branchId || p.branchId === b);
     }
     if (req.query.active === '1' || !canSeePrices(req.user.role)) list = list.filter((p) => p.active !== false);
-    list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0));
+    if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
+    list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory);
     res.json(canSeePrices(req.user.role) ? list : list.map(stripPackagePrice));
   }));
 
@@ -70,13 +81,14 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم الباقة مطلوب.' });
     if (!sessions || Number(sessions) <= 0) return res.status(400).json({ error: 'عدد الحصص مطلوب.' });
     if (price === undefined || Number(price) < 0) return res.status(400).json({ error: 'سعر الباقة مطلوب.' });
-    res.json(await Store.insert('packages', {
+    res.json(withCategory(await Store.insert('packages', {
       name: clean(name, 120), sessions: Number(sessions), price: Number(price),
       durationDays: Number(durationDays) || 30, branchId: Number(branchId) || null,
       sessionsPerWeek: Number(sessionsPerWeek) || null,
+      category: PACKAGE_CATEGORIES.includes(req.body.category) ? req.body.category : 'personal',
       description: clean(description, 500), features: clean(features, 1000),
       active: true, createdBy: req.user.id,
-    }));
+    })));
   }));
 
   app.put('/api/packages/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -91,7 +103,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     });
     if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
     if (req.body.active !== undefined) patch.active = !!req.body.active;
-    res.json(await Store.update('packages', pkg.id, patch));
+    if (PACKAGE_CATEGORIES.includes(req.body.category)) patch.category = req.body.category;
+    res.json(withCategory(await Store.update('packages', pkg.id, patch)));
   }));
 
   app.delete('/api/packages/:id', auth, requireRole('admin'), h(async (req, res) => {
@@ -176,7 +189,14 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     const status = expired && contract.status === 'open' ? 'expired' : contract.status;
     const list = packages
       .filter((p) => p.active !== false && (!p.branchId || !contract.branchId || p.branchId === contract.branchId))
-      .sort((a, b) => (a.sessions || 0) - (b.sessions || 0));
+      .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
+      .map(withCategory);
+
+    /* الزبون يختار نوع التدريب أولًا: شخصي / مجموعات / توفير — ثم الباقة
+       داخل النوع، فتظهر الباقة المختارة في العقد. */
+    const categories = PACKAGE_CATEGORIES
+      .map((key) => ({ key, label: CATEGORY_LABELS[key], count: list.filter((p) => p.category === key).length }))
+      .filter((c) => c.count > 0);
 
     res.json({
       status,
@@ -185,8 +205,10 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       prospectPhone: contract.prospectPhone || '',
       expiresAt: contract.expiresAt,
       currency: s.currency || 'ILS',
+      slogan: 'change your life',
       terms: s.contractTerms || seedData.DEFAULT_CONTRACT_TERMS,
       packages: list, // بكل الأسعار — الزبون يرى كل شيء قبل أن يشترك
+      categories,
       submission: ['submitted', 'converted'].includes(contract.status) ? contract.submission : null,
     });
   }));
@@ -214,6 +236,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       goal: ['loss', 'muscle', 'maintain'].includes(goal) ? goal : 'loss',
       address: clean(address, 200),
       packageId: pkg.id, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price,
+      packageCategory: catOf(pkg), packageCategoryLabel: CATEGORY_LABELS[catOf(pkg)],
       durationDays: pkg.durationDays || 30,
       healthNotes: clean(healthNotes, 500), emergencyPhone: clean(emergencyPhone, 30),
       notes: clean(notes, 500), agreedAt: new Date().toISOString(),
@@ -222,9 +245,9 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
 
     const users = await Store.all('users');
     for (const u of users.filter((x) => ['admin', 'accountant'].includes(x.role) && x.active !== false)) {
-      await notify(u.id, `📝 عقد جديد: ${submission.name} عبّأ بياناته واختار «${submission.packageName}» — راجعه في صفحة الباقات والعقود.`, 'contract');
+      await notify(u.id, `📝 عقد جديد: ${submission.name} عبّأ بياناته واختار «${submission.packageName}» (${submission.packageCategoryLabel}) — راجعه في صفحة الباقات والعقود.`, 'contract');
     }
-    res.json({ ok: true, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price });
+    res.json({ ok: true, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price, categoryLabel: CATEGORY_LABELS[catOf(pkg)] });
   }));
 
   /* ============================================================
@@ -310,3 +333,6 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
 module.exports.canSeePrices = canSeePrices;
 module.exports.stripPackagePrice = stripPackagePrice;
 module.exports.ensureDefaultPackages = ensureDefaultPackages;
+module.exports.PACKAGE_CATEGORIES = PACKAGE_CATEGORIES;
+module.exports.CATEGORY_LABELS = CATEGORY_LABELS;
+module.exports.withCategory = withCategory;

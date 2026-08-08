@@ -21,6 +21,8 @@ const SCHEMA = {
       name: col('text', { notNull: true }),
       address: col('text'),
       phone: col('text'),
+      /* سقف التجميد المسموح للفرع — يقارَن بعدد المجمّدين فعليًا في KPI الفروع */
+      freezeLimit: col('int'),
     },
     indexes: [],
   },
@@ -42,6 +44,11 @@ const SCHEMA = {
       mustChangePassword: col('bool'),
       referralCode: col('text'),
       sourceTrainerId: col('int'),
+      /* كيف وصلنا هذا المتدرب: سوشال ميديا / عن طريق متدرب / صديق /
+         جديد / عائد من التجميد — مع مرجع الشخص أو اسمه إن لم يكن مسجّلًا */
+      sourceType: col('text'),
+      sourceRefId: col('int'),
+      sourceName: col('text'),
       mfaSecret: col('text'),
       mfaEnrolledAt: col('text'),
       mfaExempt: col('bool'),
@@ -78,6 +85,8 @@ const SCHEMA = {
       method: col('text'),
       note: col('text'),
       createdBy: col('int'),
+      /* سداد دين على اشتراك سابق — يُميَّز في السجل ولا يخلط بتحصيل الاشتراك الحالي */
+      debt: col('bool', { default: 'false' }),
     },
     indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date']],
   },
@@ -94,7 +103,10 @@ const SCHEMA = {
       notes: col('text'),
       weight: col('num'),
       subscriptionId: col('int', { ref: ref('subscriptions', 'setnull') }),
+      /* regular = حصة نُفّذت · makeup = تعويضية بلا خصم ·
+         absence = غياب: تُخصم من الرصيد وتُحتسب غيابًا في الحضور والتقارير */
       kind: col('text', { default: "'regular'" }),
+      absenceReason: col('text'),
       createdAt: col('text'),
     },
     indexes: [['date'], ['trainerId'], ['traineeId'], ['branchId'], ['branchId', 'date'], ['trainerId', 'date']],
@@ -162,8 +174,11 @@ const SCHEMA = {
       traineeId: col('int', { notNull: true, ref: ref('users') }),
       mealId: col('int', { notNull: true, ref: ref('meals') }),
       slot: col('text'),
+      /* من ربط البرنامج الغذائي ومتى — «برامج الأكل» في KPI المدرب/الأخصائية */
+      createdBy: col('int'),
+      date: col('text'),
     },
-    indexes: [['traineeId']],
+    indexes: [['traineeId'], ['createdBy']],
   },
 
   notifications: {
@@ -358,6 +373,9 @@ const SCHEMA = {
       durationDays: col('int'),
       branchId: col('int', { ref: ref('branches', 'setnull') }),
       sessionsPerWeek: col('int'),
+      /* نوع الباقة في العقد: personal (تدريب شخصي) · group (تدريب مجموعات) ·
+         saver (باقات التوفير) — تُعرض مجمّعة في العقد الإلكتروني */
+      category: col('text', { default: "'personal'" }),
       description: col('text'),
       features: col('text'),
       active: col('bool', { default: 'true' }),
@@ -399,6 +417,25 @@ const SCHEMA = {
     indexes: [['traineeId'], ['trainerId'], ['date'], ['sessionId']],
   },
 
+  /* نتائج المشتركين ومشاكلهم — تُرصد من صفحة المشترك ومن القراءات.
+     سرّية عن المتدرب تمامًا: تظهر للإدارة والمدرب والمحاسب والأخصائية فقط. */
+  traineeFlags: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
+      kind: col('text', { notNull: true, check: "kind IN ('result','problem')" }),
+      title: col('text', { notNull: true }),
+      note: col('text'),
+      severity: col('text'), // للمشاكل: low | medium | high
+      status: col('text', { default: "'open'" }), // open | closed
+      date: col('text'),
+      closedAt: col('text'),
+      inbodyId: col('int'),
+      createdBy: col('int'),
+    },
+    indexes: [['traineeId'], ['branchId'], ['kind'], ['status'], ['date'], ['branchId', 'kind']],
+  },
+
   actionLog: {
     columns: {
       key: col('text', { notNull: true }),
@@ -424,7 +461,7 @@ const CREATE_ORDER = [
   'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'mealPlans',
   'notifications', 'tokens', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'pointsLog', 'redemptions',
-  'referrals', 'contracts', 'sessionRatings', 'actionLog',
+  'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',
 ];
 
 const COLLECTIONS = CREATE_ORDER.slice();

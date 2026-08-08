@@ -340,6 +340,23 @@ const fmtMoney = (n) => Number(n || 0).toLocaleString('en') + ' ' + curInfo().sy
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonthISO = () => todayISO().slice(0, 7);
 
+/* وسم نوع الحصة — الغياب يُميَّز بلونه لأنه مخصوم من الرصيد لكنه ليس حضورًا */
+const SESSION_KIND_LABELS = { regular: 'عادية', makeup: 'تعويض', absence: 'غياب' };
+function sessionKindTag(s) {
+  const k = s.kind === 'makeup' ? 'makeup' : s.kind === 'absence' ? 'absence' : 'regular';
+  const cls = k === 'absence' ? 'tag--danger' : k === 'makeup' ? 'tag--info' : 'tag--neutral';
+  return el('span', { class: 'tag ' + cls }, SESSION_KIND_LABELS[k]);
+}
+
+/* رصد داخلي على المتدرب: نتيجة أو مشكلة (سرّي عن المتدرب) */
+const FLAG_LABELS = { result: 'نتيجة', problem: 'مشكلة' };
+const SEVERITY_LABELS = { low: 'بسيطة', medium: 'متوسطة', high: 'حرجة' };
+function flagTag(f) {
+  if (f.kind === 'result') return el('span', { class: 'tag tag--accent' }, '🎯 نتيجة');
+  const cls = f.severity === 'high' ? 'tag--danger' : f.severity === 'medium' ? 'tag--warning' : 'tag--neutral';
+  return el('span', { class: 'tag ' + cls }, '⚠️ مشكلة' + (f.severity ? ` — ${SEVERITY_LABELS[f.severity]}` : ''));
+}
+
 function statusTag(status, expiring) {
   if (status === 'expired') return el('span', { class: 'tag tag--danger' }, 'منتهٍ');
   if (status === 'frozen') return el('span', { class: 'tag tag--info' }, 'مجمّد');

@@ -48,6 +48,20 @@ async function viewDaily(root) {
       kpiTile(t.cancels, 'إلغاءات', 'alert', 'danger'),
       kpiTile(data.attendance.uniqueTrainees, 'متدربون حضروا', 'user')));
 
+    /* يوم بلا أي إدخال — كل الأرقام صفر: إمّا عطلة وإمّا لم يُدخل أحد شيئًا */
+    if (data.noInput) {
+      container.append(el('div', { class: 'alert alert--warning' },
+        `🚨 يوم ${data.date}: لا حصص ولا دفعات ولا أحداث اشتراك ولا سجل حضور لأي مدرب — `
+        + 'تأكد إن كان يوم عطلة، وإلّا فالبيانات لم تُدخَل. راجع الفروع اليوم.'));
+    }
+
+    /* مدربون لم يُدخلوا ساعاتهم ولا مهامهم اليومية */
+    if (data.trainersMissingLog && data.trainersMissingLog.length) {
+      container.append(el('div', { class: 'alert alert--warning' },
+        `⏱️ لم يُدخل ساعاته ولا مهامه اليوم: ${data.trainersMissingLog.map((t) => t.name).join('، ')} — `
+        + 'بلا هذا الإدخال تبقى ساعاتهم المكتبية صفرًا في KPI والتقرير الشهري.'));
+    }
+
     // تنبيهات الغياب المتكرر
     if (data.absentees.length) {
       const list = el('div', { class: 'card' },
@@ -144,28 +158,39 @@ function openTaskModal(onDone, trainers, date) {
 /* ============================================================
    الأهداف وKPI (الإدارة/المحاسب)
    ============================================================ */
+const ACQUISITION_LABELS = {
+  social: 'سوشال ميديا', trainee: 'عن طريق متدرب', friend: 'عن طريق صديق',
+  new: 'زبون جديد (مباشر)', returned: 'عائد من التجميد', trainer: 'عن طريق مدرب',
+};
+
 async function viewKpi(root) {
-  const state = { month: thisMonthISO() };
+  const state = { month: thisMonthISO(), branch: '' };
   const container = el('div', { class: 'content' });
   root.append(container);
 
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [targets, kpis, branches, trainers] = await Promise.all([
+    const [targets, kpis, branches, trainers, board] = await Promise.all([
       API.get('/api/targets'),
       API.get('/api/kpi?month=' + state.month),
       API.get('/api/branches'),
       API.get('/api/users?role=trainer'),
+      API.get(`/api/kpi/board?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')).catch(() => null),
     ]);
     container.innerHTML = '';
 
     const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
-    const bar = el('div', { class: 'card filters' }, field('شهر KPI', monthIn));
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
+    const bar = el('div', { class: 'card filters' }, field('شهر KPI', monthIn), field('الفرع', branchSel));
     if (API.user.role === 'admin') {
       bar.append(el('button', { class: 'btn btn--accent', onclick: () => openTargetModal(render, branches, trainers) }, '+ هدف جديد'));
     }
     container.append(bar);
+
+    if (board) renderKpiBoard(container, board);
 
     container.append(el('div', { class: 'alert alert--info' },
       'KPI = (المحقق ÷ الهدف). مؤشر كل موظف يُحسب تلقائيًا من إنجاز مهامه + تحقيق أهدافه، ويظهر في التقارير الشهرية.'));
@@ -203,6 +228,93 @@ async function viewKpi(root) {
   }
 
   await render();
+}
+
+/* ============================================================
+   لوحة KPI بأربع زوايا: المدرب · الفرع · المحاسب · المبيعات
+   كل رقم مشتقّ من بيانات النظام — لا إدخال يدوي.
+   ============================================================ */
+function renderKpiBoard(container, b) {
+  const num = (v) => el('span', { class: 'num' }, String(v ?? 0));
+
+  /* --- المدرب --- */
+  container.append(el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, `KPI المدرب — ${b.month}`),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+      'الساعة المميزة: أربعة متدربين في الساعة نفسها = ساعة تدريب واحدة على المدرب. '
+      + 'والغياب مخصوم من رصيد المتدرب لكنه لا يُحتسب حصةً منفَّذة للمدرب.'),
+    el('div', { style: 'overflow-x:auto' },
+      dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
+        'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل', 'أهداف المتدربين', 'برامج أكل', 'برامج تدريب', 'المهام'],
+        b.trainers.map((t) => [t.name, t.branch,
+          num(t.officeHours), num(t.trainingHours), num(t.sessions),
+          el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
+          num(t.trainedPeople), fmtMoney(t.collected),
+          num(t.stories), num(t.reels),
+          el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.newClients} · ${t.newClientsTotal}`),
+          num(t.freezes), num(t.renewals),
+          el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results)),
+          el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems)),
+          `نزول ${t.traineeGoals.loss} · عضل ${t.traineeGoals.muscle} · تثبيت ${t.traineeGoals.maintain}`,
+          num(t.mealPlans), num(t.programs),
+          t.tasksTotal ? `${t.tasksDone}/${t.tasksTotal}` : '—']),
+        'لا مدربين.'))));
+
+  /* --- الفرع --- */
+  container.append(el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, `KPI الفروع — ${b.month}`),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+      'سقف التجميد يُضبط لكل فرع من صفحة الإعدادات — وتجاوزه يظهر هنا بالأحمر.'),
+    el('div', { style: 'overflow-x:auto' },
+      dataTable(['الفرع', 'مشتركون جدد', 'تجديد', 'عائد من التجميد', 'تجميد الشهر', 'مجمّدون الآن', 'سقف التجميد',
+        'التحصيل', 'الفعّالون', 'نسبة التجديد', 'حصص', 'نتائج', 'مشاكل'],
+        b.branches.map((x) => [x.branch,
+          num(x.newSubs), num(x.renewals), num(x.returnedFromFreeze), num(x.freezesMonth),
+          el('span', {
+            class: 'num',
+            style: x.freezeOverLimit ? 'color:var(--status-danger);font-weight:800' : '',
+            title: x.freezeOverLimit ? `تجاوز السقف بـ ${x.freezeOverLimit}` : '',
+          }, String(x.frozenNow) + (x.freezeOverLimit ? ' ⚠️' : '')),
+          x.freezeLimit === null ? el('span', { class: 'tag tag--neutral' }, 'بلا سقف') : num(x.freezeLimit),
+          fmtMoney(x.collected), num(x.activeTrainees),
+          x.retentionPct !== null ? progressBar(x.retentionPct) : '—',
+          num(x.sessions), num(x.results),
+          el('span', { class: 'num', style: x.problems ? 'color:var(--status-danger)' : '' }, String(x.problems))]),
+        'لا فروع.'))));
+
+  /* --- المحاسب --- */
+  container.append(el('div', { class: 'grid-2eq' },
+    el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'KPI المحاسب — حسب الفرع'),
+      dataTable(['الفرع', 'التحصيل', 'مشتركون جدد', 'جدد من التجميد', 'تجميد'],
+        b.accountant.map((x) => [x.branch, fmtMoney(x.collected), num(x.newSubs), num(x.returnedFromFreeze), num(x.freezesMonth)]),
+        'لا فروع.')),
+
+    /* --- المبيعات --- */
+    el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'KPI المبيعات',
+        el('a', { class: 'btn btn--outline btn--sm', href: '#/sales' }, 'ملف المتابعة ←')),
+      el('div', { class: 'kpis' },
+        kpiTile(b.sales.newNumbers, 'أرقام جديدة', 'wa'),
+        kpiTile(b.sales.closingRate !== null ? b.sales.closingRate + '%' : '—', 'نسبة الإغلاق', 'target', 'green'),
+        kpiTile(b.sales.newClients, 'عملاء جدد هذا الشهر', 'users'),
+        kpiTile(b.sales.returnedFromFreeze, 'عائد من التجميد', 'snow', 'blue'),
+        kpiTile(b.sales.tests, 'عدد الـ test', 'clipboard')),
+      dataTable(['المؤشر', 'العدد'], [
+        ['حصص تجريبية محجوزة', String(b.sales.tests)],
+        ['حضروا التجربة', String(b.sales.testsAttended)],
+        ['لم يحضروا (no-show)', String(b.sales.noShow)],
+        ...Object.entries(b.sales.byChannel).map(([k, v]) => ['قناة: ' + k, String(v)]),
+      ]))));
+
+  /* --- كيف وصلنا المشتركون الجدد --- */
+  const acq = Object.entries(b.acquisition || {});
+  if (acq.length) {
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `كيف وصلنا المشتركون الجدد — ${b.month}`),
+      el('div', { class: 'macros' },
+        ...acq.map(([k, v]) => el('span', { class: 'macro' }, (ACQUISITION_LABELS[k] || k) + ' ', el('b', {}, String(v)))))));
+  }
 }
 
 function periodLabel(p) {

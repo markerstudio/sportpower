@@ -39,10 +39,11 @@ const BRANCHES = [
 
 /* باقات الاشتراك — تظهر في العقد الإلكتروني وفي ملف المشترك (الأسعار للإدارة والمحاسب فقط) */
 const DEFAULT_PACKAGES = [
-  { id: 1, name: 'باقة البداية — 8 حصص', sessions: 8, price: 900, durationDays: 30, branchId: null, sessionsPerWeek: 2, description: 'مناسبة لمن يبدأ رحلته: حصتان أسبوعيًا مع متابعة وزن.', features: 'خطة تدريب مبدئية\nقراءة InBody عند البداية\nمتابعة أسبوعية', active: true },
-  { id: 2, name: 'الباقة الأساسية — 12 حصة', sessions: 12, price: 1200, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'الأكثر طلبًا: ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody\nمتابعة مستمرة', active: true },
-  { id: 3, name: 'الباقة المتقدمة — 16 حصة', sessions: 16, price: 1500, durationDays: 30, branchId: null, sessionsPerWeek: 4, description: 'أربع حصص أسبوعيًا لمن يريد نتائج أسرع.', features: 'برنامج تدريبي متقدم\nبرنامج غذائي\nقراءات InBody شهرية\nحصة تعويضية مجانية', active: true },
-  { id: 4, name: 'باقة الالتزام — 24 حصة', sessions: 24, price: 2100, durationDays: 60, branchId: null, sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز — أفضل قيمة مقابل السعر.', features: 'كل مزايا الباقة المتقدمة\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
+  { id: 1, name: 'باقة البداية — 8 حصص', category: 'personal', sessions: 8, price: 900, durationDays: 30, branchId: null, sessionsPerWeek: 2, description: 'مناسبة لمن يبدأ رحلته: حصتان أسبوعيًا مع متابعة وزن.', features: 'خطة تدريب مبدئية\nقراءة InBody عند البداية\nمتابعة أسبوعية', active: true },
+  { id: 2, name: 'الباقة الأساسية — 12 حصة', category: 'personal', sessions: 12, price: 1200, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'الأكثر طلبًا: ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody\nمتابعة مستمرة', active: true },
+  { id: 3, name: 'الباقة المتقدمة — 16 حصة', category: 'personal', sessions: 16, price: 1500, durationDays: 30, branchId: null, sessionsPerWeek: 4, description: 'أربع حصص أسبوعيًا لمن يريد نتائج أسرع.', features: 'برنامج تدريبي متقدم\nبرنامج غذائي\nقراءات InBody شهرية\nحصة تعويضية مجانية', active: true },
+  { id: 4, name: 'باقة الالتزام — 24 حصة', category: 'saver', sessions: 24, price: 2100, durationDays: 60, branchId: null, sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز — أفضل قيمة مقابل السعر.', features: 'كل مزايا الباقة المتقدمة\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
+  { id: 5, name: 'مجموعات — 12 حصة', category: 'group', sessions: 12, price: 700, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'تدريب في مجموعة صغيرة: حماس أعلى وكلفة أقل.', features: 'مجموعة حتى 5 أشخاص\nبرنامج جماعي متدرّج\nقراءة InBody شهرية', active: true },
 ];
 
 /* نصّ شروط العقد الإلكتروني — تعدله الإدارة من صفحة الباقات والعقود */
@@ -69,7 +70,7 @@ function productionSeed(hash) {
     settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', contractTerms: DEFAULT_CONTRACT_TERMS, ...LOYALTY_DEFAULTS }],
     trainerLogs: [], tasks: [], targets: [], frozen: [], subEvents: [],
     expenses: [], leads: [], programs: [], pointsLog: [], rewards: DEFAULT_REWARDS, redemptions: [], referrals: [],
-    packages: DEFAULT_PACKAGES, contracts: [], sessionRatings: [], actionLog: [],
+    packages: DEFAULT_PACKAGES, contracts: [], sessionRatings: [], traineeFlags: [], actionLog: [],
   };
 }
 
