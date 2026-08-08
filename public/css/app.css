@@ -158,6 +158,11 @@ a { color: var(--action); }
 }
 .sidebar__foot::after { content: ""; position: absolute; width: 110px; height: 110px; border-radius: 50%; background: rgba(121,190,67,.16); bottom: -55px; inset-inline-end: -35px; }
 .sidebar__foot b { color: #fff; font-size: var(--text-xs); display: block; margin-bottom: 2px; }
+/* شعار الشركة — يظهر في القائمة وفي العقد وصفحة الدخول */
+.sidebar__slogan {
+  font-family: var(--font-display); font-weight: 800; letter-spacing: .08em;
+  color: var(--accent); text-transform: lowercase; margin-bottom: 4px; position: relative; z-index: 1;
+}
 
 .main { display: flex; flex-direction: column; min-width: 0; }
 .topbar {
@@ -294,6 +299,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
   border-color: var(--accent); box-shadow: 0 0 0 3px rgba(121, 190, 67, 0.18);
 }
 .field__textarea { min-height: 70px; resize: vertical; }
+/* خانة عبّأها OCR من الصورة — تُميَّز ليراجعها المستخدم قبل الحفظ */
+.field__input--ocr { border-color: var(--accent); background: rgba(121, 190, 67, 0.07); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .form-grid .span-2 { grid-column: span 2; }
 .filters { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
@@ -630,6 +637,19 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
   font-family: var(--font-display); font-weight: var(--weight-bold); font-size: var(--text-sm);
 }
 .public-section b { font-family: var(--font-display); font-weight: var(--weight-bold); color: var(--app-ink); font-size: var(--text-base); }
+/* شريط أنواع التدريب في العقد: شخصي / مجموعات / توفير */
+.public-cats { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+.public-cat {
+  font-family: var(--font-display); font-weight: 800; font-size: var(--text-sm);
+  padding: 10px 18px; border-radius: 999px; cursor: pointer;
+  background: var(--app-surface); color: var(--app-ink);
+  border: 1.5px solid var(--app-line); transition: all var(--dur-fast) var(--ease-out);
+}
+.public-cat:hover { border-color: var(--accent); }
+.public-cat small { font-weight: 400; opacity: .7; font-size: var(--text-xs); }
+.public-cat--on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.public-cat--on small { opacity: .85; }
+
 .public-packages { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 .public-pkg {
   text-align: start; cursor: pointer; background: var(--app-surface);

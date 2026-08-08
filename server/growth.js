@@ -25,6 +25,8 @@ async function loyaltyPts() {
     result: Number(s.ptsResult ?? s.ptsSession) || 25,
     renewal: Number(s.ptsRenewal) || 50,
     referral: Number(s.ptsReferral) || 100,
+    // نقطة الولاء: تجديد في وقته + دفعة واحدة + إكمال كل الحصص
+    loyalty: Number(s.ptsLoyalty) || 1,
   };
 }
 
@@ -36,6 +38,51 @@ async function awardPoints(traineeId, points, reason) {
   if (pts > 0) {
     await Store.insert('notifications', {
       userId: traineeId, text: `🎁 حصلت على ${pts} نقطة — ${reason}. اطّلع على «نقاطي ومكافآتي».`,
+      date: todayStr(), read: false, type: 'loyalty',
+    });
+  }
+  return entry;
+}
+
+/* ============================================================
+   ولاء المشتركين — «نقطة الولاء»
+   تُمنح للمشترك الذي اجتمعت فيه ثلاثة شروط معًا:
+     ١) جدّد اشتراكه في وقته المحدد (قبل انتهاء الاشتراك السابق أو فيه)
+     ٢) دفع كامل قيمة الاشتراك مرة واحدة (دفعة واحدة تغطي المبلغ)
+     ٣) كان قد أنهى كل حصص اشتراكه السابق
+   تُقيَّم عند اكتمال السداد، ولا تتكرر للاشتراك نفسه.
+   ============================================================ */
+async function evaluateLoyalty(subscriptionId) {
+  const sub = await Store.get('subscriptions', Number(subscriptionId));
+  if (!sub) return null;
+  const reason = `ولاء: تجديد في وقته بدفعة واحدة مع إكمال الحصص (اشتراك #${sub.id})`;
+
+  const [payments, subs, log] = await Promise.all([
+    Store.find('payments', { subscriptionId: sub.id }),
+    Store.find('subscriptions', { traineeId: sub.traineeId }),
+    Store.find('pointsLog', { traineeId: sub.traineeId }),
+  ]);
+  if (log.some((p) => p.reason === reason)) return null; // مُنحت سابقًا
+
+  // شرط الدفعة الواحدة الكاملة
+  const paid = payments.reduce((s, p) => s + p.amount, 0);
+  if (payments.length !== 1 || paid + 0.001 < sub.price) return null;
+
+  // الاشتراك السابق مباشرةً لهذا المتدرب
+  const previous = subs
+    .filter((s) => s.id !== sub.id && s.startDate <= sub.startDate && s.status !== 'cancelled')
+    .sort((a, b) => a.endDate.localeCompare(b.endDate))
+    .pop();
+  if (!previous) return null;                                   // اشتراك أول لا تجديد
+  if (sub.startDate > previous.endDate) return null;            // تأخّر عن موعد التجديد
+  if (previous.usedSessions < previous.totalSessions) return null; // لم يُنهِ حصصه
+
+  const pts = await loyaltyPts();
+  const entry = await awardPoints(sub.traineeId, pts.loyalty, reason);
+  if (entry) {
+    await Store.insert('notifications', {
+      userId: sub.traineeId,
+      text: '🏅 نقطة ولاء! جدّدت في وقتك، دفعت دفعة واحدة، وأنهيت كل حصصك — استمر، change your life 💪',
       date: todayStr(), read: false, type: 'loyalty',
     });
   }
@@ -520,4 +567,5 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
 
 module.exports.awardPoints = awardPoints;
 module.exports.loyaltyPts = loyaltyPts;
+module.exports.evaluateLoyalty = evaluateLoyalty;
 module.exports.buildGrowthReport = buildGrowthReport;

@@ -32,6 +32,10 @@ const THRESHOLD_DEFAULTS = {
   acAbsenceRatePct: 20,   // الحد الأقصى لنسبة الغياب في الفرع
   acAttendancePct: 80,    // الحد الأدنى لنسبة المتدربين النشطين الحاضرين
   acRevenueTolerance: 10, // نسبة التسامح % قبل التنبيه على تأخر التحصيل عن الهدف
+  acWeighDays: 7,         // أيام بلا وزن قبل تنبيه متابعة الميزان الأسبوعي
+  acPayFollowDays: 7,     // أيام بلا دفعة على مبلغ مستحق قبل المتابعة المالية
+  acTrainerLogDays: 2,    // أيام يعمل فيها المدرب بلا إدخال ساعاته/مهامه
+  acWeeklyGapWeeks: 1,    // كم أسبوعًا مكتملًا نفحص فيه انضباط الحصص الأسبوعي
 };
 
 function readThresholds(settings) {
@@ -62,6 +66,39 @@ function isMissed(a, nowIso) {
   return a.status === 'scheduled' && (a.date + 'T' + a.time) < nowIso;
 }
 
+/* حصة نُفّذت فعلًا — الغياب مخصوم من الرصيد لكنه ليس حضورًا */
+const delivered = (s) => s.kind !== 'absence';
+
+/* الأسبوع يبدأ الأحد (كتقويم النظام) — نعمل بالتواريخ نصًّا بلا مناطق زمنية */
+function weekStartOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return d.toISOString().slice(0, 10);
+}
+const shiftDays = (dateStr, n) => new Date(new Date(dateStr + 'T00:00:00Z').getTime() + n * 86400000).toISOString().slice(0, 10);
+
+/* حصص الأسبوع المتوقَّعة من الاشتراك:
+   الباقة تقولها صراحةً (sessionsPerWeek)، وإلا نشتقّها من المدة —
+   ١٢ حصة على ٣٠ يومًا = ٣ حصص في الأسبوع. */
+function weeklyQuota(sub, packages) {
+  const pkg = packages.find((p) => p.id === sub.packageId);
+  if (pkg && Number(pkg.sessionsPerWeek) > 0) return Number(pkg.sessionsPerWeek);
+  const span = daysBetween(sub.startDate, sub.endDate);
+  const weeks = Math.max(1, Math.round(span / 7));
+  return Math.max(1, Math.round(sub.totalSessions / weeks));
+}
+
+/* إشعار يصل صاحبه مرة واحدة مهما تكرر فحص مركز القرارات.
+   نصّ الإشعار يحمل مُعرّف فترته (أسبوع/يوم) فيتكرر التنبيه كل فترة جديدة
+   ولا يتكرر داخل الفترة الواحدة. */
+async function notifyOnce(userId, text, type) {
+  if (!userId) return false;
+  const existing = await Store.find('notifications', { userId, type: type || 'info', text }, { limit: 1 });
+  if (existing.length) return false;
+  await Store.insert('notifications', { userId, text, date: todayStr(), read: false, type: type || 'info' });
+  return true;
+}
+
 /* ============================================================
    بناء قائمة الإجراءات من بيانات النظام
    ============================================================ */
@@ -81,13 +118,15 @@ async function buildActions({ branch, subStatus }) {
   const monthStart = month + '-01';
   const eventFrom = daysAgo(30) < monthStart ? daysAgo(30) : monthStart;
 
-  const [users, branches, subscriptions, targets, settings,
-    sessions, appointments, inbodyRecent, payments, subEvents, sessionRatings, actionLog] = await Promise.all([
+  const [users, branches, subscriptions, targets, settings, packages,
+    sessions, appointments, inbodyRecent, payments, subEvents, sessionRatings, actionLog,
+    trainerLogs, monthTasks] = await Promise.all([
     Store.all('users'),
     Store.all('branches'),
     Store.all('subscriptions'),
     Store.all('targets'),
     Store.all('settings'),
+    Store.all('packages'),
     Store.find('sessions', { date: { gte: daysAgo(30) } }),
     Store.find('appointments', { date: { gte: eventFrom } }),
     Store.find('inbody', { date: { gte: daysAgo(21) } }),
@@ -95,6 +134,8 @@ async function buildActions({ branch, subStatus }) {
     Store.find('subEvents', { date: { gte: monthStart, lte: month + '-31' } }),
     Store.find('sessionRatings', { date: { gte: daysAgo(30) } }),
     Store.find('actionLog', { date: { gte: daysAgo(180) } }),
+    Store.find('trainerLogs', { date: { gte: daysAgo(30) } }),
+    Store.find('tasks', { month }),
   ]);
 
   // تاريخ القياسات الكامل — للمرشحين وحدهم (من لديه قراءة حديثة)
@@ -103,8 +144,8 @@ async function buildActions({ branch, subStatus }) {
     ? await Store.find('inbody', { traineeId: { in: candidateIds } })
     : [];
 
-  const data = { users, branches, subscriptions, targets, settings, sessions, appointments,
-    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog };
+  const data = { users, branches, subscriptions, targets, settings, packages, sessions, appointments,
+    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks };
 
   const TH = readThresholds(data.settings[0]);
   const nowIso = new Date().toISOString().slice(0, 16);
@@ -213,6 +254,266 @@ async function buildActions({ branch, subStatus }) {
       ].filter(Boolean),
     });
   });
+
+  /* ============================================================
+     انضباط الحصص الأسبوعي — الأسبوع المنقضي كاملًا
+     الاشتراك يقول كم حصة في الأسبوع (٣ حصص لباقة ١٢ على شهر):
+       أقل من ذلك  🔴 غاب عن حصص الأسبوع ويستحق تعويضًا
+       أكثر من ذلك 🟡 سيُنهي حصصه قبل انتهاء مدة الاشتراك — تابِعه
+     ============================================================ */
+  const lastWeekStart = shiftDays(weekStartOf(today), -7 * Math.max(1, TH.acWeeklyGapWeeks));
+  const lastWeekEnd = shiftDays(weekStartOf(today), -1);
+  const deliveredSessions = data.sessions.filter(delivered);
+
+  for (const sub of data.subscriptions.filter(inBranch)) {
+    if (subStatus(sub) !== 'active') continue;
+    if (sub.startDate > lastWeekStart) continue; // اشتراك جديد — لا أسبوع مكتمل بعد
+    const trainee = userById(sub.traineeId);
+    if (!trainee.id || trainee.active === false) continue;
+
+    const quota = weeklyQuota(sub, data.packages);
+    const weekSessions = deliveredSessions.filter((s) => s.traineeId === sub.traineeId
+      && s.date >= lastWeekStart && s.date <= lastWeekEnd).length;
+    const weekAbsences = data.sessions.filter((s) => !delivered(s) && s.traineeId === sub.traineeId
+      && s.date >= lastWeekStart && s.date <= lastWeekEnd).length;
+    const remaining = sub.totalSessions - sub.usedSessions;
+    const daysLeft = daysBetween(today, sub.endDate);
+
+    if (weekSessions < quota) {
+      const gap = quota - weekSessions;
+      add({
+        key: `weekgap:${sub.id}:${lastWeekStart}`,
+        type: 'weekly-gap', priority: 'urgent',
+        title: `${trainee.name}: نقص ${sessionsLabel(gap)} في أسبوع ${lastWeekStart} — تعويض مطلوب`,
+        reason: `اشتراكه ${sub.totalSessions} حصة أي ${quota} حصص أسبوعيًا، ونفّذ ${weekSessions} فقط بين ${lastWeekStart} و${lastWeekEnd}`
+          + (weekAbsences ? ` (منها ${absencesLabel(weekAbsences)} مسجَّل).` : '.')
+          + ' الأسبوع الناقص لا يُعوَّض من نفسه — يحتاج جدولة.',
+        suggestion: `جدولة ${sessionsLabel(gap)} تعويضية هذا الأسبوع وإبلاغ المتدرب.`,
+        ownerLabel: `المسؤول: قسم المتابعة — ${branchName(sub.branchId)}`,
+        owner: { type: 'trainee', id: sub.traineeId, name: trainee.name, phone: trainee.phone },
+        branchName: branchName(sub.branchId),
+        metrics: [
+          { label: 'المطلوب أسبوعيًا', value: String(quota) },
+          { label: 'المنفَّذ', value: String(weekSessions) },
+          { label: 'الحصص المتبقية', value: String(Math.max(0, remaining)) },
+        ],
+        actions: [
+          callAction(trainee.phone),
+          waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 لاحظنا أن حصص الأسبوع الماضي كانت ${weekSessions} من أصل ${quota} — خلّينا نحجز لك ${sessionsLabel(gap)} تعويضية حتى لا تتأخر نتائجك 💪`),
+          link('حجز موعد تعويضي', '#/calendar'),
+          link('فتح ملف المتدرب', `#/trainee/${sub.traineeId}`),
+        ].filter(Boolean),
+      });
+      // الإجراء «عندي وعند المتدرب» — إشعار داخل حسابه أيضًا
+      await notifyOnce(sub.traineeId,
+        `📅 أسبوع ${lastWeekStart}: حصصك ${weekSessions} من أصل ${quota} — تواصل معنا لجدولة ${sessionsLabel(gap)} تعويضية.`, 'session');
+    } else if (weekSessions > quota && remaining > 0 && daysLeft > 7) {
+      // بهذا الإيقاع: متى تنفد الحصص؟ إن سبق ذلك نهاية المدة بأسبوع فأكثر
+      const weeksToFinish = remaining / weekSessions;
+      const finishInDays = Math.round(weeksToFinish * 7);
+      if (finishInDays + 7 <= daysLeft) {
+        add({
+          key: `pace:${sub.id}:${lastWeekStart}`,
+          type: 'pace', priority: 'important',
+          title: `${trainee.name} يتقدّم أسرع من باقته — ستنتهي حصصه قبل ${daysLabel(daysLeft - finishInDays)} من نهاية الاشتراك`,
+          reason: `نفّذ ${weekSessions} حصص في أسبوع ${lastWeekStart} والمطلوب ${quota} — وبهذا الإيقاع تنفد الحصص المتبقية (${remaining}) خلال ${daysLabel(finishInDays)} بينما الاشتراك ينتهي بعد ${daysLabel(daysLeft)} (${sub.endDate}).`,
+          suggestion: 'تابِع إيقاع حصصه، وجهّز عرض التجديد على أساس نفاد الحصص لا على تاريخ انتهاء الاشتراك.',
+          ownerLabel: `المسؤول: قسم المتابعة / المحاسب — ${branchName(sub.branchId)}`,
+          owner: { type: 'trainee', id: sub.traineeId, name: trainee.name, phone: trainee.phone },
+          branchName: branchName(sub.branchId),
+          metrics: [
+            { label: 'إيقاعه الأسبوعي', value: `${weekSessions} / ${quota}` },
+            { label: 'المتبقي', value: String(remaining) },
+            { label: 'تنفد الحصص خلال', value: daysLabel(finishInDays) },
+          ],
+          actions: [
+            link('فتح ملف المتدرب', `#/trainee/${sub.traineeId}`),
+            link('الباقات والتجديد', '#/packages'),
+          ],
+        });
+      }
+    }
+
+    /* نفدت الحصص والمدة باقية — التجديد على الحصص لا على التاريخ */
+    if (remaining <= 0 && daysLeft > 0) {
+      add({
+        key: `earlyfinish:${sub.id}`,
+        type: 'renewal', priority: 'urgent',
+        title: `${trainee.name} أنهى كل حصصه ومدة اشتراكه ما زالت سارية`,
+        reason: `استُهلكت ${sub.totalSessions} حصة كاملة بينما ينتهي الاشتراك في ${sub.endDate} (بعد ${daysLabel(daysLeft)}) — التجديد يُبنى على نفاد الحصص، وانتظار التاريخ يعني انقطاعه عن التدريب.`,
+        suggestion: 'اعرض التجديد الآن حتى لا ينقطع عن النادي بانتظار انتهاء التاريخ.',
+        ownerLabel: `المسؤول: المحاسب / الاستقبال — ${branchName(sub.branchId)}`,
+        owner: { type: 'trainee', id: sub.traineeId, name: trainee.name, phone: trainee.phone },
+        branchName: branchName(sub.branchId),
+        metrics: [
+          { label: 'الحصص', value: `${sub.usedSessions}/${sub.totalSessions}` },
+          { label: 'ينتهي في', value: sub.endDate },
+        ],
+        actions: [
+          callAction(trainee.phone),
+          waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 أنهيت كل حصص باقتك 👏 جدّد الآن حتى لا تنقطع عن النادي — change your life 💪`),
+          link('فتح ملف المتدرب', `#/trainee/${sub.traineeId}`),
+          link('الباقات والتجديد', '#/packages'),
+        ].filter(Boolean),
+      });
+    }
+  }
+
+  /* ============================================================
+     🟡 مهم — متابعة الميزان أسبوعيًا: من لم يتوزّن هذا الأسبوع
+     ============================================================ */
+  const weighCutoff = daysAgo(TH.acWeighDays);
+  const activeSubByTrainee = {};
+  data.subscriptions.filter((s) => subStatus(s) === 'active').forEach((s) => { activeSubByTrainee[s.traineeId] = s; });
+  for (const trainee of trainees) {
+    if (!activeSubByTrainee[trainee.id]) continue;
+    const readings = data.inbodyRecent.filter((r) => r.traineeId === trainee.id && r.weight != null);
+    if (readings.some((r) => r.date >= weighCutoff)) continue;
+    // من لم يحضر أصلًا هذا الأسبوع تُعالجه قاعدة الغياب — لا نُكرّر عليه
+    const trainedRecently = deliveredSessions.some((s) => s.traineeId === trainee.id && s.date >= weighCutoff);
+    if (!trainedRecently) continue;
+    const lastWeigh = (await Store.find('inbody', { traineeId: trainee.id }, { order: [['date', 'desc']], limit: 1 }))[0];
+
+    add({
+      key: `weigh:${trainee.id}:${weekStartOf(today)}`,
+      type: 'weighing', priority: 'important',
+      title: `${trainee.name} لم يتوزّن هذا الأسبوع`,
+      reason: lastWeigh
+        ? `آخر وزن مسجَّل بتاريخ ${lastWeigh.date} (${daysLabel(daysBetween(lastWeigh.date, today))} مضت) رغم حضوره حصصًا هذا الأسبوع — بلا ميزان لا نعرف هل الخطة تعمل.`
+        : 'لا يوجد أي وزن مسجَّل له رغم حضوره حصصًا — القياس الأول هو خط الأساس لكل متابعة لاحقة.',
+      suggestion: 'وزنه في أول حصة قادمة وسجّل القراءة، والوزن مرة كل أسبوع قاعدة ثابتة.',
+      ownerLabel: 'المسؤول: المدرب + قسم المتابعة',
+      owner: { type: 'trainee', id: trainee.id, name: trainee.name, phone: trainee.phone },
+      branchName: branchName(trainee.branchId),
+      metrics: [
+        { label: 'آخر وزن', value: lastWeigh ? lastWeigh.date : '—' },
+        { label: 'حصص هذا الأسبوع', value: String(deliveredSessions.filter((s) => s.traineeId === trainee.id && s.date >= weighCutoff).length) },
+      ],
+      actions: [
+        link('تسجيل قراءة', '#/inbody'),
+        link('فتح ملف المتدرب', `#/trainee/${trainee.id}`),
+        waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 تذكير من سبورت باور: الوزن مرة كل أسبوع — لا تنسَ الميزان في حصتك القادمة ⚖️`),
+      ].filter(Boolean),
+    });
+    await notifyOnce(trainee.id, `⚖️ أسبوع ${weekStartOf(today)}: لم يُسجَّل لك وزن — تذكّر الميزان في حصتك القادمة.`, 'inbody');
+  }
+
+  /* ============================================================
+     🔴 عاجل — متابعة الدفعات أسبوعيًا: مستحق بلا دفعة خلال الأسبوع
+     ============================================================ */
+  const paidBySub = {};
+  data.payments.forEach((p) => { paidBySub[p.subscriptionId] = (paidBySub[p.subscriptionId] || 0) + p.amount; });
+  const payCutoff = daysAgo(TH.acPayFollowDays);
+  for (const sub of data.subscriptions.filter(inBranch)) {
+    if (['cancelled'].includes(sub.status)) continue;
+    const owed = Math.round((sub.price - (paidBySub[sub.id] || 0)) * 100) / 100;
+    if (owed <= 0) continue;
+    const trainee = userById(sub.traineeId);
+    if (!trainee.id || trainee.active === false) continue;
+    const subPayments = data.payments.filter((p) => p.subscriptionId === sub.id);
+    const lastPay = subPayments.map((p) => p.date).sort().pop();
+    if (lastPay && lastPay >= payCutoff) continue;         // دفع خلال الأسبوع
+    if (sub.startDate >= payCutoff) continue;              // اشتراك هذا الأسبوع — أمهله
+
+    add({
+      key: `payfollow:${sub.id}:${weekStartOf(today)}`,
+      type: 'payment', priority: 'urgent',
+      title: `${trainee.name}: مستحق ${owed} بلا دفعة هذا الأسبوع`,
+      reason: lastPay
+        ? `آخر دفعة بتاريخ ${lastPay} (${daysLabel(daysBetween(lastPay, today))} مضت) والمتبقي على اشتراكه ${owed} من أصل ${sub.price}.`
+        : `لم تُسجَّل له أي دفعة منذ بدء الاشتراك في ${sub.startDate} — المستحق كامل: ${sub.price}.`,
+      suggestion: 'تواصل اليوم على الدفعة، وسجّلها فور استلامها حتى لا يتراكم الدين.',
+      ownerLabel: `المسؤول: المحاسب — ${branchName(sub.branchId)}`,
+      owner: { type: 'trainee', id: sub.traineeId, name: trainee.name, phone: trainee.phone },
+      branchName: branchName(sub.branchId),
+      metrics: [
+        { label: 'المتبقي', value: String(owed), money: true },
+        { label: 'آخر دفعة', value: lastPay || '—' },
+      ],
+      actions: [
+        callAction(trainee.phone),
+        waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 تذكير ودّي من سبورت باور بخصوص المتبقي على اشتراكك — نسعد بترتيب الدفعة في أي وقت يناسبك.`),
+        link('الديون والدفعات', '#/accountant'),
+        link('فتح ملف المتدرب', `#/trainee/${sub.traineeId}`),
+      ].filter(Boolean),
+    });
+  }
+
+  /* ============================================================
+     🟡 مهم — مدرب لم يُدخل ساعاته ولا مهامه اليومية
+     ============================================================ */
+  const logCutoff = daysAgo(TH.acTrainerLogDays);
+  for (const trainer of data.users.filter((u) => u.role === 'trainer' && u.active !== false && inBranch(u))) {
+    const workedDays = [...new Set(deliveredSessions
+      .filter((s) => s.trainerId === trainer.id && s.date >= logCutoff && s.date <= today)
+      .map((s) => s.date))];
+    if (!workedDays.length) continue;
+    const loggedDays = new Set(data.trainerLogs
+      .filter((l) => l.trainerId === trainer.id && (l.checkIn || l.workHours))
+      .map((l) => l.date));
+    const missingDays = workedDays.filter((d) => !loggedDays.has(d)).sort();
+    const openTasks = data.monthTasks.filter((t) => t.trainerId === trainer.id
+      && t.status !== 'done' && t.type === 'daily' && (t.date || '') < today);
+    if (!missingDays.length && !openTasks.length) continue;
+
+    add({
+      key: `trainerlog:${trainer.id}:${today}`,
+      type: 'trainer-log', priority: 'important',
+      title: `${trainer.name}: ${missingDays.length ? `${daysLabel(missingDays.length)} بلا إدخال ساعات` : `${openTasks.length} مهمة يومية متأخرة`}`,
+      reason: [
+        missingDays.length ? `درّب في ${missingDays.join('، ')} دون تسجيل حضوره وانصرافه في المتابعة اليومية` : null,
+        openTasks.length ? `${openTasks.length} مهمة يومية مرّ موعدها ولم تُغلق` : null,
+      ].filter(Boolean).join(' — ') + '. بلا هذا الإدخال يصبح KPI المدرب ناقصًا وساعاته المكتبية صفرًا في التقرير.',
+      suggestion: 'ذكّر المدرب بإدخال ساعاته اليومية وإغلاق مهامه — أو أدخِلها عنه من المتابعة اليومية.',
+      ownerLabel: `المسؤول: ${trainer.name} — ${branchName(trainer.branchId)}`,
+      owner: { type: 'trainer', id: trainer.id, name: trainer.name, phone: trainer.phone },
+      branchName: branchName(trainer.branchId),
+      metrics: [
+        { label: 'أيام بلا إدخال', value: String(missingDays.length) },
+        { label: 'مهام متأخرة', value: String(openTasks.length) },
+      ],
+      actions: [
+        { kind: 'task', label: 'إنشاء مهمة تذكير', trainerId: trainer.id, title: 'إدخال ساعات الحضور والانصراف والمهام اليومية المتأخرة' },
+        waAction(trainer.phone, `مرحبًا ${trainer.name} 👋 تذكير: لم تُسجَّل ساعاتك اليومية${openTasks.length ? ' ولديك مهام متأخرة' : ''} — يرجى تحديثها من صفحة لوحتي اليوم.`),
+        link('المتابعة اليومية', '#/daily'),
+      ].filter(Boolean),
+    });
+    await notifyOnce(trainer.id,
+      `📋 ${today}: لم تُدخل ${missingDays.length ? 'ساعاتك اليومية' : 'إنجاز مهامك اليومية'} — حدّثها من «لوحتي» حتى يُحتسب أداؤك بشكل صحيح.`, 'task');
+  }
+
+  /* ============================================================
+     🔴 عاجل — يوم بلا أي إدخال في النظام
+     ============================================================ */
+  for (const day of [shiftDays(today, -1), today]) {
+    if (day === today && new Date().getHours() < 18) continue; // اليوم لم ينتهِ بعد
+    const daySessions = data.sessions.filter((s) => s.date === day);
+    const dayPayments = data.payments.filter((p) => p.date === day);
+    const dayEvents = data.subEvents.filter((e) => e.date === day);
+    const dayLogs = data.trainerLogs.filter((l) => l.date === day);
+    if (daySessions.length || dayPayments.length || dayEvents.length || dayLogs.length) continue;
+    if (day < daysAgo(30)) continue;
+
+    add({
+      key: `noinput:${day}`,
+      type: 'no-input', priority: 'urgent',
+      title: `${day}: لا يوجد أي إدخال في النظام — كل الأرقام صفر`,
+      reason: 'لا حصص ولا دفعات ولا أحداث اشتراك ولا سجل حضور لأي مدرب في هذا اليوم. إمّا أن العمل توقّف فعلًا، وإمّا أن أحدًا لم يُدخل شيئًا — والحالتان تحتاجان جوابًا.',
+      suggestion: 'تحقق من الفروع: هل كانت عطلة؟ وإن لم تكن، طالِب المدربين والاستقبال بإدخال بيانات اليوم فورًا.',
+      ownerLabel: 'المسؤول: الإدارة',
+      owner: { type: 'branch', id: null, name: 'كل الفروع', phone: null },
+      branchName: 'كل الفروع',
+      metrics: [
+        { label: 'الحصص', value: '0' },
+        { label: 'الدفعات', value: '0' },
+        { label: 'سجلات المدربين', value: '0' },
+      ],
+      actions: [
+        link('المتابعة اليومية', '#/daily'),
+        link('التقويم والمواعيد', '#/calendar'),
+      ],
+    });
+  }
 
   /* ============================================================
      🔴 عاجل — متدرب غاب ولم يتم التواصل معه بعد → إشعار قسم المتابعة

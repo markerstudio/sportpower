@@ -14,6 +14,14 @@ const CONTRACT_STATUS_LABELS = {
 /* ============================================================
    صفحة الباقات والعقود (الإدارة / المحاسب)
    ============================================================ */
+/* أنواع الباقات — يختارها الزبون في العقد قبل الباقة نفسها */
+const PACKAGE_CATEGORIES = [
+  ['personal', 'تدريب شخصي'],
+  ['group', 'تدريب مجموعات'],
+  ['saver', 'باقات التوفير'],
+];
+const categoryLabel = (c) => (PACKAGE_CATEGORIES.find(([k]) => k === c) || PACKAGE_CATEGORIES[0])[1];
+
 async function viewPackages(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
@@ -39,12 +47,24 @@ async function viewPackages(root) {
       'الباقات تظهر للزبون داخل العقد الإلكتروني بكل أسعارها قبل أن يشترك، وتظهر على ملف كل مشترك للتجديد أو الترقية. '
       + 'المدرب لا يرى الأسعار إطلاقًا.'));
 
-    /* --- بطاقات الباقات --- */
-    const grid = el('div', { class: 'meals-grid' });
-    packages.forEach((p) => grid.append(packageCard(p, branches, render)));
-    container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`),
-      packages.length ? grid : el('div', { class: 'empty' }, 'لا باقات بعد — أضف أول باقة.')));
+    /* --- بطاقات الباقات مجمّعة بالنوع (كما تظهر في العقد) --- */
+    const pkgCard = el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`));
+    if (!packages.length) {
+      pkgCard.append(el('div', { class: 'empty' }, 'لا باقات بعد — أضف أول باقة.'));
+    } else {
+      PACKAGE_CATEGORIES.forEach(([key, label]) => {
+        const list = packages.filter((p) => (p.category || 'personal') === key);
+        if (!list.length) return;
+        const grid = el('div', { class: 'meals-grid' });
+        list.forEach((p) => grid.append(packageCard(p, branches, render)));
+        pkgCard.append(
+          el('h4', { style: 'margin:14px 0 8px;font-family:var(--font-display);font-weight:800;color:var(--accent-hover)' },
+            `${label} (${list.length})`),
+          grid);
+      });
+    }
+    container.append(pkgCard);
 
     /* --- العقود --- */
     const pending = contracts.filter((c) => c.status === 'submitted');
@@ -109,6 +129,7 @@ function packageCard(p, branches, onDone) {
       p.active === false ? el('span', { class: 'tag tag--neutral' }, 'موقوفة') : el('span', { class: 'tag tag--accent' }, 'متاحة')),
     el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price) : '—'),
     el('div', { class: 'macros' },
+      el('span', { class: 'macro' }, el('b', {}, categoryLabel(p.category || 'personal'))),
       el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
       el('span', { class: 'macro' }, 'المدة ', el('b', {}, (p.durationDays || 30) + ' يوم')),
       p.sessionsPerWeek ? el('span', { class: 'macro' }, el('b', {}, String(p.sessionsPerWeek)), ' أسبوعيًا') : '',
@@ -144,6 +165,7 @@ function openPackageModal(onDone, branches, existing) {
   const durationIn = input({ type: 'number', min: 1, value: existing ? existing.durationDays || 30 : 30 });
   const perWeekIn = input({ type: 'number', min: 1, max: 7, value: existing ? existing.sessionsPerWeek || '' : 3 });
   const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: existing ? existing.branchId || '' : '' });
+  const categorySel = select(PACKAGE_CATEGORIES, { value: existing ? existing.category || 'personal' : 'personal' });
   const descIn = textarea({ value: existing ? existing.description : '', placeholder: 'وصف مختصر يظهر للزبون في العقد…' });
   const featuresIn = textarea({ value: existing ? existing.features : '', placeholder: 'ميزة في كل سطر:\nبرنامج تدريبي مخصص\nبرنامج غذائي\nقراءات InBody', style: 'min-height:110px' });
 
@@ -155,7 +177,8 @@ function openPackageModal(onDone, branches, existing) {
         const body = {
           name: nameIn.value, sessions: sessionsIn.value, price: priceIn.value,
           durationDays: durationIn.value, sessionsPerWeek: perWeekIn.value || null,
-          branchId: branchSel.value || null, description: descIn.value, features: featuresIn.value,
+          branchId: branchSel.value || null, category: categorySel.value,
+          description: descIn.value, features: featuresIn.value,
         };
         try {
           if (existing) await API.put('/api/packages/' + existing.id, body);
@@ -168,7 +191,7 @@ function openPackageModal(onDone, branches, existing) {
       el('div', { class: 'span-2' }, field('اسم الباقة *', nameIn)),
       field('عدد الحصص *', sessionsIn), field(`السعر (${curInfo().name}) *`, priceIn),
       field('مدة الصلاحية (يوم)', durationIn), field('حصص أسبوعيًا', perWeekIn),
-      el('div', { class: 'span-2' }, field('الفرع', branchSel)),
+      field('نوع الباقة (يظهر في العقد)', categorySel), field('الفرع', branchSel),
       el('div', { class: 'span-2' }, field('وصف الباقة', descIn)),
       el('div', { class: 'span-2' }, field('ما تشمله الباقة (ميزة بكل سطر)', featuresIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الباقة'))),
@@ -399,6 +422,95 @@ function traineeRatingsCard(data, onDone) {
 /* ============================================================
    لوحة تقييمات المتدربين — الإدارة فقط
    ============================================================ */
+/* ============================================================
+   نتائج المتدرب ومشاكله — رصد داخلي على ملف المشترك
+   سرّي تمامًا: لا يظهر للمتدرب (الخادم يرسل flags = null لحسابه).
+   ============================================================ */
+function traineeFlagsCard(data, traineeId, onDone) {
+  const flags = data.flags || [];
+  const results = flags.filter((f) => f.kind === 'result');
+  const problems = flags.filter((f) => f.kind === 'problem');
+  const openProblems = problems.filter((f) => f.status !== 'closed');
+
+  const row = (f) => [
+    flagTag(f),
+    el('div', {}, el('b', {}, f.title), f.note ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, f.note) : ''),
+    f.date,
+    f.status === 'closed' ? el('span', { class: 'tag tag--neutral' }, 'مغلق ' + (f.closedAt || '')) : el('span', { class: 'tag tag--warning' }, 'مفتوح'),
+    el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+      f.status === 'closed'
+        ? el('button', {
+          class: 'btn btn--ghost btn--sm',
+          onclick: async () => {
+            try { await API.put('/api/trainee-flags/' + f.id, { status: 'open' }); toast('أُعيد فتح الرصد.'); onDone && onDone(); }
+            catch (ex) { toast(ex.message, true); }
+          },
+        }, 'إعادة فتح')
+        : el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: async () => {
+            try { await API.put('/api/trainee-flags/' + f.id, { status: 'closed' }); toast('أُغلق الرصد.'); onDone && onDone(); }
+            catch (ex) { toast(ex.message, true); }
+          },
+        }, 'إغلاق'),
+      API.user.role === 'admin' ? el('button', {
+        class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+        onclick: async () => {
+          if (!confirm(`حذف الرصد «${f.title}»؟`)) return;
+          try { await API.del('/api/trainee-flags/' + f.id); toast('حُذف الرصد.'); onDone && onDone(); }
+          catch (ex) { toast(ex.message, true); }
+        },
+      }, 'حذف') : el('span')),
+  ];
+
+  return el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'النتائج والمشاكل 🔒',
+      el('div', { style: 'display:flex;gap:8px' },
+        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openFlagModal(onDone, traineeId, 'result') }, '＋ رصد نتيجة'),
+        el('button', { class: 'btn btn--outline btn--sm', onclick: () => openFlagModal(onDone, traineeId, 'problem') }, '＋ رصد مشكلة'))),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+      'رصد داخلي للإدارة والمدرب — لا يظهر للمتدرب إطلاقًا، ويُجمَّع في صفحة القراءات والتقرير الشهري.'),
+    el('div', { class: 'macros', style: 'margin-bottom:10px' },
+      el('span', { class: 'macro' }, 'نتائج ', el('b', {}, String(results.length))),
+      el('span', { class: 'macro' }, 'مشاكل مفتوحة ', el('b', {}, String(openProblems.length))),
+      el('span', { class: 'macro' }, 'مشاكل مغلقة ', el('b', {}, String(problems.length - openProblems.length)))),
+    dataTable(['النوع', 'الرصد', 'التاريخ', 'الحالة', ''], flags.map(row),
+      'لا رصد بعد — سجّل نتيجة وصل إليها المتدرب أو مشكلة تحتاج معالجة.'));
+}
+
+function openFlagModal(onDone, traineeId, kind, extra = {}) {
+  const isProblem = kind === 'problem';
+  const titleIn = input({ placeholder: isProblem ? 'مثال: ألم في الركبة / انقطاع متكرر' : 'مثال: نزل 4 كغ خلال شهر' });
+  const noteIn = textarea({ placeholder: 'تفصيل يفيد من يقرأ الرصد لاحقًا…' });
+  const dateIn = input({ type: 'date', value: extra.date || todayISO() });
+  const sevSel = select([['medium', 'متوسطة'], ['high', 'حرجة'], ['low', 'بسيطة']]);
+
+  const close = modal(isProblem ? 'رصد مشكلة عند المتدرب' : 'رصد نتيجة للمتدرب', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (!titleIn.value.trim()) { toast('اكتب عنوان الرصد.', true); return; }
+        try {
+          await API.post('/api/trainee-flags', {
+            traineeId, kind, title: titleIn.value, note: noteIn.value,
+            date: dateIn.value, severity: isProblem ? sevSel.value : null,
+            inbodyId: extra.inbodyId || null,
+          });
+          toast(isProblem ? 'سُجّلت المشكلة — ووصل تنبيه للإدارة.' : 'سُجّلت النتيجة في ملف المتدرب.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, el('div', { class: 'alert alert--info' }, 'هذا الرصد سرّي — لا يظهر للمتدرب في صفحته ولا في إشعاراته.')),
+      el('div', { class: 'span-2' }, field(isProblem ? 'المشكلة' : 'النتيجة', titleIn)),
+      field('التاريخ', dateIn),
+      isProblem ? field('درجة الخطورة', sevSel) : el('span'),
+      el('div', { class: 'span-2' }, field('تفاصيل', noteIn)),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الرصد'))),
+  ]);
+}
+
 async function viewRatings(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
@@ -462,7 +574,7 @@ async function viewPublicContract(root, token) {
     el('div', { class: 'public-head' },
       el('img', { class: 'public-head__logo', src: '/assets/logo-white.svg', alt: 'سبورت باور' }),
       el('h1', {}, 'طلب اشتراك'),
-      el('p', {}, 'جسم أقوى. حياة أصحّ. نظام يبقى معك.')),
+      el('p', {}, 'change your life')),
     body);
 
   let data;
@@ -499,6 +611,12 @@ async function viewPublicContract(root, token) {
 
   /* --- النموذج --- */
   let selectedId = null;
+  /* الزبون يختار نوع التدريب أولًا (شخصي/مجموعات/توفير) ثم الباقة داخله */
+  const cats = (data.categories && data.categories.length)
+    ? data.categories
+    : [{ key: 'personal', label: 'تدريب شخصي', count: data.packages.length }];
+  let activeCat = cats[0].key;
+  const catBar = el('div', { class: 'public-cats' });
   const pkgGrid = el('div', { class: 'public-packages' });
   const nameIn = input({ value: data.prospectName || '', placeholder: 'الاسم الكامل *' });
   const phoneIn = input({ value: data.prospectPhone || '', placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end' });
@@ -511,9 +629,19 @@ async function viewPublicContract(root, token) {
   const agreeIn = el('input', { type: 'checkbox', style: 'width:18px;height:18px;accent-color:var(--green-500)' });
   const summaryBox = el('div', { class: 'public-summary' }, 'اختر باقتك من الأعلى لتظهر التفاصيل هنا.');
 
+  function drawCats() {
+    catBar.innerHTML = '';
+    cats.forEach((c) => {
+      catBar.append(el('button', {
+        type: 'button', class: 'public-cat' + (activeCat === c.key ? ' public-cat--on' : ''),
+        onclick: () => { activeCat = c.key; drawCats(); drawPackages(); },
+      }, c.label, el('small', {}, ` ${c.count} باقات`)));
+    });
+  }
+
   function drawPackages() {
     pkgGrid.innerHTML = '';
-    data.packages.forEach((p) => {
+    data.packages.filter((p) => (p.category || 'personal') === activeCat).forEach((p) => {
       const selected = selectedId === p.id;
       pkgGrid.append(el('button', {
         type: 'button', class: 'public-pkg' + (selected ? ' public-pkg--on' : ''),
@@ -540,8 +668,11 @@ async function viewPublicContract(root, token) {
       el('b', {}, 'ملخص اشتراكك: '),
       `${p.name} — ${p.sessions} حصة خلال ${p.durationDays || 30} يومًا، القيمة الإجمالية `,
       el('b', {}, fmtMoney(p.price)),
-      ` (سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions))}).`);
+      ` (سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions))}).`,
+      el('div', { style: 'margin-top:6px' },
+        el('span', { class: 'tag tag--accent' }, 'نوع التدريب: ' + categoryLabel(p.category || 'personal'))));
   }
+  drawCats();
   drawPackages();
 
   const section = (n, title, hint) => el('div', { class: 'public-section' },
@@ -551,7 +682,8 @@ async function viewPublicContract(root, token) {
   body.innerHTML = '';
   body.append(
     data.branchName ? el('div', { class: 'alert alert--info' }, `فرع الاشتراك: ${data.branchName}`) : '',
-    section('١', 'اختر باقتك', 'كل الأسعار أمامك — اختر ما يناسبك قبل الاشتراك.'),
+    section('١', 'اختر نوع التدريب ثم باقتك', 'تدريب شخصي أو مجموعات أو باقات التوفير — كل الأسعار أمامك.'),
+    catBar,
     pkgGrid,
     summaryBox,
     section('٢', 'بياناتك'),
@@ -589,9 +721,10 @@ async function viewPublicContract(root, token) {
           body.innerHTML = '';
           body.append(
             el('div', { class: 'alert alert--info' },
-              `✅ تم إرسال طلبك بنجاح — اخترت «${res.packageName}» (${res.sessions} حصة بقيمة ${fmtMoney(res.price)}).`),
+              `✅ تم إرسال طلبك بنجاح — اخترت «${res.packageName}»${res.categoryLabel ? ` (${res.categoryLabel})` : ''} — ${res.sessions} حصة بقيمة ${fmtMoney(res.price)}.`),
             el('div', { style: 'text-align:center;padding:24px 8px' },
               el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.3rem;color:var(--app-ink)' }, 'أهلًا بك في سبورت باور 💪'),
+              el('div', { style: 'font-family:var(--font-display);font-weight:800;color:var(--accent-hover);letter-spacing:.06em;margin-top:4px' }, 'change your life'),
               el('p', { style: 'color:var(--app-muted);font-size:14px;margin-top:8px' },
                 'سيتواصل معك فريقنا لتأكيد الاشتراك واستلام الدفعة وتنسيق أول حصة. نراك قريبًا!')));
           window.scrollTo(0, 0);
