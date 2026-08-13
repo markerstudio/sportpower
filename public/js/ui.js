@@ -357,6 +357,18 @@ function flagTag(f) {
   return el('span', { class: 'tag ' + cls }, '⚠️ مشكلة' + (f.severity ? ` — ${SEVERITY_LABELS[f.severity]}` : ''));
 }
 
+/* سهم التغيّر بين قراءتين متتاليتين (بترتيب التاريخ) — الاتجاه يعكس
+   الحركة الفعلية دائمًا: طلوع = ↑ ونزول = ↓، واللون حسب المرغوب للمؤشر */
+function changeArrow(curr, prev, { goodWhenUp = false } = {}) {
+  if (curr == null || prev == null) return el('span', { class: 'tag tag--neutral' }, '—');
+  const d = +(Number(curr) - Number(prev)).toFixed(1);
+  if (d === 0) return el('span', { class: 'tag tag--neutral' }, '＝');
+  const up = d > 0;
+  const good = goodWhenUp ? up : !up;
+  return el('span', { class: 'tag ' + (good ? 'tag--accent' : 'tag--danger'), title: 'مقارنة بالقراءة السابقة' },
+    (up ? '↑ +' : '↓ −') + Math.abs(d));
+}
+
 function statusTag(status, expiring) {
   if (status === 'expired') return el('span', { class: 'tag tag--danger' }, 'منتهٍ');
   if (status === 'frozen') return el('span', { class: 'tag tag--info' }, 'مجمّد');

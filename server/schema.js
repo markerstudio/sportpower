@@ -128,6 +128,18 @@ const SCHEMA = {
     indexes: [['date'], ['trainerId'], ['traineeId'], ['branchId'], ['status'], ['branchId', 'date']],
   },
 
+  /* صور متابعة المشترك — تُلتقط كل أسبوعين وتُحفظ في ملفه (بمبدأ InBody) */
+  traineePhotos: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      date: col('text', { notNull: true }),
+      image: col('text', { notNull: true }),
+      notes: col('text'),
+      createdBy: col('int'),
+    },
+    indexes: [['traineeId'], ['date'], ['traineeId', 'date']],
+  },
+
   inbody: {
     columns: {
       traineeId: col('int', { notNull: true, ref: ref('users') }),
@@ -458,7 +470,7 @@ const SCHEMA = {
 /* ترتيب الإنشاء: الجداول المرجعية أولًا حتى تصحّ المفاتيح الأجنبية */
 const CREATE_ORDER = [
   'branches', 'users', 'packages', 'meals', 'rewards', 'settings',
-  'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'mealPlans',
+  'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',

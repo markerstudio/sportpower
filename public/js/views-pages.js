@@ -20,9 +20,10 @@ async function viewCalendar(root) {
       API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ),
       API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ),
     ];
-    const isAdmin = API.user.role === 'admin';
+    // الإدارة والمحاسب يديران مواعيد كل المدربين
+    const isAdmin = ['admin', 'accountant'].includes(API.user.role);
     if (isAdmin) reqs.push(API.get('/api/users?role=trainer'), API.get('/api/users?role=trainee'));
-    else if (API.user.role === 'trainer') reqs.push(Promise.resolve([]), API.get('/api/users?role=trainee'));
+    else if (API.user.role === 'trainer') reqs.push(API.get('/api/users?role=trainer'), API.get('/api/users?role=trainee'));
     const [appts, weekSessions = [], trainers = [], trainees = []] = await Promise.all(reqs);
     // الحصة المسجلة من موعد لا تُعرض مرتين — يكفي الموعد المنفذ
     const linkedSessionIds = new Set(appts.map((a) => a.sessionId).filter(Boolean));
@@ -68,7 +69,7 @@ async function viewCalendar(root) {
             const trainer = trainers.find((t) => t.id === a.trainerId);
             const chip = el('button', { class: 'cal-chip ' + a.status, onclick: () => openApptModal(render, trainers, trainees, a) },
               el('b', {}, personName(a.traineeId)),
-              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
+              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : a.kind === 'test' ? ' · Test' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
             cell.append(chip);
           });
         sessions.filter((s) => s.date === iso(d) && Number((s.time || '').slice(0, 2)) === h)
@@ -115,13 +116,16 @@ function weekStart(d) { const x = new Date(d); x.setDate(x.getDate() - x.getDay(
 function iso(d) { return d.toISOString().slice(0, 10); }
 
 async function openApptModal(onDone, trainers, trainees, existing, prefillTraineeId) {
-  const isAdmin = API.user.role === 'admin';
+  const isAdmin = ['admin', 'accountant'].includes(API.user.role);
   if (!trainees.length) trainees = await API.get('/api/users?role=trainee');
+  if (isAdmin && (!trainers || !trainers.length)) trainers = await API.get('/api/users?role=trainer');
   const trainerSel = isAdmin
     ? select(trainers.map((t) => [t.id, t.name]), { value: existing ? existing.trainerId : undefined })
     : null;
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : (prefillTraineeId || '') });
-  const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض']], { value: existing && existing.kind === 'makeup' ? 'makeup' : 'regular' });
+  // «تعويض» و«test» (حصة تجريبية) — بطلب العميل في البرنامج اليومي
+  const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض'], ['test', 'Test — حصة تجريبية']],
+    { value: existing && ['makeup', 'test'].includes(existing.kind) ? existing.kind : 'regular' });
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const timeIn = input({ type: 'time', value: existing ? existing.time : '17:00' });
   const durIn = input({ type: 'number', value: existing ? existing.duration : 60, min: 15, step: 15 });
@@ -376,13 +380,26 @@ async function viewSubscriptions(root) {
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
             fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+              // تعديل تواريخ الاشتراك وحصصه وقيمته — بطلب العميل من هذه الصفحة مباشرة
+              el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(render, s, byName(s)) }, 'تعديل'),
               s.status === 'frozen'
                 ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('unfreeze', 'فك تجميد') }, 'فك التجميد')
                 : s.status === 'active' ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('freeze', 'تجميد') }, 'تجميد') : el('span'),
               ['active', 'frozen'].includes(s.status)
                 ? el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: () => act('cancel', 'إلغاء') }, 'إلغاء')
-                : el('span'))];
+                : el('span'),
+              el('button', {
+                class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+                onclick: async () => {
+                  if (!confirm(`حذف اشتراك ${byName(s)} نهائيًا؟\nتُحذف دفعاته وأحداثه معه، وتبقى حصصه في سجل المتدرب دون ارتباط باشتراك. للحالات المدخلة بالخطأ فقط.`)) return;
+                  try {
+                    const r = await API.del('/api/subscriptions/' + s.id);
+                    toast(`حُذف الاشتراك${r.removedPayments ? ` و${r.removedPayments} دفعة مرتبطة` : ''}.`);
+                    render();
+                  } catch (ex) { toast(ex.message, true); }
+                },
+              }, 'حذف'))];
         },
         {
           pageSize: 15,
@@ -700,9 +717,12 @@ async function viewInbody(root) {
         el('span', {}, el('i', { style: 'background:var(--accent)' }), 'الوزن (كغ)'),
         el('span', {}, el('i', { style: 'background:var(--blue-500)' }), 'نسبة الدهون %')),
       lineChart(readings.map((r) => r.date.slice(5)), readings.map((r) => r.weight), readings.map((r) => r.bodyFatPct)),
-      dataTable(['التاريخ', 'الوزن', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة',
+      dataTable(['التاريخ', 'الوزن', 'التغيّر ⇅', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة',
         ...(isStaff ? ['رصد (سرّي)'] : [])],
-        readings.map((r) => [r.date, r.weight, r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
+        readings.map((r, i) => [r.date, r.weight,
+          // السهم مقارنةً بالقراءة السابقة زمنيًا — طلوع الوزن ↑ ونزوله ↓
+          changeArrow(r.weight, i > 0 ? readings[i - 1].weight : null),
+          r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
           r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—',
           // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟
@@ -953,11 +973,12 @@ async function viewReports(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [report, branches, kpis, growthReport] = await Promise.all([
+    const [report, branches, kpis, growthReport, health] = await Promise.all([
       API.get(`/api/reports/monthly?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
       API.get('/api/kpi?month=' + state.month).catch(() => []),
       API.get(`/api/reports/growth?month=${state.month}&branch=${state.branch}`).catch(() => null),
+      API.get('/api/reports/health?month=' + state.month).catch(() => null),
     ]);
     container.innerHTML = '';
 
@@ -971,6 +992,12 @@ async function viewReports(root) {
           .then(() => toast('نُزّل التقرير — يفتح في Excel.')).catch((ex) => toast(ex.message, true)),
       }, 'تصدير Excel (CSV)'),
       el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'تصدير PDF / طباعة')));
+
+    /* Branch Health Score — أول رقم في التقرير: صحة كل فرع من 100 */
+    if (health && health.branches.length) {
+      const scored = health.branches.filter((b) => !state.branch || b.branchId === Number(state.branch));
+      container.append(branchHealthCard(health, scored));
+    }
 
     const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
     container.append(el('div', { class: 'card' },
@@ -1044,6 +1071,60 @@ async function viewReports(root) {
   }
 
   await render();
+}
+
+/* ============================================================
+   Branch Health Score — صحة الفرع من 100
+   90–100 ممتاز · 80–89 جيد جدًا · 70–79 جيد · 60–69 يحتاج متابعة ·
+   أقل من 60 يحتاج تدخل — محسوب من المحاور الموزونة في الخادم.
+   ============================================================ */
+function healthTone(score) {
+  if (score === null || score === undefined) return 'tag--neutral';
+  if (score >= 80) return 'tag--accent';
+  if (score >= 70) return 'tag--info';
+  if (score >= 60) return 'tag--warning';
+  return 'tag--danger';
+}
+
+function healthDot(score) {
+  const color = score === null ? 'var(--app-muted)'
+    : score >= 80 ? 'var(--accent)' : score >= 60 ? 'var(--status-warning)' : 'var(--status-danger)';
+  return el('span', { style: `display:inline-block;width:10px;height:10px;border-radius:50%;background:${color}` });
+}
+
+function branchHealthCard(health, rows, { compact } = {}) {
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'Branch Health Score — صحة الفروع',
+      health.company.score !== null
+        ? el('span', { class: 'tag ' + healthTone(health.company.score) }, `الشركة: ${health.company.score}/100 — ${health.company.label}`)
+        : el('span')));
+
+  const tiles = el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:' + (compact ? '0' : '12px') });
+  rows.forEach((b) => {
+    tiles.append(el('div', { class: 'kpi' },
+      el('div', { style: 'display:flex;align-items:center;gap:8px' }, healthDot(b.score)),
+      el('div', {},
+        el('div', { class: 'kpi__value' }, b.score === null ? '—' : `${b.score}/100`),
+        el('div', { class: 'kpi__label' }, b.branch + ' — ' + b.label))));
+  });
+  card.append(tiles);
+  if (compact) return card;
+
+  card.append(el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+    'محسوب من: نمو المشتركين 25% · تحقيق هدف التحصيل 25% · التجديد 20% · الربحية 15% · أداء المدربين 10% · التجميد والإلغاء 5%. '
+    + 'المحور الذي لا بيانات له (مثل هدف تحصيل غير مضبوط) يخرج من الحساب. التصنيف: 90–100 ممتاز · 80–89 جيد جدًا · 70–79 جيد · 60–69 يحتاج متابعة · أقل من 60 يحتاج تدخل.'));
+
+  const componentLabels = (rows[0] || { components: [] }).components.map((c) => `${c.label} (${c.weight}%)`);
+  card.append(el('div', { style: 'overflow-x:auto' },
+    dataTable(['الفرع', 'Score', 'التصنيف', ...componentLabels],
+      rows.map((b) => [b.branch,
+        el('b', { class: 'num' }, b.score === null ? '—' : String(b.score)),
+        el('span', { class: 'tag ' + healthTone(b.score) }, b.label),
+        ...b.components.map((c) => (c.value === null
+          ? el('span', { class: 'tag tag--neutral', title: 'لا بيانات لهذا المحور' }, '—')
+          : progressBar(c.value)))]),
+      'لا فروع.')));
+  return card;
 }
 
 /* ============================================================

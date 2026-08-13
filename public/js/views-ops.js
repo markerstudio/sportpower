@@ -525,24 +525,24 @@ function openBulkWaModal(list, onDone) {
    بطاقات المدرب: سجل اليوم + مهامي + KPI
    ============================================================ */
 async function renderTrainerOps(container) {
-  const today = todayISO();
   const month = thisMonthISO();
-  const [logs, tasks, kpis] = await Promise.all([
-    API.get('/api/trainer-logs?date=' + today),
+  const [tasks, kpis] = await Promise.all([
     API.get('/api/tasks?month=' + month),
     API.get('/api/kpi?month=' + month),
   ]);
-  const log = logs[0] || {};
   const myKpi = kpis[0];
 
-  /* --- سجل اليوم --- */
-  const checkIn = input({ type: 'time', value: log.checkIn || '' });
-  const checkOut = input({ type: 'time', value: log.checkOut || '' });
-  const goals = input({ type: 'number', min: 0, value: log.goalsCreated || 0 });
-  const stories = input({ type: 'number', min: 0, value: log.stories || 0 });
-  const reels = input({ type: 'number', min: 0, value: log.reels || 0 });
-  const notes = input({ value: log.notes || '', placeholder: 'اختياري' });
+  /* --- سجل اليوم — مع تنقّل بالتاريخ: المدرب يراجع ساعاته في أي يوم ويعدّلها --- */
+  const state = { date: todayISO() };
+  const checkIn = input({ type: 'time' });
+  const checkOut = input({ type: 'time' });
+  const goals = input({ type: 'number', min: 0 });
+  const stories = input({ type: 'number', min: 0 });
+  const reels = input({ type: 'number', min: 0 });
+  const notes = input({ placeholder: 'اختياري' });
   const autoChips = el('div', { class: 'macros', style: 'margin-bottom:10px' });
+  const titleDate = el('span', {}, `سجل اليوم — ${state.date}`);
+  let log = {};
 
   function drawAuto(a) {
     autoChips.innerHTML = '';
@@ -552,16 +552,48 @@ async function renderTrainerOps(container) {
       el('span', { class: 'macro' }, 'متدربون فريدون ', el('b', {}, String(a.uniqueTrainees ?? '—'))),
       el('span', { class: 'macro' }, 'ساعات عمل ', el('b', {}, log.workHours != null ? log.workHours + ' س' : '—')));
   }
-  drawAuto({});
-  API.get('/api/dashboard/trainer').catch(() => null); // يُحدث تلقائيًا في الخلفية
+
+  async function loadDay() {
+    titleDate.textContent = `سجل اليوم — ${state.date}`;
+    dateIn.value = state.date;
+    const logs = await API.get('/api/trainer-logs?date=' + state.date).catch(() => []);
+    log = logs[0] || {};
+    checkIn.value = log.checkIn || '';
+    checkOut.value = log.checkOut || '';
+    goals.value = log.goalsCreated || 0;
+    stories.value = log.stories || 0;
+    reels.value = log.reels || 0;
+    notes.value = log.notes || '';
+    const day = await API.get(`/api/sessions?from=${state.date}&to=${state.date}`).catch(() => []);
+    const deliveredDay = day.filter((s) => s.kind !== 'absence');
+    drawAuto({
+      sessions: deliveredDay.length,
+      trainingHours: new Set(deliveredDay.map((s) => (s.time || '').slice(0, 2))).size,
+      uniqueTrainees: new Set(deliveredDay.map((s) => s.traineeId)).size,
+    });
+  }
+
+  const dateIn = input({ type: 'date', value: state.date, style: 'width:150px',
+    onchange: (e) => { state.date = e.target.value; loadDay(); } });
+  const shiftDay = (days) => {
+    const d = new Date(state.date + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    state.date = d.toISOString().slice(0, 10);
+    loadDay();
+  };
 
   const dailyCard = el('div', { class: 'card' },
-    el('h3', { class: 'card__title' }, `سجل اليوم — ${today}`,
+    el('h3', { class: 'card__title' }, titleDate,
       myKpi && myKpi.kpi !== null
         ? el('span', { class: 'tag ' + (myKpi.kpi >= 80 ? 'tag--accent' : myKpi.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, `KPI الشهر: ${myKpi.kpi}%`)
         : el('span')),
+    el('div', { style: 'display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap' },
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => shiftDay(-1) }, 'اليوم السابق →'),
+      dateIn,
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => shiftDay(1) }, '← اليوم التالي'),
+      el('button', { class: 'btn btn--ghost btn--sm', onclick: () => { state.date = todayISO(); loadDay(); } }, 'اليوم')),
     el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px' },
-      'الحصص وساعات التدريب والمتدربون الفريدون تُحتسب تلقائيًا من الحصص المسجلة.'),
+      'الحصص وساعات التدريب والمتدربون الفريدون تُحتسب تلقائيًا من الحصص المسجلة — بدّل التاريخ لمراجعة أي يوم سابق وتصحيحه.'),
     autoChips,
     el('form', {
       class: 'form-grid',
@@ -569,22 +601,23 @@ async function renderTrainerOps(container) {
         e.preventDefault();
         try {
           const saved = await API.post('/api/trainer-logs', {
-            date: today, checkIn: checkIn.value, checkOut: checkOut.value,
+            date: state.date, checkIn: checkIn.value, checkOut: checkOut.value,
             goalsCreated: goals.value, stories: stories.value, reels: reels.value, notes: notes.value,
           });
           log.workHours = saved.workHours;
           drawAuto(saved.auto);
-          toast('حُفظ سجل اليوم' + (saved.workHours != null ? ` — ساعات العمل: ${saved.workHours} س.` : '.'));
+          toast(`حُفظ سجل ${state.date}` + (saved.workHours != null ? ` — ساعات العمل: ${saved.workHours} س.` : '.'));
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('الحضور (من الساعة)', checkIn), field('الانصراف (إلى الساعة)', checkOut),
       field('أهداف تدريبية أنشأتها', goals), field('ستوريات نشرتها', stories),
       field('ريلز/فيديوهات صوّرتها', reels), field('ملاحظات', notes),
-      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ سجل اليوم'))));
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ السجل'))));
+  await loadDay();
 
   /* --- مهامي --- */
-  const daily = tasks.filter((x) => x.type === 'daily' && x.date === today);
+  const daily = tasks.filter((x) => x.type === 'daily' && x.date === todayISO());
   const monthly = tasks.filter((x) => x.type === 'monthly');
   const done = tasks.filter((x) => x.status === 'done').length;
   const taskRow = (x) => el('label', { class: 'task-row' },
