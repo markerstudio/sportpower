@@ -246,6 +246,108 @@ async function buildGrowthReport(month, branch, subStatus) {
 }
 
 /* ============================================================
+   Branch Health Score — صحة الفرع من 100
+   رقم واحد يُلخّص حال الفرع، محسوب من أهم المحاور بأوزان ثابتة
+   (لا رقم عشوائيًا): نمو المشتركين 25% · تحقيق هدف التحصيل 25% ·
+   التجديد/Retention 20% · الربحية 15% · أداء المدربين 10% ·
+   التجميد والإلغاء 5%. المحور الذي لا بيانات له يخرج من الحساب
+   وتُعاد موازنة الأوزان على المتبقي.
+   ============================================================ */
+const clamp01 = (v) => Math.max(0, Math.min(100, Math.round(v)));
+
+function healthLabel(score) {
+  if (score >= 90) return 'ممتاز';
+  if (score >= 80) return 'جيد جدًا';
+  if (score >= 70) return 'جيد';
+  if (score >= 60) return 'يحتاج متابعة';
+  return 'يحتاج تدخل';
+}
+
+const HEALTH_WEIGHTS = [
+  ['growth', 'نمو المشتركين', 25],
+  ['collection', 'تحقيق هدف التحصيل', 25],
+  ['retention', 'التجديد / Retention', 20],
+  ['profit', 'الربحية والمصاريف', 15],
+  ['trainers', 'أداء المدربين', 10],
+  ['freeze', 'التجميد والإلغاء', 5],
+];
+
+async function buildHealthScores(month, subStatus) {
+  const [branches, users, tasks] = await Promise.all([
+    Store.all('branches'),
+    Store.all('users'),
+    Store.find('tasks', { month }), // اليومية والشهرية معًا (month يُعبّأ للنوعين)
+  ]);
+
+  const rows = [];
+  for (const b of branches) {
+    const g = await buildGrowthReport(month, b.id, subStatus);
+    const k = g.kpis;
+
+    /* نمو المشتركين: نسبة تحقيق هدف الاشتراكات إن وُجد هدف شهري،
+       وإلا يُشتق من النمو الصافي (0 صافي = 50 نقطة، كل مشترك ±10) */
+    const growthGoal = g.goals.monthly.find((x) => ['newSubs', 'activeTrainees'].includes(x.metric));
+    const growth = growthGoal && growthGoal.pct !== null
+      ? Math.min(100, growthGoal.pct)
+      : clamp01(50 + k.netGrowth * 10);
+
+    /* تحقيق هدف التحصيل: يحتاج هدفًا شهريًا للتحصيل (مع المُرحَّل) */
+    const revGoal = g.goals.monthly.find((x) => x.metric === 'revenue');
+    const collection = revGoal && revGoal.pct !== null ? Math.min(100, revGoal.pct) : null;
+
+    const retention = k.retentionRate;
+
+    /* الربحية: هامش صافي الربح — هامش 50% فأكثر = 100 نقطة.
+       بلا مصاريف مسجّلة لا يُحتسب المحور (رقم مضلِّل أسوأ من غيابه). */
+    const profit = g.finance.revenue > 0 && g.finance.expensesTotal > 0
+      ? clamp01((g.finance.netProfit / g.finance.revenue) * 200)
+      : null;
+
+    /* أداء المدربين: نسبة إنجاز مهام مدربي الفرع لهذا الشهر */
+    const trainerIds = new Set(users
+      .filter((u) => u.role === 'trainer' && u.active !== false && u.branchId === b.id)
+      .map((u) => u.id));
+    const bTasks = tasks.filter((t) => trainerIds.has(t.trainerId));
+    const trainers = bTasks.length
+      ? Math.round((bTasks.filter((t) => t.status === 'done').length / bTasks.length) * 100)
+      : null;
+
+    /* التجميد والإلغاء: كل نقطة تجميد −3 وكل نقطة إلغاء −5 من 100 */
+    const freeze = (k.freezeRate === null && k.cancellationRate === null)
+      ? null
+      : clamp01(100 - (k.freezeRate || 0) * 3 - (k.cancellationRate || 0) * 5);
+
+    const values = { growth, collection, retention, profit, trainers, freeze };
+    let weighted = 0, totalWeight = 0;
+    const components = HEALTH_WEIGHTS.map(([key, label, weight]) => {
+      const value = values[key];
+      if (value !== null && value !== undefined) {
+        weighted += value * weight;
+        totalWeight += weight;
+      }
+      return { key, label, weight, value: value ?? null };
+    });
+    const score = totalWeight ? Math.round(weighted / totalWeight) : null;
+
+    rows.push({
+      branchId: b.id, branch: b.name,
+      score, label: score === null ? 'لا بيانات' : healthLabel(score),
+      components,
+    });
+  }
+
+  const scored = rows.filter((r) => r.score !== null);
+  const company = scored.length
+    ? Math.round(scored.reduce((s, r) => s + r.score, 0) / scored.length)
+    : null;
+  return {
+    month,
+    branches: rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1)),
+    company: { score: company, label: company === null ? 'لا بيانات' : healthLabel(company) },
+  };
+}
+
+/* ============================================================
    تحليل المبيعات الشهري من ملف المتابعة
    ============================================================ */
 function leadsSummary(leads, month) {
@@ -312,6 +414,12 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
     const month = req.query.month || thisMonthStr();
     const branch = req.query.branch ? Number(req.query.branch) : null;
     res.json(await buildGrowthReport(month, branch, subStatus));
+  }));
+
+  /* Branch Health Score — صحة كل فرع من 100 (أول رقم في التقرير الشهري) */
+  app.get('/api/reports/health', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    const month = req.query.month || thisMonthStr();
+    res.json(await buildHealthScores(month, subStatus));
   }));
 
   /* ============================================================
@@ -569,3 +677,4 @@ module.exports.awardPoints = awardPoints;
 module.exports.loyaltyPts = loyaltyPts;
 module.exports.evaluateLoyalty = evaluateLoyalty;
 module.exports.buildGrowthReport = buildGrowthReport;
+module.exports.buildHealthScores = buildHealthScores;
