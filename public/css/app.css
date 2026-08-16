@@ -298,6 +298,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .field__input:focus, .field__select:focus, .field__textarea:focus {
   border-color: var(--accent); box-shadow: 0 0 0 3px rgba(121, 190, 67, 0.18);
 }
+/* مربع الاختيار داخل النماذج: يبقى مربعًا صغيرًا ولا يمتد بعرض الحقل */
+.field__input[type=checkbox] {
+  width: 17px; height: 17px; padding: 0; flex: none; accent-color: var(--green-500); cursor: pointer;
+}
 .field__textarea { min-height: 70px; resize: vertical; }
 /* خانة عبّأها OCR من الصورة — تُميَّز ليراجعها المستخدم قبل الحفظ */
 .field__input--ocr { border-color: var(--accent); background: rgba(121, 190, 67, 0.07); }

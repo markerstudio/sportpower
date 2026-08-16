@@ -1,0 +1,119 @@
+/* ============================================================
+   نشرة «ما الجديد» — تظهر مرة واحدة لكل مستخدم بعد كل تحديث
+   الإصدار المعروض يُحفظ على حساب المستخدم في الخادم (لا في المتصفح)،
+   فلا تتكرر النشرة إن دخل من جهاز آخر ولا تختفي إن مسح متصفحه.
+   لإطلاق نشرة جديدة لاحقًا: غيّر RELEASE.version واكتب بنودها.
+   ============================================================ */
+const RELEASE = {
+  version: '2026.08',
+  title: 'تحديث جديد على النظام',
+  subtitle: 'هذه أهم التغييرات — تظهر لك مرة واحدة فقط.',
+  /* لكل بند الأدوار التي تعنيه: لا نعرض للمدرب ما لا يفتحه أصلًا */
+  items: [
+    {
+      icon: '🔁',
+      title: 'الحصة التعويضية لم تعد تُخصم مرتين',
+      body: 'الغياب يُخصم من الرصيد كما كان، والحصة التعويضية تُغطّي أقدم غياب مخصوم '
+        + 'فلا تُخصم حصة ثانية عن الموعد نفسه. وتُسجَّل حتى لو انتهى الاشتراك لأنها حصة مدفوعة ومستحقة. '
+        + 'أما التعويضية التي تُسجَّل بلا غياب معلّق فهي حصة نُفّذت وتُخصم كالعادية.',
+      roles: ['admin', 'accountant', 'trainer', 'trainee'],
+    },
+    {
+      icon: '🎂',
+      title: 'تنبيه عيد الميلاد قبل يوم',
+      body: 'يظهر في المتابعة اليومية وفي مركز القرارات ويصلك إشعارًا، ومعه رسالة تهنئة واتساب جاهزة.',
+      roles: ['admin', 'accountant'],
+    },
+    {
+      icon: '🏠',
+      title: 'مكان السكن للمشترك',
+      body: 'حقل جديد عند التسجيل وفي تعديل بياناته — ومنه تقرير «من أي المناطق يأتي مشتركونا؟» '
+        + 'بعدد المتدربين والفعّالين في كل منطقة وتوزّعهم على الفروع.',
+      roles: ['admin', 'accountant', 'trainer'],
+    },
+    {
+      icon: '📋',
+      title: 'صفحة جديدة: تقرير المتدربين بالأسماء',
+      body: 'كل المشتركين بالفرع مع الباقة والحصص والدفعات والمتبقي عليهم، وأعمدة اختيارية '
+        + '(الجوال · الميلاد · مكان السكن · اسم المستخدم · تاريخ الانضمام · آخر حصة) تختارها قبل العرض والتصدير إلى Excel.',
+      roles: ['admin', 'accountant'],
+    },
+    {
+      icon: '🧪',
+      title: 'حصة Test لزائر جديد غير مسجّل',
+      body: 'صاحب الـ Test لم يشترك بعد ولا حساب له — فيُكتب اسمه وجواله يدويًا في الموعد، '
+        + 'ثم «تم الـ Test» أو «لم يحضر». وإن اشترك، زرٌّ واحد يحوّله زبونًا كاملًا ويُنسب موعده لحسابه الجديد.',
+      roles: ['admin', 'accountant', 'trainer'],
+    },
+    {
+      icon: '📅',
+      title: 'برنامج الفرع كاملًا — وحجز لمدرب آخر',
+      body: 'في التقويم بدّل بين «مواعيدي» و«برنامج الفرع — كل المدربين»، ويمكنك إضافة موعد على برنامج زميلك. '
+        + 'مواعيد الزملاء تُعرض للاطّلاع فقط، يعدّلها صاحبها أو الإدارة.',
+      roles: ['trainer'],
+    },
+    {
+      icon: '🗑️',
+      title: 'حذف موعد أُدخل بالخطأ',
+      body: 'من نافذة الموعد في التقويم والبرنامج اليومي. الموعد المرتبط بحصة مسجَّلة يُحذف بعد حذف حصته حتى لا تضيع من السجل.',
+      roles: ['admin', 'accountant', 'trainer'],
+    },
+    {
+      icon: '🧾',
+      title: 'حذف الاشتراك المكرَّر من ملف المشترك',
+      body: 'إن أُدخل اشتراكان بدل واحد عند التجديد، احذف الزائد من «تاريخ الاشتراكات» في ملفه — وتُحذف دفعاته معه.',
+      roles: ['admin', 'accountant'],
+    },
+    {
+      icon: '⚖️',
+      title: 'كتلة الدهون بالكيلوغرام',
+      body: 'حقل جديد في تسجيل الحصة إلى جانب نسبة الدهون — ويُحفظ تلقائيًا قراءةً في سجل InBody للمشترك.',
+      roles: ['admin', 'trainer'],
+    },
+    {
+      icon: '✏️',
+      title: 'تعديل اسم المستخدم',
+      body: 'الحسابات التي سُجّلت باسم مؤقت («client» مثلًا) صار اسم المستخدم فيها قابلًا للتصحيح من تعديل بياناتها.',
+      roles: ['admin'],
+    },
+    {
+      icon: '📲',
+      title: 'إرسال بيانات الدخول واتساب',
+      body: 'زر في ملف المشترك وفي جدول المستخدمين: يولّد كلمة مرور مؤقتة جديدة (وتسقط القديمة) '
+        + 'ويفتح واتساب برسالة جاهزة فيها الرابط واسم المستخدم وكلمة المرور.',
+      roles: ['admin', 'accountant'],
+    },
+  ],
+};
+
+/* تُستدعى بعد أول رسم ناجح للواجهة — تعرض النشرة إن لم يرها المستخدم بعد.
+   تُعلَّم «مقروءة» فور فتحها، فأي طريقة إغلاق تُنهيها ولا تعود. */
+let whatsNewShown = false;
+function maybeShowWhatsNew() {
+  if (whatsNewShown || !API.token || !API.user) return;
+  if (API.user.seenRelease === RELEASE.version) return;
+  const items = RELEASE.items.filter((it) => it.roles.includes(API.user.role));
+  if (!items.length) return;
+  whatsNewShown = true;
+
+  API.user.seenRelease = RELEASE.version;
+  localStorage.setItem('sp-user', JSON.stringify(API.user));
+  API.post('/api/me/seen-release', { version: RELEASE.version }).catch(() => null);
+
+  const close = modal(`${RELEASE.title} — ${RELEASE.version}`, [
+    el('div', { style: 'font-size:13px;color:var(--app-muted);margin-bottom:14px' }, RELEASE.subtitle),
+    el('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+      ...items.map((it) => el('div', {
+        style: 'display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:var(--app-radius-sm);'
+          + 'background:var(--app-hover);border:1px solid var(--app-line)',
+      },
+      el('span', { style: 'font-size:20px;line-height:1.2' }, it.icon),
+      el('div', {},
+        el('div', { style: 'font-family:var(--font-display);font-weight:800;font-size:14px;color:var(--app-ink);margin-bottom:3px' }, it.title),
+        el('div', { style: 'font-size:13px;color:var(--app-muted);line-height:1.7' }, it.body))))),
+    el('button', {
+      class: 'btn btn--accent btn--lg btn--full', style: 'margin-top:16px',
+      onclick: () => close(),
+    }, 'تمام — ابدأ العمل'),
+  ], { wide: true });
+}

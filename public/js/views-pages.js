@@ -4,7 +4,9 @@
    Calendar — أسبوعي مشترك
    ============================================================ */
 async function viewCalendar(root) {
-  const state = { start: weekStart(new Date()), trainer: '' };
+  /* branchScope: المدرب يرى مواعيده وحده افتراضيًا، ويستطيع فتح برنامج
+     الفرع كاملًا (كل المدربين) — بطلب العميل. */
+  const state = { start: weekStart(new Date()), trainer: '', branchScope: false };
   const container = el('div', { class: 'content' });
   root.append(container);
 
@@ -16,8 +18,9 @@ async function viewCalendar(root) {
     const to = iso(end);
 
     const trainerQ = state.trainer ? `&trainer=${state.trainer}` : '';
+    const scopeQ = API.user.role === 'trainer' && state.branchScope ? '&all=1' : '';
     const reqs = [
-      API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ),
+      API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ + scopeQ),
       API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ),
     ];
     // الإدارة والمحاسب يديران مواعيد كل المدربين
@@ -28,11 +31,13 @@ async function viewCalendar(root) {
     // الحصة المسجلة من موعد لا تُعرض مرتين — يكفي الموعد المنفذ
     const linkedSessionIds = new Set(appts.map((a) => a.sessionId).filter(Boolean));
     const sessions = weekSessions.filter((s) => !linkedSessionIds.has(s.id));
-    const personName = (id) => {
-      const t = trainees.find((x) => x.id === id);
+    /* الموعد قد يكون لزائر Test بلا حساب — فاسمه مكتوب على الموعد نفسه */
+    const personName = (a) => {
+      if (!a.traineeId) return (a.prospectName || 'زائر Test') + ' (زائر)';
+      const t = trainees.find((x) => x.id === a.traineeId);
       if (t) return t.name;
-      if (API.user.role === 'trainee' && id === API.user.id) return API.user.name;
-      return 'متدرب #' + id;
+      if (API.user.role === 'trainee' && a.traineeId === API.user.id) return API.user.name;
+      return 'متدرب #' + a.traineeId;
     };
     container.innerHTML = '';
 
@@ -45,6 +50,13 @@ async function viewCalendar(root) {
     if (isAdmin) {
       toolbar.append(select([['', 'كل المدربين'], ...trainers.map((t) => [t.id, t.name])], {
         value: state.trainer, style: 'width:170px', onchange: (e) => { state.trainer = e.target.value; render(); },
+      }));
+    }
+    // المدرب: مواعيده وحده أو برنامج الفرع كاملًا بكل مدربيه
+    if (API.user.role === 'trainer') {
+      toolbar.append(select([['mine', 'مواعيدي أنا'], ['branch', 'برنامج الفرع — كل المدربين']], {
+        value: state.branchScope ? 'branch' : 'mine', style: 'width:210px',
+        onchange: (e) => { state.branchScope = e.target.value === 'branch'; render(); },
       }));
     }
     if (isAdmin || API.user.role === 'trainer') {
@@ -67,17 +79,18 @@ async function viewCalendar(root) {
           .sort((a, b) => a.time.localeCompare(b.time))
           .forEach((a) => {
             const trainer = trainers.find((t) => t.id === a.trainerId);
+            const showTrainer = (isAdmin || (API.user.role === 'trainer' && state.branchScope)) && trainer;
             const chip = el('button', { class: 'cal-chip ' + a.status, onclick: () => openApptModal(render, trainers, trainees, a) },
-              el('b', {}, personName(a.traineeId)),
-              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : a.kind === 'test' ? ' · Test' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
+              el('b', {}, personName(a)),
+              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : a.kind === 'test' ? ' · Test' : '') + (showTrainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
             cell.append(chip);
           });
         sessions.filter((s) => s.date === iso(d) && Number((s.time || '').slice(0, 2)) === h)
           .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
           .forEach((s) => {
             const trainer = trainers.find((t) => t.id === s.trainerId);
-            const chip = el('button', { class: 'cal-chip session', onclick: () => openSessionInfoModal(s, personName(s.traineeId), trainer && trainer.name) },
-              el('b', {}, personName(s.traineeId)),
+            const chip = el('button', { class: 'cal-chip session', onclick: () => openSessionInfoModal(s, personName(s), trainer && trainer.name) },
+              el('b', {}, personName(s)),
               el('small', {}, ` ${s.time} · حصة منفذة` + (s.kind === 'makeup' ? ' · تعويض' : '') + (isAdmin && trainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
             cell.append(chip);
           });
@@ -105,7 +118,7 @@ function openSessionInfoModal(s, traineeName, trainerName) {
       row('المدرب', trainerName),
       row('التاريخ', s.date + ' · ' + s.time),
       row('المدة', s.duration ? s.duration + ' دقيقة' : ''),
-      row('النوع', s.kind === 'makeup' ? 'تعويضية' : 'عادية'),
+      row('النوع', s.kind === 'makeup' ? 'تعويضية (مخصومة من الاشتراك)' : s.kind === 'absence' ? 'غياب (مخصوم)' : 'عادية'),
       row('الأسلوب', s.style),
       row('الوزن المسجل', s.weight ? s.weight + ' كغ' : ''),
       row('ملاحظات', s.notes)),
@@ -117,12 +130,17 @@ function iso(d) { return d.toISOString().slice(0, 10); }
 
 async function openApptModal(onDone, trainers, trainees, existing, prefillTraineeId) {
   const isAdmin = ['admin', 'accountant'].includes(API.user.role);
+  const isStaff = isAdmin || API.user.role === 'trainer';
   if (!trainees.length) trainees = await API.get('/api/users?role=trainee');
-  if (isAdmin && (!trainers || !trainers.length)) trainers = await API.get('/api/users?role=trainer');
-  const trainerSel = isAdmin
-    ? select(trainers.map((t) => [t.id, t.name]), { value: existing ? existing.trainerId : undefined })
+  /* المدرب أيضًا يختار المدرب: البرنامج اليومي يُوزَّع بين المدربين، وله أن
+     يحجز موعدًا على برنامج زميله كما تفعل الإدارة (بطلب العميل). */
+  if (isStaff && (!trainers || !trainers.length)) trainers = await API.get('/api/users?role=trainer').catch(() => []);
+  const trainerSel = isStaff && trainers.length
+    ? select(trainers.map((t) => [t.id, t.name]), {
+      value: existing ? existing.trainerId : (API.user.role === 'trainer' ? API.user.id : undefined),
+    })
     : null;
-  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : (prefillTraineeId || '') });
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId || '' : (prefillTraineeId || '') });
   // «تعويض» و«test» (حصة تجريبية) — بطلب العميل في البرنامج اليومي
   const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض'], ['test', 'Test — حصة تجريبية']],
     { value: existing && ['makeup', 'test'].includes(existing.kind) ? existing.kind : 'regular' });
@@ -132,16 +150,50 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
   const noteIn = input({ value: existing ? existing.note : '', placeholder: 'اختياري' });
   const statusSel = existing ? select([['scheduled', 'مجدولة'], ['done', 'منفذة'], ['cancelled', 'ملغاة']], { value: existing.status }) : null;
 
+  /* صاحب الـ Test زائر جديد: لم يشترك بعد ولا حساب له ولا صفحة — فيُكتب
+     اسمه وجواله يدويًا، ويتحوّل لحساب كامل حين يشترك. */
+  const isProspect = !!(existing && !existing.traineeId);
+  const prospectNameIn = input({ value: existing ? existing.prospectName || '' : '', placeholder: 'اسم الزائر الجديد' });
+  const prospectPhoneIn = input({ value: existing ? existing.prospectPhone || '' : '', placeholder: '05XXXXXXXX', dir: 'ltr', style: 'text-align:end' });
+  const manualChk = input({ type: 'checkbox' });
+  manualChk.checked = isProspect;
+  const manualField = el('label', {
+    class: 'span-2',
+    style: 'display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer',
+  }, manualChk, el('span', {}, 'شخص جديد غير مسجّل — إدخال يدوي بالاسم (لا حساب له بعد)'));
+  const traineeField = field('المتدرب', traineeSel);
+  const prospectFields = el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:1fr 1fr;gap:14px' },
+    field('اسم الشخص', prospectNameIn), field('رقم الجوال', prospectPhoneIn));
+
+  const manualMode = () => kindSel.value === 'test' && manualChk.checked;
+  const syncKind = () => {
+    const test = kindSel.value === 'test';
+    manualField.style.display = test && !existing ? '' : (isProspect ? '' : 'none');
+    if (isProspect) { manualChk.checked = true; manualChk.disabled = true; }
+    prospectFields.style.display = manualMode() ? '' : 'none';
+    traineeField.style.display = manualMode() ? 'none' : '';
+  };
+  kindSel.addEventListener('change', syncKind);
+  manualChk.addEventListener('change', syncKind);
+
+  /* المدرب يضيف لزميله لكنه لا يعدّل موعدًا على برنامج زميله — يظهر له
+     للاطّلاع فقط بدل أن يصطدم برفض الخادم بعد ملء النموذج. */
+  const readOnly = !!(existing && API.user.role === 'trainer' && existing.trainerId !== API.user.id);
+
   const close = modal(existing ? 'تعديل موعد' : 'إضافة موعد جديد', [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
-        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
+        const manual = manualMode();
+        if (manual && !prospectNameIn.value.trim()) { toast('اكتب اسم صاحب الـ Test.', true); return; }
+        if (!manual && !traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
           const body = {
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
-            traineeId: Number(traineeSel.value), kind: kindSel.value,
+            traineeId: manual ? null : Number(traineeSel.value), kind: kindSel.value,
+            prospectName: manual ? prospectNameIn.value.trim() : undefined,
+            prospectPhone: manual ? prospectPhoneIn.value.trim() : undefined,
             date: dateIn.value, time: timeIn.value, duration: Number(durIn.value), note: noteIn.value,
           };
           if (existing) {
@@ -150,23 +202,61 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
             toast('تم تعديل الموعد — وأُرسل إشعار بالتغيير.');
           } else {
             await API.post('/api/appointments', body);
-            toast('تمت إضافة الموعد — وصل إشعار للمدرب والمتدرب.');
+            toast(manual ? 'أُضيف موعد الـ Test باسم الزائر.' : 'تمت إضافة الموعد — وصل إشعار للمدرب والمتدرب.');
           }
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       trainerSel ? field('المدرب', trainerSel) : el('span'),
-      field('المتدرب', traineeSel),
       field('نوع الحصة', kindSel),
+      manualField,
+      traineeField,
+      prospectFields,
       field('التاريخ', dateIn),
       field('الساعة', timeIn),
       field('المدة (دقيقة)', durIn),
       statusSel ? field('الحالة', statusSel) : el('span'),
       el('div', { class: 'span-2' }, field('ملاحظة', noteIn)),
-      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الموعد'))),
+      el('div', { class: 'span-2' }, readOnly
+        ? el('div', { class: 'alert alert--info', style: 'margin:0' }, `هذا الموعد على برنامج ${(trainers.find((t) => t.id === existing.trainerId) || {}).name || 'مدرب آخر'} — للاطّلاع فقط. يعدّله صاحبه أو الإدارة.`)
+        : el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الموعد')),
+      /* الزائر الذي أعجبه الـ Test يتحوّل لزبون كامل من هنا — ببياناته نفسها،
+         ويُنسب موعده القديم لحسابه الجديد فلا ينقطع تاريخه. */
+      isProspect && isAdmin
+        ? el('div', { class: 'span-2' }, el('button', {
+          class: 'btn btn--outline btn--full', type: 'button',
+          onclick: () => {
+            close();
+            openOnboardModal(onDone, {
+              name: prospectNameIn.value.trim(), phone: prospectPhoneIn.value.trim(), apptId: existing.id,
+            });
+          },
+        }, 'تسجيله زبونًا (Onboarding) ←'))
+        : el('span'),
+      /* حذف موعد أُدخل بالخطأ — الإدارة لأي موعد، والمدرب لمواعيده هو */
+      existing && (isAdmin || existing.trainerId === API.user.id)
+        ? el('div', { class: 'span-2' }, el('button', {
+          class: 'btn btn--ghost btn--full', type: 'button', style: 'color:var(--status-danger)',
+          onclick: async () => {
+            if (!confirm('حذف هذا الموعد نهائيًا؟ للمواعيد المُدخلة بالخطأ — ويصل إشعار للمتدرب بإلغائه.')) return;
+            try {
+              await API.del('/api/appointments/' + existing.id);
+              toast('حُذف الموعد من البرنامج.'); close(); onDone && onDone();
+            } catch (ex) { toast(ex.message, true); }
+          },
+        }, 'حذف الموعد'))
+        : el('span')),
   ]);
-  if (existing && trainerSel) trainerSel.disabled = true;
+  syncKind();
+  if (isProspect) {
+    prospectFields.style.display = '';
+    traineeField.style.display = 'none';
+  }
+  if (readOnly) {
+    [trainerSel, traineeSel, kindSel, dateIn, timeIn, durIn, noteIn, statusSel, prospectNameIn, prospectPhoneIn, manualChk]
+      .forEach((n) => { if (n) n.disabled = true; });
+  }
 }
 
 /* ============================================================
@@ -182,6 +272,8 @@ async function openOnboardModal(onDone, prefill = {}) {
   const nameIn = input({ placeholder: 'الاسم الكامل *', value: prefill.name || '' });
   const phoneIn = input({ placeholder: '05XXXXXXXX *', dir: 'ltr', style: 'text-align:end', value: prefill.phone || '' });
   const birthIn = input({ type: 'date', value: prefill.birthDate || '' });
+  /* مكان السكن: يُجمَّع في تقرير المناطق — «من أي منطقة يأتي مشتركونا فعلًا» */
+  const residenceIn = input({ placeholder: 'الحي / المنطقة — مثال: الرمال', value: prefill.residence || '' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), prefill.branchId ? { value: prefill.branchId } : {});
   const goalSel = select(Object.entries(GOAL_LABELS), prefill.goal ? { value: prefill.goal } : {});
   const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
@@ -258,9 +350,10 @@ async function openOnboardModal(onDone, prefill = {}) {
         try {
           const res = await API.post('/api/onboard', {
             name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
+            residence: residenceIn.value.trim() || null,
             branchId: Number(branchSel.value), goal: goalSel.value,
             referralCode: referralIn.value || null, leadId: prefill.leadId || null,
-            contractId: prefill.contractId || null,
+            contractId: prefill.contractId || null, apptId: prefill.apptId || null,
             sourceTrainerId: sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null,
             sourceType: sourceTypeSel.value,
             sourceRefId: ['trainee', 'friend'].includes(sourceTypeSel.value) && sourcePersonSel.value
@@ -280,8 +373,9 @@ async function openOnboardModal(onDone, prefill = {}) {
     },
       section('١ — بيانات المتدرب'),
       field('الاسم الكامل *', nameIn), field('رقم الجوال *', phoneIn),
-      field('تاريخ الميلاد', birthIn), field('الفرع', branchSel),
-      field('الهدف', goalSel), field('كود إحالة صديق', referralIn),
+      field('تاريخ الميلاد', birthIn), field('مكان السكن (الحي/المنطقة)', residenceIn),
+      field('الفرع', branchSel), field('الهدف', goalSel),
+      el('div', { class: 'span-2' }, field('كود إحالة صديق', referralIn)),
       el('div', { class: 'span-2 sidebar__caption', style: 'padding:6px 0 0' }, 'كيف وصلنا هذا المتدرب؟'),
       field('القناة', sourceTypeSel),
       sourcePersonField, sourceNameField,
@@ -543,10 +637,14 @@ async function viewBranches(root) {
 /* تعديل متدرب: الاسم والتواريخ والفرع والهدف والجوال (المدربون بالتناوب — لا إسناد ثابتًا) */
 function openEditTraineeModal(onDone, trainee, users, branches) {
   const nameIn = input({ value: trainee.name || '' });
+  /* اسم المستخدم قابل للتصحيح: حسابات سُجّلت باسم مؤقت («client») أو برقم
+     خاطئ كانت تبقى عليه للأبد (بطلب العميل) */
+  const usernameIn = input({ value: trainee.username || '', dir: 'ltr', style: 'text-align:end' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), { value: trainee.branchId || '' });
   const goalSel = select(Object.entries(GOAL_LABELS), { value: trainee.goal || 'loss' });
   const phoneIn = input({ value: trainee.phone || '', dir: 'ltr', style: 'text-align:end' });
   const birthIn = input({ type: 'date', value: trainee.birthDate || '' });
+  const residenceIn = input({ value: trainee.residence || '', placeholder: 'الحي / المنطقة' });
   const joinedIn = input({ type: 'date', value: trainee.joinedAt || '' });
 
   const close = modal(`تعديل «${trainee.name}»`, [
@@ -558,6 +656,7 @@ function openEditTraineeModal(onDone, trainee, users, branches) {
         try {
           await API.put('/api/users/' + trainee.id, {
             name: nameIn.value.trim(), branchId: Number(branchSel.value), goal: goalSel.value,
+            username: usernameIn.value.trim(), residence: residenceIn.value.trim() || null,
             phone: phoneIn.value, birthDate: birthIn.value || null, joinedAt: joinedIn.value || null,
           });
           toast('تم حفظ التعديلات.');
@@ -570,7 +669,11 @@ function openEditTraineeModal(onDone, trainee, users, branches) {
       field('الهدف', goalSel),
       field('تاريخ الميلاد', birthIn),
       field('تاريخ الانضمام', joinedIn),
-      el('div', { class: 'span-2' }, field('الجوال', phoneIn)),
+      field('الجوال', phoneIn),
+      field('مكان السكن (الحي/المنطقة)', residenceIn),
+      el('div', { class: 'span-2' }, field('اسم المستخدم (يدخل به للنظام)', usernameIn)),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'اسم المستخدم بالإنجليزية والأرقام فقط. تغييره يعني دخوله بالاسم الجديد في المرة القادمة — أبلغه به.'),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
 }
@@ -965,6 +1068,135 @@ async function openAssignMealModal(meal) {
 /* ============================================================
    التقارير الشهرية + تصدير
    ============================================================ */
+/* ============================================================
+   تقرير المتدربين بالأسماء — بالفرع، مع الاشتراك والدفعات
+   أعمدة اختيارية (الجوال، الميلاد، مكان السكن…) يختارها المستخدم قبل
+   العرض والتصدير، ومعه تجميع المناطق: من أين يأتي مشتركونا فعلًا.
+   ============================================================ */
+const ROSTER_COLUMNS = [
+  ['phone', 'رقم الجوال'],
+  ['birthDate', 'تاريخ الميلاد'],
+  ['residence', 'مكان السكن'],
+  ['username', 'اسم المستخدم'],
+  ['joinedAt', 'تاريخ الانضمام'],
+  ['lastSession', 'آخر حصة'],
+];
+
+async function viewTraineeRoster(root) {
+  const state = { branch: '', status: '', cols: new Set(['phone', 'residence']) };
+  const container = el('div', { class: 'content' });
+  root.append(container);
+  const branches = await API.get('/api/branches').catch(() => []);
+
+  async function render() {
+    container.innerHTML = '';
+    container.append(spinnerCard());
+    const q = `?branch=${state.branch}&status=${state.status}`;
+    const data = await API.get('/api/reports/trainees' + q);
+    container.innerHTML = '';
+
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
+    const statusSel = select([['', 'الكل'], ['active', 'باشتراك فعّال فقط'], ['inactive', 'بلا اشتراك فعّال']], {
+      value: state.status, onchange: (e) => { state.status = e.target.value; render(); },
+    });
+    const colsBox = el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap;align-items:center' },
+      el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'أعمدة إضافية:'),
+      ...ROSTER_COLUMNS.map(([key, label]) => {
+        const chk = input({ type: 'checkbox' });
+        chk.checked = state.cols.has(key);
+        chk.addEventListener('change', () => {
+          if (chk.checked) state.cols.add(key); else state.cols.delete(key);
+          drawTable();
+        });
+        return el('label', { style: 'display:flex;gap:5px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' }, chk, label);
+      }));
+
+    container.append(el('div', { class: 'card' },
+      el('div', { class: 'filters' },
+        field('الفرع', branchSel), field('الحالة', statusSel),
+        el('div', { style: 'flex:1' }),
+        el('button', {
+          class: 'btn btn--accent',
+          onclick: () => API.download(
+            `/api/reports/trainees.csv${q}&cols=${[...state.cols].join(',')}`,
+            `sportpower-trainees-${todayISO()}.csv`)
+            .then(() => toast('نُزّل التقرير بالأعمدة المختارة — يفتح في Excel.'))
+            .catch((ex) => toast(ex.message, true)),
+        }, 'تصدير Excel (CSV)'),
+        el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'طباعة / PDF')),
+      colsBox));
+
+    const t = data.totals;
+    container.append(el('div', { class: 'kpis' },
+      kpiTile(t.trainees, 'متدرب في التقرير', 'users'),
+      kpiTile(t.active, 'باشتراك فعّال', 'check'),
+      kpiTile(fmtMoney(t.paidTotal), 'إجمالي المحصّل منهم', 'wallet'),
+      kpiTile(fmtMoney(t.dueTotal), 'إجمالي المتبقي عليهم', 'card', t.dueTotal > 0 ? 'warn' : undefined),
+      kpiTile(`${t.withResidence}/${t.trainees}`, 'مسجّل لهم مكان السكن', 'building',
+        t.withResidence < t.trainees ? 'warn' : undefined)));
+
+    const tableWrap = el('div');
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'المتدربون بالأسماء — الاشتراك والدفعات'),
+      tableWrap));
+
+    function drawTable() {
+      const extra = ROSTER_COLUMNS.filter(([k]) => state.cols.has(k));
+      tableWrap.innerHTML = '';
+      tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
+        ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
+          'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي عليه', 'إجمالي ما دفعه'],
+        // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
+        data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
+        (r) => {
+          const s = r.subscription;
+          return [String(r.seq),
+            el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.name),
+            r.branch,
+            ...extra.map(([k]) => r[k] || '—'),
+            s ? s.packageName || '—' : '—',
+            s ? String(s.totalSessions) : '—', s ? String(s.usedSessions) : '—',
+            s ? el('b', { class: 'num' }, String(s.remaining)) : '—',
+            s ? s.startDate : '—', s ? s.endDate : '—',
+            s ? statusTag(s.status) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
+            s ? fmtMoney(s.price) : '—', fmtMoney(r.paidCurrent),
+            el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
+            fmtMoney(r.paidTotal)];
+        },
+        {
+          pageSize: 20, emptyText: 'لا متدربين مطابقين.',
+          searchText: (r) => `${r.name} ${r.phone} ${r.residence} ${r.branch}`,
+          searchPlaceholder: 'ابحث بالاسم أو الجوال أو المنطقة…',
+        })));
+    }
+    drawTable();
+
+    /* من أي المناطق يأتي المشتركون فعلًا — رقم يوجّه التسويق واختيار الفروع */
+    const areas = data.areas.filter((a) => a.area !== 'غير محدد');
+    const areasCard = el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'من أي المناطق يأتي مشتركونا؟ — حسب مكان السكن'));
+    if (areas.length) {
+      areasCard.append(
+        barChart(areas.slice(0, 12).map((a) => a.area), areas.slice(0, 12).map((a) => a.trainees), { unit: ' متدرب' }),
+        dataTable(['المنطقة', 'عدد المتدربين', 'منهم فعّالون', 'التوزّع على الفروع'],
+          data.areas.map((a) => [
+            a.area === 'غير محدد' ? el('span', { class: 'tag tag--warning' }, 'غير محدد') : a.area,
+            el('b', { class: 'num' }, String(a.trainees)),
+            el('span', { class: 'num' }, String(a.active)),
+            a.branches.map((b) => `${b.branch}: ${b.trainees}`).join(' · ')])));
+    } else {
+      areasCard.append(el('div', { class: 'empty' },
+        'لم يُدخل مكان السكن لأي متدرب بعد — أدخِله من «تعديل بيانات المتدرب» أو عند تسجيل زبون جديد ليظهر هذا التحليل.'));
+    }
+    container.append(areasCard);
+  }
+
+  await render();
+}
+
 async function viewReports(root) {
   const state = { month: thisMonthISO(), branch: '' };
   const container = el('div', { class: 'content' });
@@ -991,7 +1223,8 @@ async function viewReports(root) {
         onclick: () => API.download(`/api/reports/export.csv?month=${state.month}&branch=${state.branch}`, `sportpower-report-${state.month}.csv`)
           .then(() => toast('نُزّل التقرير — يفتح في Excel.')).catch((ex) => toast(ex.message, true)),
       }, 'تصدير Excel (CSV)'),
-      el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'تصدير PDF / طباعة')));
+      el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'تصدير PDF / طباعة'),
+      el('a', { class: 'btn btn--petrol', href: '#/roster' }, 'تقرير المتدربين بالأسماء ←')));
 
     /* Branch Health Score — أول رقم في التقرير: صحة كل فرع من 100 */
     if (health && health.branches.length) {
@@ -1067,7 +1300,7 @@ async function viewReports(root) {
     if (growthReport) renderGrowthReport(container, growthReport);
 
     container.append(el('div', { class: 'alert alert--info' },
-      'ملاحظة الاحتساب: إذا درّب المدرب شخصين في نفس الساعة تُحسب ساعة تدريب واحدة، بينما يُحسب عدد الأشخاص حسب العدد الفعلي — وتُخصم حصة من كل متدرب. الحصص التعويضية لا تُخصم من رصيد الاشتراك.'));
+      'ملاحظة الاحتساب: إذا درّب المدرب شخصين في نفس الساعة تُحسب ساعة تدريب واحدة، بينما يُحسب عدد الأشخاص حسب العدد الفعلي — وتُخصم حصة من كل متدرب. الغياب يُخصم من الرصيد، والحصة التعويضية تُغطّي غيابًا سبق خصمه فلا تُخصم مرة ثانية — والتعويضية بلا غياب معلّق تُخصم كالحصة العادية.'));
   }
 
   await render();
@@ -1209,6 +1442,10 @@ async function viewSettings(root) {
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserEditModal(render, u, branches) }, 'تعديل'),
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
+            // بيانات الدخول جاهزة على واتساب — بكلمة مرور مؤقتة جديدة
+            u.id !== API.user.id
+              ? el('button', { class: 'btn btn--petrol btn--sm', onclick: () => openCredentialsModal(u) }, 'إرسال بياناته واتساب')
+              : el('span'),
             u.mfaEnrolled ? el('button', {
               class: 'btn btn--outline btn--sm',
               onclick: async () => {
@@ -1288,9 +1525,12 @@ function openBranchEditModal(onDone, branch) {
 
 function openUserEditModal(onDone, user, branches) {
   const nameIn = input({ value: user.name });
+  // تصحيح اسم المستخدم لأي حساب — لا الاسم المعروض وحده
+  const usernameIn = input({ value: user.username || '', dir: 'ltr', style: 'text-align:end' });
   const phoneIn = input({ value: user.phone || '', dir: 'ltr', style: 'text-align:end' });
   const branchSel = select([['', 'بلا فرع'], ...branches.map((b) => [b.id, b.name])], { value: user.branchId || '' });
   const goalSel = user.role === 'trainee' ? select(Object.entries(GOAL_LABELS), { value: user.goal || 'loss' }) : null;
+  const residenceIn = user.role === 'trainee' ? input({ value: user.residence || '', placeholder: 'الحي / المنطقة' }) : null;
   const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
 
   const close = modal(`تعديل «${user.name}»`, [
@@ -1300,8 +1540,10 @@ function openUserEditModal(onDone, user, branches) {
         e.preventDefault();
         try {
           await API.put('/api/users/' + user.id, {
-            name: nameIn.value, phone: phoneIn.value, branchId: branchSel.value ? Number(branchSel.value) : null,
+            name: nameIn.value, username: usernameIn.value.trim(),
+            phone: phoneIn.value, branchId: branchSel.value ? Number(branchSel.value) : null,
             goal: goalSel ? goalSel.value : undefined,
+            residence: residenceIn ? residenceIn.value.trim() || null : undefined,
             specialty: specIn ? specIn.value : undefined,
           });
           toast('تم حفظ التعديلات.'); close(); onDone && onDone();
@@ -1309,10 +1551,56 @@ function openUserEditModal(onDone, user, branches) {
       },
     },
       field('الاسم الكامل', nameIn),
+      field('اسم المستخدم', usernameIn),
       field('الجوال', phoneIn),
       field('الفرع', branchSel),
       goalSel ? field('الهدف', goalSel) : (specIn ? field('التخصص', specIn) : el('span')),
+      residenceIn ? field('مكان السكن (الحي/المنطقة)', residenceIn) : el('span'),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'اسم المستخدم بالإنجليزية والأرقام فقط (ويُسمح بـ . _ -) — أبلغ صاحبه بأي تغيير فهو مفتاح دخوله.'),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+  ]);
+}
+
+/* ============================================================
+   إرسال بروفايل المشترك وبياناته على واتساب — نص جاهز تلقائيًا
+   كلمة المرور لا تُخزَّن مقروءة في أي مكان، فالإرسال يولّد كلمة مرور
+   مؤقتة جديدة (وتسقط القديمة وتُنهى جلساته) ويُطلب منه تغييرها عند دخوله.
+   ============================================================ */
+async function openCredentialsModal(user, extraLine) {
+  if (!confirm(`إرسال بيانات الدخول لـ «${user.name}»؟\nستُولَّد كلمة مرور مؤقتة جديدة وتسقط القديمة فورًا — يُطلب منه تغييرها عند أول دخول.`)) return;
+  let res;
+  try { res = await API.post(`/api/users/${user.id}/credentials`, {}); }
+  catch (ex) { toast(ex.message, true); return; }
+
+  const link = location.origin;
+  const lines = [
+    `أهلًا ${user.name} 💪 هذا ملفك في نظام سبورت باور:`,
+    extraLine || '',
+    '',
+    `الرابط: ${link}`,
+    `اسم المستخدم: ${res.credentials.username}`,
+    `كلمة المرور: ${res.credentials.password}`,
+    '',
+    '(كلمة المرور مؤقتة — سيُطلب منك تغييرها عند أول دخول)',
+  ].filter((l) => l !== null);
+  const msg = lines.join('\n');
+  const wa = user.phone ? waLink(user.phone, OPS_SETTINGS.waCountryCode || '970', msg, user.name) : null;
+
+  modal(`بيانات دخول «${user.name}»`, [
+    el('div', { class: 'alert alert--warning' },
+      'كلمة المرور تظهر مرة واحدة فقط — أرسلها الآن أو انسخها قبل الإغلاق.'),
+    el('div', { class: 'card', style: 'box-shadow:none;border:1.5px dashed var(--app-line)' },
+      el('div', { style: 'font-family:var(--font-mono);direction:ltr;text-align:left;font-size:14px;line-height:2' },
+        `المستخدم: ${res.credentials.username}`, el('br'), `كلمة المرور: ${res.credentials.password}`)),
+    el('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
+      wa
+        ? el('a', { class: 'btn btn--accent', target: '_blank', href: wa }, 'إرسال واتساب — النص جاهز')
+        : el('span', { class: 'tag tag--warning' }, 'لا يوجد رقم جوال لهذا الحساب — أضِفه ليُرسَل واتساب'),
+      el('button', {
+        class: 'btn btn--outline',
+        onclick: () => navigator.clipboard.writeText(msg).then(() => toast('نُسخت الرسالة كاملة.')),
+      }, 'نسخ نص الرسالة')),
   ]);
 }
 

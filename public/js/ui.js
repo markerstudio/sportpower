@@ -345,7 +345,11 @@ const SESSION_KIND_LABELS = { regular: 'عادية', makeup: 'تعويض', absen
 function sessionKindTag(s) {
   const k = s.kind === 'makeup' ? 'makeup' : s.kind === 'absence' ? 'absence' : 'regular';
   const cls = k === 'absence' ? 'tag--danger' : k === 'makeup' ? 'tag--info' : 'tag--neutral';
-  return el('span', { class: 'tag ' + cls }, SESSION_KIND_LABELS[k]);
+  /* التعويضية المرتبطة بغياب لم تُخصم مرة ثانية — يوضّحها العنوان عند المرور */
+  const title = k === 'makeup'
+    ? (s.absenceSessionId ? 'تعويض غياب مخصوم — بلا خصم جديد' : 'تعويضية بلا غياب معلّق — خُصمت كحصة عادية')
+    : k === 'absence' ? 'غياب — خُصمت الحصة من الرصيد' : 'حصة نُفّذت — خُصمت من الرصيد';
+  return el('span', { class: 'tag ' + cls, title }, SESSION_KIND_LABELS[k] + (s.absenceSessionId ? ' ✓' : ''));
 }
 
 /* رصد داخلي على المتدرب: نتيجة أو مشكلة (سرّي عن المتدرب) */
