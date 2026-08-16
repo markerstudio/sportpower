@@ -396,7 +396,7 @@ async function openOnboardModal(onDone, prefill = {}) {
   }
 
   function showSuccess(res) {
-    const creds = `بيانات دخولك لنظام سبورت باور:\nالرابط: ${location.origin}\nاسم المستخدم: ${res.credentials.username}\nكلمة المرور: ${res.credentials.password}\n(سيُطلب منك تغييرها عند أول دخول)`;
+    const creds = `بيانات دخولك لنظام سبورت باور:\nالرابط: ${location.origin}\nاسم المستخدم: ${res.credentials.username}\nكلمة المرور: ${res.credentials.password}\n(كلمة المرور مؤقتة — سيُطلب منك تغييرها عند أول دخول)`;
     const waMsg = `أهلًا ${res.user.name} 💪 تم تفعيل اشتراكك في سبورت باور: ${res.subscription.totalSessions} حصة حتى ${res.subscription.endDate}.\n\n${creds}`;
     body.innerHTML = '';
     body.append(
@@ -1574,6 +1574,7 @@ async function openCredentialsModal(user, extraLine) {
   catch (ex) { toast(ex.message, true); return; }
 
   const link = location.origin;
+  const hours = res.credentials.validHours;
   const lines = [
     `أهلًا ${user.name} 💪 هذا ملفك في نظام سبورت باور:`,
     extraLine || '',
@@ -1582,14 +1583,17 @@ async function openCredentialsModal(user, extraLine) {
     `اسم المستخدم: ${res.credentials.username}`,
     `كلمة المرور: ${res.credentials.password}`,
     '',
-    '(كلمة المرور مؤقتة — سيُطلب منك تغييرها عند أول دخول)',
+    `(كلمة المرور مؤقتة وصالحة ${hours ? hours + ' ساعة' : 'لمدة محدودة'} — سيُطلب منك تغييرها عند أول دخول)`,
   ].filter((l) => l !== null);
   const msg = lines.join('\n');
   const wa = user.phone ? waLink(user.phone, OPS_SETTINGS.waCountryCode || '970', msg, user.name) : null;
 
   modal(`بيانات دخول «${user.name}»`, [
     el('div', { class: 'alert alert--warning' },
-      'كلمة المرور تظهر مرة واحدة فقط — أرسلها الآن أو انسخها قبل الإغلاق.'),
+      'كلمة المرور تظهر مرة واحدة فقط — أرسلها الآن أو انسخها قبل الإغلاق.'
+      + (res.credentials.validHours
+        ? ` وهي صالحة ${res.credentials.validHours} ساعة، فإن لم يدخل بها حتى ذلك الحين أصدِر غيرها.`
+        : '')),
     el('div', { class: 'card', style: 'box-shadow:none;border:1.5px dashed var(--app-line)' },
       el('div', { style: 'font-family:var(--font-mono);direction:ltr;text-align:left;font-size:14px;line-height:2' },
         `المستخدم: ${res.credentials.username}`, el('br'), `كلمة المرور: ${res.credentials.password}`)),

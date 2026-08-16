@@ -92,6 +92,7 @@ npm run db:migrate
 | `PG_STATEMENT_TIMEOUT_MS` | سقف زمن الاستعلام | `15000` |
 | `SLOW_QUERY_MS` | تسجيل الاستعلامات الأبطأ من هذا الحد | معطّل |
 | `NOTIF_RETENTION_DAYS` | حذف الإشعارات **المقروءة** الأقدم من هذه المدة | `180` |
+| `TEMP_PASSWORD_HOURS` | مهلة كلمة المرور المؤقتة قبل أن تبطل تلقائيًا | `48` |
 | `PGSSL_CA` / `PGSSL_NO_VERIFY` | شهادة خاصة / تعطيل التحقق (تشخيص فقط) | التحقق مفعَّل |
 | `MFA_DISABLE` / `MFA_FORCE` | تعطيل 2FA للطوارئ / فرضه على وضع العرض | إلزامي على Postgres |
 

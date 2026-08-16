@@ -278,6 +278,13 @@ app.post('/api/login', h(async (req, res) => {
   if (user.active === false) {
     return res.status(403).json({ error: 'هذا الحساب معطّل — تواصل مع الإدارة.' });
   }
+  /* كلمة مرور مؤقتة انقضت مهلتها: تبطل ولو كانت صحيحة، فلا تبقى الرسالة
+     القديمة على واتساب مفتاحًا صالحًا للحساب. */
+  if (user.mustChangePassword && user.tempPasswordExpires && user.tempPasswordExpires < Date.now()) {
+    return res.status(403).json({
+      error: 'انتهت صلاحية كلمة المرور المؤقتة — اطلب من الإدارة إرسال بيانات دخول جديدة.',
+    });
+  }
   loginAttempts.delete('user:' + uname);
 
   /* كلمة المرور صحيحة — أدوار المال والإدارة تكمل بالتحقق الثنائي */
@@ -406,7 +413,9 @@ app.post('/api/me/password', auth, h(async (req, res) => {
   if (!next || String(next).length < 8) {
     return res.status(400).json({ error: 'كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف.' });
   }
-  await Store.update('users', req.user.id, { password: Store.hashPassword(next), mustChangePassword: false });
+  await Store.update('users', req.user.id, {
+    password: Store.hashPassword(next), mustChangePassword: false, tempPasswordExpires: null,
+  });
   // إنهاء بقية الجلسات لهذا المستخدم
   await Store.deleteWhere('tokens', { userId: req.user.id, id: { ne: req.tokenId } });
   res.json({ ok: true });
@@ -452,6 +461,12 @@ async function notify(userId, text, type) {
    الإشعارات تتراكم بلا سقف (تنبيهات الاشتراكات والغياب تُنشأ يوميًا).
    نحذف **المقروءة** الأقدم من مدة الاحتفاظ فقط — غير المقروء يبقى دائمًا.
    يُنفَّذ عند تسجيل الدخول بحد أقصى مرة كل 6 ساعات لكل نسخة تشغيل. */
+/* مهلة كلمة المرور المؤقتة: تُصدرها الإدارة وتُرسل على واتساب، فتبقى
+   الرسالة في محادثة الطرفين. المهلة تجعل ما بقي في المحادثة بلا قيمة بعد
+   انقضائها — وإصدار بديل لا يكلّف أكثر من ضغطة زر. */
+const TEMP_PASSWORD_HOURS = Math.max(Number(process.env.TEMP_PASSWORD_HOURS || 48), 1);
+const tempPasswordDeadline = () => Date.now() + TEMP_PASSWORD_HOURS * 3600 * 1000;
+
 const NOTIF_RETENTION_DAYS = Math.max(Number(process.env.NOTIF_RETENTION_DAYS || 180), 7);
 let lastNotifSweep = 0;
 async function sweepOldNotifications() {
@@ -595,7 +610,8 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
     residence: residence || null,
     joinedAt: todayStr(),
     // كلمة المرور المؤقتة تصل شفويًا — تُغيَّر إلزاميًا عند أول دخول
-    mustChangePassword: true,
+    // وتبطل تلقائيًا إن لم تُستعمل خلال المهلة
+    mustChangePassword: true, tempPasswordExpires: tempPasswordDeadline(),
   });
   res.json(publicUser(user));
 }));
@@ -653,6 +669,8 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
     if (String(req.body.password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
     patch.password = Store.hashPassword(req.body.password);
     patch.mustChangePassword = user.id !== req.user.id;
+    // كلمة مرور يضعها غيرُه مؤقتةٌ لها مهلة؛ ومن يغيّر كلمته بنفسه لا مهلة عليه
+    patch.tempPasswordExpires = patch.mustChangePassword ? tempPasswordDeadline() : null;
   }
 
   const updated = await Store.update('users', user.id, patch);
@@ -687,11 +705,14 @@ app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'),
     return res.status(403).json({ error: 'إصدار بيانات الدخول لحسابات الموظفين صلاحية إدارة — المحاسب يُصدرها للمتدربين فقط.' });
   }
   const password = 'sp-' + crypto.randomBytes(6).toString('hex');
-  const updated = await Store.update('users', user.id, { password: Store.hashPassword(password), mustChangePassword: true });
+  const expiresAt = tempPasswordDeadline();
+  const updated = await Store.update('users', user.id, {
+    password: Store.hashPassword(password), mustChangePassword: true, tempPasswordExpires: expiresAt,
+  });
   await Store.deleteWhere('tokens', { userId: user.id });
   res.json({
     user: publicUser(updated),
-    credentials: { username: user.username, password },
+    credentials: { username: user.username, password, expiresAt, validHours: TEMP_PASSWORD_HOURS },
   });
 }));
 
@@ -732,7 +753,8 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       username, password: Store.hashPassword(password), role: 'trainee',
       name: String(name).trim(), phone: String(phone).trim(),
       birthDate: birthDate || null, residence: residence || null, branchId: Number(branchId) || null,
-      goal: goal || 'loss', joinedAt: todayStr(), mustChangePassword: true,
+      goal: goal || 'loss', joinedAt: todayStr(),
+      mustChangePassword: true, tempPasswordExpires: tempPasswordDeadline(),
       sourceTrainerId: Number(sourceTrainerId) || null,
       ...normalizeSource(req.body || {}),
     });

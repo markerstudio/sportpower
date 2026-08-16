@@ -45,6 +45,10 @@ const SCHEMA = {
       residence: col('text'),
       active: col('bool'),
       mustChangePassword: col('bool'),
+      /* مهلة كلمة المرور المؤقتة (epoch ms): تُصدرها الإدارة وتُرسل على
+         واتساب، فإن لم تُستعمل حتى انقضائها بطلت ولزم إصدار غيرها —
+         حتى لا تبقى كلمة مرور صالحة في محادثة إلى الأبد. */
+      tempPasswordExpires: col('num'),
       referralCode: col('text'),
       sourceTrainerId: col('int'),
       /* كيف وصلنا هذا المتدرب: سوشال ميديا / عن طريق متدرب / صديق /
