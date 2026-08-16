@@ -18,6 +18,7 @@ const ACTION_TYPE_LABELS = {
   'weekly-gap': 'نقص حصص الأسبوع', pace: 'إيقاع أسرع من الباقة',
   weighing: 'الميزان الأسبوعي', payment: 'متابعة دفعة',
   'trainer-log': 'إدخال المدرب', 'no-input': 'يوم بلا إدخال',
+  birthday: 'عيد ميلاد غدًا',
 };
 
 const THRESHOLD_FIELDS = [

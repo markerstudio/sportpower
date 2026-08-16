@@ -481,7 +481,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     // من غاب أكثر من مرة خلال 30 يومًا → تنبيه للإدارة ومدرب الحصص
     const missedByTrainee = {};
-    windowAppts.filter((a) => isMissed(a, nowIso))
+    // مواعيد الـ Test لزوّار بلا حساب لا تدخل تنبيهات الغياب المتكرر — لا ملف لهم
+    windowAppts.filter((a) => a.traineeId && isMissed(a, nowIso))
       .forEach((a) => { (missedByTrainee[a.traineeId] = missedByTrainee[a.traineeId] || []).push(a); });
     const absentees = Object.entries(missedByTrainee)
       .filter(([, list]) => list.length >= 2)
@@ -536,6 +537,20 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const noInput = !data.sessions.length && !daySessionAbsences.length && !data.payments.length
       && !data.subEvents.length && !data.trainerLogs.length;
 
+    /* أعياد الميلاد: عيد الغد أولًا (التنبيه قبل يوم) ثم عيد اليوم —
+       تظهر في المتابعة اليومية بجوار بقية عمل اليوم لا في صفحة منفصلة. */
+    const mmdd = (d) => (d || '').slice(5, 10);
+    const tomorrow = new Date(new Date(date + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+    const birthdays = data.users
+      .filter((u) => u.role === 'trainee' && u.active !== false && u.birthDate)
+      .filter((u) => [mmdd(tomorrow), mmdd(date)].includes(mmdd(u.birthDate)))
+      .map((u) => ({
+        traineeId: u.id, name: u.name, phone: u.phone || '', birthDate: u.birthDate,
+        branch: (data.branches.find((b) => b.id === u.branchId) || {}).name || '—',
+        when: mmdd(u.birthDate) === mmdd(tomorrow) ? 'tomorrow' : 'today',
+      }))
+      .sort((a, b) => (a.when === b.when ? a.name.localeCompare(b.name, 'ar') : a.when === 'tomorrow' ? -1 : 1));
+
     /* مدرب لم يُدخل ساعاته ولا أنجز مهمة يومية — يظهر باسمه لا كرقم */
     const trainersMissingLog = trainerRows
       .filter((t) => !t.checkIn && !t.workHours && !t.tasksDone && !t.sessions)
@@ -552,7 +567,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         returns: branchRows.reduce((s, b) => s + b.returns, 0),
       },
       branches: branchRows, attendance, absentees, trainerRows,
-      noInput, trainersMissingLog,
+      noInput, trainersMissingLog, birthdays,
     });
   }));
 

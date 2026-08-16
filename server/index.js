@@ -110,7 +110,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
 
 /* من أين وصلنا المتدرب — يُختار عند التسجيل ويظهر في تقرير المبيعات */
 const SOURCE_TYPES = ['social', 'trainee', 'friend', 'new', 'returned', 'trainer'];
@@ -569,7 +569,7 @@ app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutri
 }));
 
 app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
-  const { username, password, name, role, phone, branchId, trainerId, goal, specialty } = req.body;
+  const { username, password, name, role, phone, branchId, trainerId, goal, specialty, residence } = req.body;
   if (!username || !password || !name || !role) return res.status(400).json({ error: 'الحقول الأساسية مطلوبة.' });
   if (!['trainee', 'trainer', 'accountant', 'nutritionist', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'نوع مستخدم غير صحيح.' });
@@ -583,6 +583,7 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
     username: String(username).toLowerCase(), password: Store.hashPassword(password),
     name, role, phone: phone || '', branchId: branchId || null,
     trainerId: trainerId || null, goal: goal || null, specialty: specialty || null,
+    residence: residence || null,
     joinedAt: todayStr(),
     // كلمة المرور المؤقتة تصل شفويًا — تُغيَّر إلزاميًا عند أول دخول
     mustChangePassword: true,
@@ -595,10 +596,25 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   const user = await Store.get('users', req.params.id);
   if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
   const patch = {};
-  ['name', 'phone', 'goal', 'specialty', 'birthDate', 'joinedAt'].forEach((k) => {
+  ['name', 'phone', 'goal', 'specialty', 'birthDate', 'joinedAt', 'residence'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   });
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
+
+  /* تصحيح اسم المستخدم: حسابات سُجّلت باسم مؤقت («client») أو برقم خاطئ
+     تحتاج تعديلًا كأي حقل آخر — بشرط بقائه فريدًا ونظيفًا. */
+  if (req.body.username !== undefined) {
+    const wanted = String(req.body.username).trim().toLowerCase();
+    if (wanted !== user.username) {
+      if (wanted.length < 3) return res.status(400).json({ error: 'اسم المستخدم 3 أحرف على الأقل.' });
+      if (!/^[a-z0-9._-]+$/.test(wanted)) {
+        return res.status(400).json({ error: 'اسم المستخدم بالإنجليزية والأرقام فقط (ويُسمح بـ . _ -).' });
+      }
+      const taken = await Store.find('users', { username: wanted }, { limit: 1 });
+      if (taken.length) return res.status(400).json({ error: 'اسم المستخدم موجود مسبقًا.' });
+      patch.username = wanted;
+    }
+  }
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
   if (req.body.sourceType !== undefined) Object.assign(patch, normalizeSource(req.body));
 
@@ -647,12 +663,28 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   res.json(publicUser(updated));
 }));
 
+/* بيانات دخول جاهزة للإرسال على واتساب: تُولَّد كلمة مرور مؤقتة جديدة
+   ويُعاد اسم المستخدم معها. تُطلب حين ينسى المشترك بياناته أو حين لم تصله
+   أصلًا — والقديمة تسقط فورًا وتُنهى جلساته، ويُطلب منه تغييرها عند الدخول. */
+app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const user = await Store.get('users', req.params.id);
+  if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'لا تُصدر بيانات دخول لحسابك — استخدم تغيير كلمة المرور.' });
+  const password = 'sp-' + crypto.randomBytes(4).toString('hex');
+  const updated = await Store.update('users', user.id, { password: Store.hashPassword(password), mustChangePassword: true });
+  await Store.deleteWhere('tokens', { userId: user.id });
+  res.json({
+    user: publicUser(updated),
+    credentials: { username: user.username, password },
+  });
+}));
+
 /* ============================================================
    Onboarding — تسجيل زبون جديد بخطوة واحدة:
    حساب + اشتراك + دفعة أولى + أول موعد (اختياريان)
    ============================================================ */
 app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const { name, phone, birthDate, branchId, goal, subscription, payment, appointment, sourceTrainerId } = req.body || {};
+  const { name, phone, birthDate, residence, branchId, goal, subscription, payment, appointment, sourceTrainerId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم المتدرب مطلوب.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'رقم الجوال مطلوب (يُستخدم لاسم المستخدم وواتساب).' });
   if (!subscription || !subscription.totalSessions || !subscription.price || !subscription.startDate || !subscription.endDate) {
@@ -683,7 +715,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
     const user = await tx.insert('users', {
       username, password: Store.hashPassword(password), role: 'trainee',
       name: String(name).trim(), phone: String(phone).trim(),
-      birthDate: birthDate || null, branchId: Number(branchId) || null,
+      birthDate: birthDate || null, residence: residence || null, branchId: Number(branchId) || null,
       goal: goal || 'loss', joinedAt: todayStr(), mustChangePassword: true,
       sourceTrainerId: Number(sourceTrainerId) || null,
       ...normalizeSource(req.body || {}),
@@ -744,6 +776,18 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   if (req.body.leadId) {
     const lead = await Store.get('leads', Number(req.body.leadId));
     if (lead) await Store.update('leads', lead.id, { stage: 'subscribed', traineeId: result.user.id, closedAt: todayStr() });
+  }
+
+  /* موعد Test كان باسم زائر بلا حساب: يُنسب الآن لحسابه الجديد فيبقى
+     تاريخه متصلًا (جاء تستًا ثم اشترك) بدل أن يبقى معلّقًا باسم نصّي. */
+  if (req.body.apptId) {
+    const appt = await Store.get('appointments', Number(req.body.apptId));
+    if (appt && !appt.traineeId) {
+      await Store.update('appointments', appt.id, {
+        traineeId: result.user.id, branchId: result.user.branchId,
+        prospectName: null, prospectPhone: null,
+      });
+    }
   }
 
   // إغلاق العقد الإلكتروني الذي عبّأه الزبون بنفسه
@@ -864,11 +908,13 @@ app.get('/api/sessions', auth, h(async (req, res) => {
 }));
 
 app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, res) => {
-  const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass,
+  const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass, fatMass,
     waist, chest, arm, hips, leg, appointmentId } = req.body;
-  const measurements = { weight, bodyFatPct, muscleMass, waist, chest, arm, hips, leg };
-  /* أنواع الحصة: عادية · تعويضية (بلا خصم) · غياب (تُخصم من الرصيد
-     وتُحتسب غيابًا في الحضور والتقارير — لا تُحسب حضورًا) */
+  const measurements = { weight, bodyFatPct, muscleMass, fatMass, waist, chest, arm, hips, leg };
+  /* أنواع الحصة: عادية · تعويضية · غياب — وكلها تُخصم من رصيد الاشتراك.
+     التعويضية تُخصم أيضًا (بطلب العميل): هي حصة نُفّذت فعلًا وتستهلك من
+     الرصيد، والفرق أنها تُوسم تعويضًا في السجل والتقارير. والغياب يُخصم
+     كذلك لكنه لا يُحتسب حضورًا ولا ساعةَ تدريب. */
   const kind = ['makeup', 'absence'].includes(req.body.kind) ? req.body.kind : 'regular';
   const absenceReason = kind === 'absence' ? String(req.body.absenceReason || '').slice(0, 200) : null;
   const trainee = await Store.get('users', Number(traineeId));
@@ -884,33 +930,16 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
     if (!target || target.role !== 'trainer') return res.status(400).json({ error: 'المدرب المنفّذ غير موجود.' });
   }
 
-  /* حصة تعويضية: تُسجل بشكل مستقل عن الحصص العادية — بلا خصم من رصيد الاشتراك */
-  if (kind === 'makeup') {
-    const session = await Store.insert('sessions', {
-      traineeId: trainee.id, trainerId, branchId: trainee.branchId,
-      date, time, duration: Number(duration), style: style || '', notes: notes || '',
-      weight: weight ? Number(weight) : null, subscriptionId: null, kind: 'makeup',
-      createdAt: new Date().toISOString(),
-    });
-    if (appointmentId) {
-      const appt = await Store.get('appointments', Number(appointmentId));
-      if (appt) await Store.update('appointments', appt.id, { status: 'done', sessionId: session.id });
-    }
-    await notify(trainee.id, `تم تسجيل حصة تعويضية لك بتاريخ ${date} — دون خصم من رصيد اشتراكك.`, 'session');
-    const recorded = await recordSessionMeasurements(trainee.id, date, measurements, req.user.id);
-    const measureReminder = await measurementsDue(trainee, trainerId, recorded);
-    return res.json({ session, makeup: true, measureReminder });
-  }
-
   const subs = (await Store.all('subscriptions'))
     .filter((s) => s.traineeId === trainee.id && subStatus(s) === 'active')
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
   if (!subs.length) return res.status(400).json({ error: `لا يوجد اشتراك فعّال للمتدرب ${trainee.name} — يرجى التجديد أولًا.` });
 
   const absent = kind === 'absence';
+  const makeup = kind === 'makeup';
 
   /* معاملة ذرّية: قفل الاشتراك، إعادة التحقق، الخصم، وتسجيل الحصة معًا.
-     الغياب يُخصم كحصة تمامًا كالحصة المنفَّذة — والفرق أنه يُسجَّل غيابًا. */
+     الأنواع الثلاثة تُخصم حصةً واحدة — والفرق في التوسيم لا في الحساب. */
   const result = await Store.transaction(async (tx) => {
     const sub = await tx.getForUpdate('subscriptions', subs[0].id);
     if (!sub || subStatus(sub) !== 'active') throw Object.assign(new Error('نفد رصيد الاشتراك — يرجى التجديد.'), { status: 400 });
@@ -918,7 +947,7 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
       traineeId: trainee.id, trainerId, branchId: trainee.branchId,
       date, time, duration: Number(duration), style: absent ? '' : (style || ''), notes: notes || '',
       weight: !absent && weight ? Number(weight) : null, subscriptionId: sub.id,
-      kind: absent ? 'absence' : 'regular', absenceReason,
+      kind, absenceReason,
       createdAt: new Date().toISOString(),
     });
     const used = sub.usedSessions + 1;
@@ -931,12 +960,14 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
       // الغياب يُعلَّم على الموعد غيابًا صراحةً — فتراه كل قواعد الحضور والمتابعة
       if (appt) await tx.update('appointments', appt.id, { status: absent ? 'missed' : 'done', sessionId: session.id });
     }
-    return { session, remaining: sub.totalSessions - used, total: sub.totalSessions, absent };
+    return { session, remaining: sub.totalSessions - used, total: sub.totalSessions, absent, makeup };
   });
 
   await notify(trainee.id, absent
     ? `سُجّل غياب عن حصة ${date} وخُصمت من رصيدك — متبقي ${result.remaining} حصة من أصل ${result.total}. تواصل معنا لجدولة حصة تعويضية.`
-    : `تم تسجيل حصتك بتاريخ ${date} — متبقي ${result.remaining} حصة من أصل ${result.total}.`, 'session');
+    : makeup
+      ? `تم تسجيل حصة تعويضية لك بتاريخ ${date} وخُصمت من رصيدك — متبقي ${result.remaining} حصة من أصل ${result.total}.`
+      : `تم تسجيل حصتك بتاريخ ${date} — متبقي ${result.remaining} حصة من أصل ${result.total}.`, 'session');
   if (absent) {
     const admins = await Store.find('users', { role: 'admin' });
     for (const a of admins.filter((u) => u.active !== false)) {
@@ -953,8 +984,9 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   res.json(result);
 }));
 
-/* قياسات الحصة (وزن/دهون/عضل + شريط القياس) تُحفظ تلقائيًا قراءةً في سجل InBody */
-const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
+/* قياسات الحصة (وزن/دهون %/كتلة دهون كغ/عضل + شريط القياس) تُحفظ تلقائيًا
+   قراءةً في سجل InBody */
+const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
 async function recordSessionMeasurements(traineeId, date, m, byId) {
   const vals = {};
   let any = false;
@@ -965,7 +997,7 @@ async function recordSessionMeasurements(traineeId, date, m, byId) {
   if (!any) return false;
   await Store.insert('inbody', {
     traineeId, date, ...vals,
-    fatMass: null, water: null, bmi: null, score: null,
+    water: null, bmi: null, score: null,
     notes: 'قياسات مسجلة مع الحصة', createdBy: byId,
   });
   return true;
@@ -997,11 +1029,9 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
   ['date', 'time', 'style', 'notes'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   });
-  /* تصحيح النوع بين «عادية» و«غياب» — كلاهما مخصوم من الرصيد فلا يتغيّر
-     الحساب المالي، ويتغيّر فقط احتساب الحضور. التعويضية لا تُبدَّل هنا
-     لأنها بلا خصم أصلًا (احذفها وسجّلها من جديد). */
-  if (req.body.kind !== undefined && ['regular', 'absence'].includes(req.body.kind)) {
-    if (session.kind === 'makeup') return res.status(400).json({ error: 'الحصة التعويضية لا تُحوَّل — احذفها وسجّلها من جديد.' });
+  /* تصحيح النوع بين «عادية» و«تعويض» و«غياب» — ثلاثتها مخصومة من الرصيد
+     فلا يتغيّر الحساب المالي، ويتغيّر فقط توسيم الحصة واحتساب الحضور. */
+  if (req.body.kind !== undefined && ['regular', 'makeup', 'absence'].includes(req.body.kind)) {
     patch.kind = req.body.kind;
     patch.absenceReason = req.body.kind === 'absence' ? String(req.body.absenceReason || '').slice(0, 200) : null;
   }
@@ -1021,7 +1051,9 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
 }));
 
 /* حذف حصة — الإدارة لأي حصة، والمدرب لحصصه هو (تصحيح إدخال خاطئ).
-   الحصة العادية أو الغياب تُعاد لرصيد الاشتراك؛ التعويضية لا رصيد لها. */
+   كل حصة مرتبطة باشتراك تُعاد لرصيده مهما كان نوعها (بما فيها التعويضية،
+   إذ صارت تُخصم كغيرها). الحصص التعويضية القديمة سُجّلت بلا اشتراك فلا
+   رصيد لها لتُعاد إليه. */
 app.delete('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   if (req.user.role === 'trainer') {
     const s = await Store.get('sessions', Number(req.params.id));
@@ -1032,7 +1064,7 @@ app.delete('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (
     const session = await tx.get('sessions', Number(req.params.id));
     if (!session) throw Object.assign(new Error('الحصة غير موجودة.'), { status: 404 });
     let refunded = false;
-    if (session.kind !== 'makeup' && session.subscriptionId) {
+    if (session.subscriptionId) {
       const sub = await tx.getForUpdate('subscriptions', session.subscriptionId);
       if (sub && sub.usedSessions > 0) {
         const used = sub.usedSessions - 1;
@@ -1220,16 +1252,31 @@ app.post('/api/appointments', auth, requireRole('admin', 'accountant', 'trainer'
   // المدرب يحجز لنفسه افتراضيًا ويستطيع الحجز لمدرب آخر — والإدارة والمحاسب يختاران المدرب
   const tid = Number(trainerId) || (req.user.role === 'trainer' ? req.user.id : 0);
   const trainer = await Store.get('users', tid);
-  const trainee = await Store.get('users', Number(traineeId));
-  if (!trainer || trainer.role !== 'trainer' || !trainee || trainee.role !== 'trainee') {
-    return res.status(400).json({ error: 'المدرب أو المتدرب غير موجود.' });
-  }
+  if (!trainer || trainer.role !== 'trainer') return res.status(400).json({ error: 'المدرب غير موجود.' });
   if (!date || !time) return res.status(400).json({ error: 'التاريخ والساعة مطلوبان.' });
+
+  const kind = apptKind(req.body.kind); // «تعويض» أو «test» في الجدول اليومي
+  /* الـ Test لزائر جديد: لا حساب له ولا صفحة، فيُكتب اسمه وجواله يدويًا.
+     أي نوع آخر يلزمه متدرب مسجَّل. */
+  const prospectName = String(req.body.prospectName || '').trim().slice(0, 100);
+  if (kind === 'test' && !traineeId) {
+    if (!prospectName) return res.status(400).json({ error: 'اكتب اسم صاحب الـ Test (زائر جديد غير مسجّل).' });
+    const appt = await Store.insert('appointments', {
+      trainerId: trainer.id, traineeId: null,
+      branchId: Number(req.body.branchId) || trainer.branchId || null,
+      date, time, duration: Number(duration) || 60, status: 'scheduled', note: note || '', kind,
+      prospectName, prospectPhone: String(req.body.prospectPhone || '').trim().slice(0, 30) || null,
+    });
+    if (req.user.id !== trainer.id) await notify(trainer.id, `Test جديد: ${prospectName} يوم ${date} الساعة ${time}.`, 'appointment');
+    return res.json(appt);
+  }
+
+  const trainee = await Store.get('users', Number(traineeId));
+  if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   const appt = await Store.insert('appointments', {
     trainerId: trainer.id, traineeId: trainee.id,
     branchId: trainee.branchId, date, time, duration: Number(duration) || 60,
-    status: 'scheduled', note: note || '',
-    kind: apptKind(req.body.kind), // «تعويض» أو «test» في الجدول اليومي
+    status: 'scheduled', note: note || '', kind,
   });
   if (req.user.id !== trainer.id) await notify(trainer.id, `موعد جديد: ${trainee.name} يوم ${date} الساعة ${time}.`, 'appointment');
   await notify(trainee.id, `تم حجز موعد تدريب لك يوم ${date} الساعة ${time} مع ${trainer.name}.`, 'appointment');
@@ -1248,13 +1295,47 @@ app.put('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'train
     if (req.body[k] !== undefined) patch[k] = k === 'duration' ? Number(req.body[k]) : req.body[k];
   });
   if (req.body.kind !== undefined) patch.kind = apptKind(req.body.kind);
+  // تصحيح اسم صاحب الـ Test أو جواله (زائر غير مسجّل)
+  if (appt.traineeId == null) {
+    if (req.body.prospectName !== undefined) patch.prospectName = String(req.body.prospectName || '').trim().slice(0, 100);
+    if (req.body.prospectPhone !== undefined) patch.prospectPhone = String(req.body.prospectPhone || '').trim().slice(0, 30) || null;
+  }
+  // نقل الموعد لمدرب آخر — البرنامج اليومي يُوزَّع بين المدربين
+  if (req.body.trainerId !== undefined && Number(req.body.trainerId) !== appt.trainerId) {
+    const newTrainer = await Store.get('users', Number(req.body.trainerId));
+    if (!newTrainer || newTrainer.role !== 'trainer') return res.status(400).json({ error: 'المدرب غير موجود.' });
+    patch.trainerId = newTrainer.id;
+    if (req.user.id !== newTrainer.id) await notify(newTrainer.id, `نُقل إليك موعد ${before}.`, 'appointment');
+  }
   const updated = await Store.update('appointments', appt.id, patch);
   const after = `${updated.date} ${updated.time}`;
   if (before !== after) {
     if (req.user.id !== appt.trainerId) await notify(appt.trainerId, `تم تعديل موعد من ${before} إلى ${after}.`, 'appointment');
-    await notify(appt.traineeId, `تم تعديل موعد تدريبك من ${before} إلى ${after}.`, 'appointment');
+    if (appt.traineeId) await notify(appt.traineeId, `تم تعديل موعد تدريبك من ${before} إلى ${after}.`, 'appointment');
   }
   res.json(updated);
+}));
+
+/* حذف موعد أُدخل بالخطأ في البرنامج اليومي — الإدارة والمحاسب لأي موعد،
+   والمدرب لمواعيده هو. الموعد المرتبط بحصة مسجَّلة لا يُحذف: تُحذف الحصة
+   أولًا (فيعود الرصيد) ثم يُحذف الموعد، وإلا ضاعت الحصة من السجل. */
+app.delete('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+  const appt = await Store.get('appointments', req.params.id);
+  if (!appt) return res.status(404).json({ error: 'الموعد غير موجود.' });
+  if (req.user.role === 'trainer' && appt.trainerId !== req.user.id) {
+    return res.status(403).json({ error: 'لا يمكنك حذف مواعيد مدرب آخر.' });
+  }
+  if (appt.sessionId) {
+    return res.status(400).json({ error: 'هذا الموعد مرتبط بحصة مسجَّلة — احذف الحصة أولًا ثم احذف الموعد.' });
+  }
+  await Store.remove('appointments', appt.id);
+  if (appt.traineeId && appt.status === 'scheduled' && appt.date >= todayStr()) {
+    await notify(appt.traineeId, `أُلغي موعد تدريبك يوم ${appt.date} الساعة ${appt.time} — تواصل معنا لتحديد موعد بديل.`, 'appointment');
+  }
+  if (appt.trainerId && appt.trainerId !== req.user.id) {
+    await notify(appt.trainerId, `حُذف موعد من برنامجك يوم ${appt.date} الساعة ${appt.time}.`, 'appointment');
+  }
+  res.json({ ok: true });
 }));
 
 /* ============================================================
@@ -1593,7 +1674,9 @@ app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, re
     const diff = (hh * 60 + mm) - (now.getHours() * 60 + now.getMinutes());
     return diff >= 0 && diff <= 120;
   });
+  /* موعد الـ Test قد يكون لزائر بلا حساب — اسمه مكتوب على الموعد نفسه */
   const nameOf = (id) => (users.find((u) => u.id === id) || {}).name;
+  const apptName = (a) => (a.traineeId ? nameOf(a.traineeId) : (a.prospectName || 'زائر Test'));
 
   res.json({
     month,
@@ -1605,8 +1688,8 @@ app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, re
       today: todayAppts.length,
       absences: monthAll.length - monthSessions.length,
     },
-    todayAppointments: todayAppts.map((a) => ({ ...a, traineeName: nameOf(a.traineeId) })),
-    upcomingSoon: soon.map((a) => ({ ...a, traineeName: nameOf(a.traineeId) })),
+    todayAppointments: todayAppts.map((a) => ({ ...a, traineeName: apptName(a) })),
+    upcomingSoon: soon.map((a) => ({ ...a, traineeName: apptName(a) })),
     recentSessions: monthAll.slice().sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)).slice(0, 10)
       .map((s) => ({ ...s, traineeName: nameOf(s.traineeId) })),
   });
@@ -1881,6 +1964,144 @@ app.get('/api/reports/monthly', auth, requireRole('admin', 'accountant'), h(asyn
   const month = req.query.month || thisMonthStr();
   const branch = req.query.branch ? Number(req.query.branch) : null;
   res.json(await buildMonthlyReport(month, branch));
+}));
+
+/* ============================================================
+   تقرير المتدربين بالأسماء — بالفرع، مع الاشتراك والدفعات
+   أعمدة اختيارية بطلب العميل: الجوال، تاريخ الميلاد، مكان السكن.
+   ومعه تجميع «من أي المناطق يأتي المشتركون» لتوجيه التسويق.
+   ============================================================ */
+const SUB_STATUS_AR = { active: 'فعّال', frozen: 'مجمّد', expired: 'منتهٍ', cancelled: 'ملغى' };
+
+const TRAINEE_REPORT_OPTIONAL = ['phone', 'birthDate', 'residence', 'username', 'joinedAt', 'lastSession'];
+
+async function buildTraineeRoster({ branch, status }) {
+  const { users, branches, subscriptions, payments, sessions } = await Store.load(
+    'users', 'branches', 'subscriptions', 'payments', 'sessions');
+  const branchName = (id) => (branches.find((b) => b.id === id) || {}).name || '—';
+
+  const subsByTrainee = {};
+  subscriptions.forEach((s) => { (subsByTrainee[s.traineeId] = subsByTrainee[s.traineeId] || []).push(s); });
+  const paysByTrainee = {};
+  payments.forEach((p) => { (paysByTrainee[p.traineeId] = paysByTrainee[p.traineeId] || []).push(p); });
+  const lastSessionOf = {};
+  sessions.forEach((s) => {
+    if (!lastSessionOf[s.traineeId] || s.date > lastSessionOf[s.traineeId]) lastSessionOf[s.traineeId] = s.date;
+  });
+
+  let rows = users.filter((u) => u.role === 'trainee').map((u) => {
+    const mine = (subsByTrainee[u.id] || []).map((s) => ({ ...s, status: subStatus(s) }));
+    // الاشتراك المعروض: الفعّال أولًا، وإلا الأحدث انتهاءً
+    const current = mine.filter((s) => s.status === 'active').sort((a, b) => a.endDate.localeCompare(b.endDate))[0]
+      || mine.slice().sort((a, b) => a.endDate.localeCompare(b.endDate))[mine.length - 1] || null;
+    const myPays = paysByTrainee[u.id] || [];
+    const paidCurrent = current ? myPays.filter((p) => p.subscriptionId === current.id).reduce((s, p) => s + p.amount, 0) : 0;
+    return {
+      traineeId: u.id, name: u.name, username: u.username,
+      branchId: u.branchId || null, branch: branchName(u.branchId),
+      phone: u.phone || '', birthDate: u.birthDate || '', residence: (u.residence || '').trim(),
+      joinedAt: u.joinedAt || '', active: u.active !== false,
+      lastSession: lastSessionOf[u.id] || '',
+      subscription: current && {
+        id: current.id, packageName: current.packageName || '', totalSessions: current.totalSessions,
+        usedSessions: current.usedSessions, remaining: current.totalSessions - current.usedSessions,
+        price: current.price, startDate: current.startDate, endDate: current.endDate, status: current.status,
+      },
+      subscriptionsCount: mine.length,
+      paidCurrent,
+      dueCurrent: current ? Math.max(0, current.price - paidCurrent) : 0,
+      paidTotal: myPays.reduce((s, p) => s + p.amount, 0),
+      lastPayment: myPays.reduce((m, p) => (p.date > m ? p.date : m), ''),
+    };
+  });
+
+  if (branch) rows = rows.filter((r) => r.branchId === branch);
+  if (status === 'active') rows = rows.filter((r) => r.subscription && r.subscription.status === 'active');
+  if (status === 'inactive') rows = rows.filter((r) => !r.subscription || r.subscription.status !== 'active');
+  rows.sort((a, b) => a.branch.localeCompare(b.branch, 'ar') || a.name.localeCompare(b.name, 'ar'));
+
+  /* من أي المناطق يأتي المشتركون فعلًا — المنطقة الفارغة تُعرض صراحةً
+     «غير محدد» حتى يظهر حجم النقص في الإدخال بدل أن يختفي. */
+  const areaMap = {};
+  rows.forEach((r) => {
+    const key = r.residence || 'غير محدد';
+    const a = areaMap[key] = areaMap[key] || { area: key, trainees: 0, active: 0, branches: {} };
+    a.trainees++;
+    if (r.subscription && r.subscription.status === 'active') a.active++;
+    a.branches[r.branch] = (a.branches[r.branch] || 0) + 1;
+  });
+  const areas = Object.values(areaMap)
+    .map((a) => ({ ...a, branches: Object.entries(a.branches).map(([name, n]) => ({ branch: name, trainees: n })) }))
+    .sort((a, b) => b.trainees - a.trainees || a.area.localeCompare(b.area, 'ar'));
+
+  return {
+    rows, areas,
+    totals: {
+      trainees: rows.length,
+      active: rows.filter((r) => r.subscription && r.subscription.status === 'active').length,
+      paidTotal: rows.reduce((s, r) => s + r.paidTotal, 0),
+      dueTotal: rows.reduce((s, r) => s + r.dueCurrent, 0),
+      withResidence: rows.filter((r) => r.residence).length,
+    },
+  };
+}
+
+app.get('/api/reports/trainees', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  res.json(await buildTraineeRoster({
+    branch: req.query.branch ? Number(req.query.branch) : null,
+    status: req.query.status || '',
+  }));
+}));
+
+app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const branch = req.query.branch ? Number(req.query.branch) : null;
+  const data = await buildTraineeRoster({ branch, status: req.query.status || '' });
+  // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
+  const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const on = (k) => wanted.includes(k);
+  const cell = (v) => String(v === null || v === undefined ? '' : v).replace(/[,\r\n]+/g, '؛ ');
+
+  const head = ['#', 'الاسم', 'الفرع'];
+  if (on('phone')) head.push('رقم الجوال');
+  if (on('birthDate')) head.push('تاريخ الميلاد');
+  if (on('residence')) head.push('مكان السكن');
+  if (on('username')) head.push('اسم المستخدم');
+  if (on('joinedAt')) head.push('تاريخ الانضمام');
+  head.push('الباقة', 'عدد الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'حالة الاشتراك',
+    'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي عليه', 'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
+  if (on('lastSession')) head.push('آخر حصة');
+
+  const lines = [`تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`, ''];
+  lines.push(head.join(','));
+  data.rows.forEach((r, i) => {
+    const s = r.subscription;
+    const out = [i + 1, cell(r.name), cell(r.branch)];
+    if (on('phone')) out.push(cell(r.phone));
+    if (on('birthDate')) out.push(cell(r.birthDate));
+    if (on('residence')) out.push(cell(r.residence));
+    if (on('username')) out.push(cell(r.username));
+    if (on('joinedAt')) out.push(cell(r.joinedAt));
+    out.push(cell(s && s.packageName), s ? s.totalSessions : '', s ? s.usedSessions : '', s ? s.remaining : '',
+      s ? s.startDate : '', s ? s.endDate : '', s ? SUB_STATUS_AR[s.status] || s.status : 'بلا اشتراك',
+      s ? s.price : '', r.paidCurrent, r.dueCurrent, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
+    if (on('lastSession')) out.push(cell(r.lastSession));
+    lines.push(out.join(','));
+  });
+
+  lines.push('', 'الإجمالي,القيمة');
+  lines.push(`عدد المتدربين,${data.totals.trainees}`);
+  lines.push(`منهم باشتراك فعّال,${data.totals.active}`);
+  lines.push(`إجمالي المحصّل منهم,${data.totals.paidTotal}`);
+  lines.push(`إجمالي المتبقي عليهم,${data.totals.dueTotal}`);
+
+  lines.push('', 'المنطقة (مكان السكن),عدد المتدربين,منهم فعّالون,التوزّع على الفروع');
+  data.areas.forEach((a) => lines.push(
+    `${cell(a.area)},${a.trainees},${a.active},${cell(a.branches.map((b) => `${b.branch}: ${b.trainees}`).join(' — '))}`));
+
+  const csv = '﻿' + lines.join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="sportpower-trainees-${todayStr()}.csv"`);
+  res.send(csv);
 }));
 
 /* تصدير CSV (يفتح في Excel — مع BOM لدعم العربية) */

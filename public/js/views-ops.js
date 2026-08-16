@@ -62,6 +62,25 @@ async function viewDaily(root) {
         + 'بلا هذا الإدخال تبقى ساعاتهم المكتبية صفرًا في KPI والتقرير الشهري.'));
     }
 
+    /* أعياد الميلاد — تنبيه قبل يوم (بطلب العميل): يظهر عيد الغد أولًا
+       ليُجهَّز اليوم، ثم عيد اليوم نفسه. */
+    if (data.birthdays && data.birthdays.length) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, '🎂 أعياد الميلاد — تنبيه قبل يوم'),
+        dataTable(['المتدرب', 'الفرع', 'تاريخ الميلاد', 'المناسبة', 'الجوال', ''],
+          data.birthdays.map((b) => [
+            el('a', { href: '#/trainee/' + b.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, b.name),
+            b.branch, b.birthDate,
+            b.when === 'tomorrow'
+              ? el('span', { class: 'tag tag--warning' }, 'غدًا 🎉')
+              : el('span', { class: 'tag tag--accent' }, 'اليوم 🎉'),
+            b.phone || '—',
+            b.phone ? el('a', {
+              class: 'btn btn--accent btn--sm', target: '_blank',
+              href: waLink(b.phone, OPS_SETTINGS.waCountryCode, `كل عام وأنت بخير ${b.name} 🎉🎂 من عائلة سبورت باور — نتمنى لك سنة مليانة صحة وإنجازات 💪`, b.name),
+            }, 'تهنئة واتساب') : '—']))));
+    }
+
     // تنبيهات الغياب المتكرر
     if (data.absentees.length) {
       const list = el('div', { class: 'card' },

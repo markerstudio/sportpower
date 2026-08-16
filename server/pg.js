@@ -270,6 +270,22 @@ const MIGRATIONS = [
       if (rowCount) log(`  payments.branch_id: عُبّئ لـ ${rowCount} دفعة من اشتراكاتها`);
     },
   },
+  {
+    id: 3,
+    name: 'appointments-prospect-test',
+    async up(c, log) {
+      /* موعد الـ Test لزائر جديد لا حساب له: المتدرب لم يعد إلزاميًا.
+         مزامنة المخطط تضيف الأعمدة الجديدة لكنها لا ترفع قيد NOT NULL
+         عن عمود قائم — فنرفعه هنا صراحةً. */
+      const { rows } = await c.query(
+        `SELECT is_nullable FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='appointments' AND column_name='trainee_id'`);
+      if (rows.length && rows[0].is_nullable === 'NO') {
+        await c.query('ALTER TABLE appointments ALTER COLUMN trainee_id DROP NOT NULL');
+        log('  appointments.trainee_id: رُفع قيد NOT NULL (مواعيد Test بلا حساب)');
+      }
+    },
+  },
 ];
 
 /* مزامنة المخطط: تنشئ أي **مجموعة** جديدة أُضيفت إلى schema.js، وتضيف أي

@@ -21,6 +21,7 @@ const NAV = {
     ['#/inbody', 'قراءات InBody', 'pulse'],
     ['#/meals', 'مكتبة التغذية', 'leaf'],
     ['#/reports', 'التقارير الشهرية', 'chart'],
+    ['#/roster', 'تقرير المتدربين بالأسماء', 'users'],
     ['#/settings', 'الإعدادات والتحكم', 'gear'],
   ],
   trainer: [
@@ -43,6 +44,7 @@ const NAV = {
     ['#/trainees', 'المتدربون', 'users'],
     ['#/frozen', 'المجمدون', 'snow'],
     ['#/reports', 'التقارير الشهرية', 'chart'],
+    ['#/roster', 'تقرير المتدربين بالأسماء', 'users'],
   ],
   trainee: [
     ['#/me', 'صفحتي', 'user'],
@@ -60,6 +62,7 @@ const TITLES = {
   '#/me': 'صفحتي', '#/calendar': 'التقويم والمواعيد', '#/subscriptions': 'إدارة الاشتراكات والحصص',
   '#/branches': 'الفروع والمدربون', '#/inbody': 'قراءات InBody', '#/meals': 'مكتبة التغذية',
   '#/reports': 'التقارير الشهرية', '#/trainees': 'المتدربون',
+  '#/roster': 'تقرير المتدربين بالأسماء — بالفرع والاشتراك والدفعات',
   '#/settings': 'الإعدادات والتحكم',
   '#/daily': 'المتابعة اليومية', '#/kpi': 'الأهداف وKPI', '#/frozen': 'متابعة المجمدين',
   '#/sales': 'متابعة المبيعات', '#/loyalty': 'الولاء والإحالات', '#/points': 'نقاطي ومكافآتي',
@@ -233,6 +236,7 @@ async function route() {
     '#/inbody': guard(['admin', 'trainer', 'trainee'], viewInbody),
     '#/meals': viewMeals,
     '#/reports': guard(['admin', 'accountant'], viewReports),
+    '#/roster': guard(['admin', 'accountant'], viewTraineeRoster),
     '#/trainees': guard(['trainer', 'nutritionist', 'accountant'], viewMyTrainees),
     '#/settings': guard(['admin'], viewSettings),
     '#/daily': guard(['admin', 'accountant'], viewDaily),

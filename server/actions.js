@@ -169,7 +169,8 @@ async function buildActions({ branch, subStatus }) {
   /* ============================================================
      🔴 عاجل — متدرب غاب أكثر من مرة → مهمة تواصل
      ============================================================ */
-  const missedAppts = data.appointments.filter((a) => inBranch(a) && a.date >= daysAgo(30) && a.date <= today && isMissed(a, nowIso));
+  // موعد Test لزائر بلا حساب لا يدخل قواعد الغياب — لا ملف له ولا رصيد
+  const missedAppts = data.appointments.filter((a) => a.traineeId && inBranch(a) && a.date >= daysAgo(30) && a.date <= today && isMissed(a, nowIso));
   const missedByTrainee = {};
   missedAppts.forEach((a) => { (missedByTrainee[a.traineeId] = missedByTrainee[a.traineeId] || []).push(a); });
 
@@ -205,6 +206,41 @@ async function buildActions({ branch, subStatus }) {
       ].filter(Boolean),
     });
   });
+
+  /* ============================================================
+     🟡 مهم — عيد ميلاد غدًا (تنبيه قبل يوم بطلب العميل)
+     التنبيه يسبق اليوم بيوم كامل حتى تُجهَّز الرسالة أو الهدية قبل موعدها،
+     لا في يومها. ويُرسَل إشعار مرة واحدة لكل مناسبة (المفتاح فيه التاريخ). */
+  const tomorrow = shiftDays(today, 1);
+  const mmdd = (d) => (d || '').slice(5, 10);
+  const birthdayList = trainees.filter((t) => t.birthDate && mmdd(t.birthDate) === mmdd(tomorrow));
+  for (const t of birthdayList) {
+    const age = Number(tomorrow.slice(0, 4)) - Number(t.birthDate.slice(0, 4));
+    add({
+      key: `birthday:${t.id}:${tomorrow}`,
+      type: 'birthday', priority: 'important',
+      title: `🎂 غدًا ${tomorrow}: عيد ميلاد ${t.name}`,
+      reason: `تاريخ ميلاده ${t.birthDate}${Number.isFinite(age) && age > 0 && age < 100 ? ` — يُكمل ${age} عامًا` : ''}. `
+        + 'التهنئة قبل موعدها بيوم تُعطي وقتًا لتجهيز الرسالة أو الهدية.',
+      suggestion: 'أرسل تهنئة على واتساب باسم سبورت باور — ويمكن ربطها بعرض تجديد أو هدية حصة.',
+      ownerLabel: `المسؤول: قسم المتابعة — ${branchName(t.branchId)}`,
+      owner: { type: 'trainee', id: t.id, name: t.name, phone: t.phone },
+      branchName: branchName(t.branchId),
+      metrics: [
+        { label: 'الميلاد', value: t.birthDate },
+        { label: 'المناسبة', value: tomorrow },
+      ],
+      actions: [
+        waAction(t.phone, `كل عام وأنت بخير ${t.name} 🎉🎂 من عائلة سبورت باور — نتمنى لك سنة مليانة صحة وإنجازات 💪`, 'تهنئة واتساب'),
+        callAction(t.phone),
+        link('فتح ملف المتدرب', `#/trainee/${t.id}`),
+      ].filter(Boolean),
+    });
+    // إشعار في جرس الإدارة — مرة واحدة لكل عيد ميلاد
+    for (const admin of data.users.filter((u) => ['admin', 'accountant'].includes(u.role) && u.active !== false)) {
+      await notifyOnce(admin.id, `🎂 غدًا (${tomorrow}) عيد ميلاد ${t.name} — ${branchName(t.branchId)}. جهّز التهنئة اليوم.`, 'birthday');
+    }
+  }
 
   /* ============================================================
      🔴 عاجل — اشتراك بقي له حصتان أو أقل → مهمة تجديد

@@ -40,6 +40,9 @@ const SCHEMA = {
       specialty: col('text'),
       joinedAt: col('text'),
       birthDate: col('text'),
+      /* مكان السكن (الحي/المنطقة) — يُدخله المدرب أو الاستقبال، ويُجمَّع في
+         تقرير «من أي المناطق يأتي المشتركون» لتوجيه التسويق والفروع */
+      residence: col('text'),
       active: col('bool'),
       mustChangePassword: col('bool'),
       referralCode: col('text'),
@@ -103,7 +106,7 @@ const SCHEMA = {
       notes: col('text'),
       weight: col('num'),
       subscriptionId: col('int', { ref: ref('subscriptions', 'setnull') }),
-      /* regular = حصة نُفّذت · makeup = تعويضية بلا خصم ·
+      /* regular = حصة نُفّذت · makeup = تعويضية (تُخصم كالعادية) ·
          absence = غياب: تُخصم من الرصيد وتُحتسب غيابًا في الحضور والتقارير */
       kind: col('text', { default: "'regular'" }),
       absenceReason: col('text'),
@@ -115,7 +118,9 @@ const SCHEMA = {
   appointments: {
     columns: {
       trainerId: col('int', { ref: ref('users', 'setnull') }),
-      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      /* يبقى فارغًا في موعد الـ Test: صاحبه زائر جديد لم يُسجَّل بعد ولا حساب
+         له، فيُكتب اسمه وجواله يدويًا في prospectName/prospectPhone */
+      traineeId: col('int', { ref: ref('users') }),
       branchId: col('int', { ref: ref('branches', 'setnull') }),
       date: col('text', { notNull: true }),
       time: col('text', { notNull: true }),
@@ -124,6 +129,8 @@ const SCHEMA = {
       note: col('text'),
       kind: col('text'),
       sessionId: col('int'),
+      prospectName: col('text'),
+      prospectPhone: col('text'),
     },
     indexes: [['date'], ['trainerId'], ['traineeId'], ['branchId'], ['status'], ['branchId', 'date']],
   },
