@@ -489,7 +489,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
   const kindSel = select([
     ['regular', 'عادية — تُخصم من الاشتراك'],
     ['absence', 'غياب — تُخصم من الاشتراك وتُسجَّل غيابًا'],
-    ['makeup', 'تعويض — تُخصم من الاشتراك وتُسجَّل تعويضًا'],
+    ['makeup', 'تعويض — تُغطّي غيابًا مخصومًا بلا خصم جديد'],
   ], { value: ['makeup', 'absence'].includes(prefill.kind) ? prefill.kind : 'regular' });
   const absenceReasonIn = input({ placeholder: 'مثال: لم يحضر دون إشعار / اعتذر متأخرًا' });
   const dateIn = input({ type: 'date', value: prefill.date || todayISO() });
@@ -509,6 +509,11 @@ async function openLogSessionModal(onDone, prefill = {}) {
 
   const saveBtn = el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'حفظ الحصة وخصمها من الاشتراك');
   const absenceField = el('div', { class: 'span-2' }, field('سبب الغياب (اختياري)', absenceReasonIn));
+  /* التعويضية تُقابل غيابًا سبق خصمه — فلا خصم جديد. وإن لم يكن على
+     المتدرب غياب معلّق فهي حصة نُفّذت وتُخصم كالعادية. */
+  const makeupHint = el('div', { class: 'alert alert--info span-2', style: 'margin:0' },
+    'الحصة التعويضية تُغطّي أقدم غياب مخصوم على المتدرب فلا تُخصم منه حصة ثانية. '
+    + 'وإن لم يكن عليه غياب بانتظار التعويض، تُخصم كحصة عادية.');
   /* حقول التدريب والقياس لا معنى لها في الغياب — تختفي بدل أن تُترك فارغة */
   const trainingFields = [
     field('الوزن الحالي (كغ)', weightIn),
@@ -525,8 +530,9 @@ async function openLogSessionModal(onDone, prefill = {}) {
   ];
   const syncKind = () => {
     const k = kindSel.value;
-    saveBtn.textContent = k === 'makeup' ? 'حفظ الحصة التعويضية وخصمها من الاشتراك'
+    saveBtn.textContent = k === 'makeup' ? 'حفظ الحصة التعويضية'
       : k === 'absence' ? 'تسجيل الغياب وخصم الحصة' : 'حفظ الحصة وخصمها من الاشتراك';
+    makeupHint.style.display = k === 'makeup' ? '' : 'none';
     absenceField.style.display = k === 'absence' ? '' : 'none';
     trainingFields.forEach((n) => { n.style.display = k === 'absence' ? 'none' : ''; });
   };
@@ -558,7 +564,9 @@ async function openLogSessionModal(onDone, prefill = {}) {
           });
           close();
           toast(res.makeup
-            ? `سُجّلت الحصة التعويضية وخُصمت — متبقي ${res.remaining} حصة من أصل ${res.total}.`
+            ? (res.compensated
+              ? `سُجّلت الحصة التعويضية عن غياب يوم ${res.absenceDate} — بلا خصم جديد (خُصمت يوم الغياب).`
+              : `لا غياب مخصومًا على المتدرب — سُجّلت الحصة التعويضية وخُصمت. متبقي ${res.remaining} من أصل ${res.total}.`)
             : res.absent
               ? `سُجّل الغياب وخُصمت الحصة — متبقي ${res.remaining} حصة من أصل ${res.total}. المتدرب يستحق تعويضًا.`
               : `تم تسجيل الحصة وخصمها — متبقي ${res.remaining} حصة من أصل ${res.total}.`);
@@ -573,6 +581,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
       trainerSel ? field('المدرب المنفّذ (تُنسب له الحصة)', trainerSel) : el('span'),
       el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       absenceField,
+      makeupHint,
       field('التاريخ', dateIn),
       field('ساعة الحصة', timeIn),
       field('المدة (دقيقة)', durIn),
@@ -988,9 +997,10 @@ async function viewTraineePage(root, traineeId) {
   const statTiles = el('div', { class: 'kpis' },
     kpiTile(data.attendance.attended, 'حصة حضرها', 'check'),
     kpiTile(data.attendance.missed, 'غياب', 'alert', data.attendance.missed >= 2 ? 'danger' : undefined),
-    // الغياب المسجَّل كحصة: خُصم من الرصيد ويستحق تعويضًا
-    kpiTile(data.attendance.absenceSessions || 0, 'غياب مخصوم (يستحق تعويضًا)', 'alert',
-      data.attendance.absenceSessions ? 'warn' : undefined),
+    /* الغياب خُصم من الرصيد، وتعويضه لاحقًا بلا خصم جديد — فالرقم المهم
+       هو ما لم يُعوَّض بعد */
+    kpiTile(data.attendance.owedMakeups ?? data.attendance.absenceSessions ?? 0, 'غياب مخصوم بانتظار تعويض', 'alert',
+      (data.attendance.owedMakeups ?? data.attendance.absenceSessions) ? 'warn' : undefined),
     kpiTile(data.attendance.pct !== null ? data.attendance.pct + '%' : '—', 'نسبة الحضور', 'pulse', 'blue'));
   if (data.finance) {
     statTiles.append(
@@ -1377,8 +1387,9 @@ async function openSessionEditModal(onDone, s) {
   const styleIn = input({ value: s.style || '' });
   const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
   const notesIn = textarea({ value: s.notes || '' });
-  /* الأنواع الثلاثة مخصومة من الرصيد — فالتبديل بينها تصحيحُ توسيمٍ
-     واحتسابِ حضور، لا تعديلٌ مالي. */
+  /* التبديل بين الأنواع تصحيحُ توسيمٍ واحتسابِ حضور. والحصة التعويضية
+     المرتبطة بغياب (بلا خصم) لا تُحوَّل — يرفضها الخادم وتُحذف وتُسجَّل
+     من جديد. */
   const kindSel = select([
     ['regular', 'عادية — حضر ونُفّذت'],
     ['makeup', 'تعويض — نُفّذت تعويضًا وتبقى مخصومة'],

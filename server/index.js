@@ -110,7 +110,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
 
 /* من أين وصلنا المتدرب — يُختار عند التسجيل ويظهر في تقرير المبيعات */
 const SOURCE_TYPES = ['social', 'trainee', 'friend', 'new', 'returned', 'trainer'];
@@ -388,6 +388,15 @@ app.post('/api/logout', auth, h(async (req, res) => {
 }));
 
 app.get('/api/me', auth, h(async (req, res) => res.json(publicUser(req.user))));
+
+/* نشرة «ما الجديد»: تُعرض مرة واحدة لكل مستخدم بعد التحديث. الواجهة
+   تُبلّغ الخادم بالإصدار الذي عُرض، فلا تتكرر النشرة على أي جهاز آخر. */
+app.post('/api/me/seen-release', auth, h(async (req, res) => {
+  const version = String(req.body.version || '').trim().slice(0, 20);
+  if (!version) return res.status(400).json({ error: 'رقم الإصدار مطلوب.' });
+  await Store.update('users', req.user.id, { seenRelease: version });
+  res.json({ ok: true, seenRelease: version });
+}));
 
 app.post('/api/me/password', auth, h(async (req, res) => {
   const { current, next } = req.body || {};
@@ -911,10 +920,11 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass, fatMass,
     waist, chest, arm, hips, leg, appointmentId } = req.body;
   const measurements = { weight, bodyFatPct, muscleMass, fatMass, waist, chest, arm, hips, leg };
-  /* أنواع الحصة: عادية · تعويضية · غياب — وكلها تُخصم من رصيد الاشتراك.
-     التعويضية تُخصم أيضًا (بطلب العميل): هي حصة نُفّذت فعلًا وتستهلك من
-     الرصيد، والفرق أنها تُوسم تعويضًا في السجل والتقارير. والغياب يُخصم
-     كذلك لكنه لا يُحتسب حضورًا ولا ساعةَ تدريب. */
+  /* أنواع الحصة: عادية · تعويضية · غياب.
+     الغياب يُخصم من الرصيد (سياسة النادي) ولا يُحتسب حضورًا ولا ساعةَ تدريب.
+     والتعويضية **تحلّ محلّ غياب سبق خصمه**: الحصة اقتُطعت يوم الغياب، فلا
+     تُخصم مرة ثانية عند تنفيذها — وإلا دفع المتدرب حصتين عن موعد واحد.
+     أما التعويضية بلا غياب معلّق فهي حصة نُفّذت فعلًا وتُخصم كالعادية. */
   const kind = ['makeup', 'absence'].includes(req.body.kind) ? req.body.kind : 'regular';
   const absenceReason = kind === 'absence' ? String(req.body.absenceReason || '').slice(0, 200) : null;
   const trainee = await Store.get('users', Number(traineeId));
@@ -930,10 +940,52 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
     if (!target || target.role !== 'trainer') return res.status(400).json({ error: 'المدرب المنفّذ غير موجود.' });
   }
 
+  /* تعويض غياب: نبحث عن أقدم غياب مخصوم لم يُعوَّض بعد. وجودُه يعني أن
+     الحصة اقتُطعت من الرصيد سلفًا، فتُسجَّل التعويضية مرتبطةً به بلا خصم
+     جديد. ويُسمح بها حتى لو انتهى الاشتراك — فالحصة مدفوعة ومستحقة له. */
+  if (kind === 'makeup') {
+    const mine = await Store.find('sessions', { traineeId: trainee.id });
+    const compensated = new Set(mine.filter((s) => s.kind === 'makeup' && s.absenceSessionId).map((s) => s.absenceSessionId));
+    const pending = mine
+      .filter((s) => s.kind === 'absence' && !compensated.has(s.id))
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0];
+
+    if (pending) {
+      const session = await Store.insert('sessions', {
+        traineeId: trainee.id, trainerId, branchId: trainee.branchId,
+        date, time, duration: Number(duration), style: style || '', notes: notes || '',
+        weight: weight ? Number(weight) : null, subscriptionId: pending.subscriptionId || null,
+        kind: 'makeup', absenceSessionId: pending.id,
+        createdAt: new Date().toISOString(),
+      });
+      if (appointmentId) {
+        const appt = await Store.get('appointments', Number(appointmentId));
+        if (appt) await Store.update('appointments', appt.id, { status: 'done', sessionId: session.id });
+      }
+      await notify(trainee.id,
+        `تم تسجيل حصتك التعويضية بتاريخ ${date} عن غياب يوم ${pending.date} — دون خصم جديد (الحصة خُصمت يوم الغياب).`, 'session');
+      const recorded = await recordSessionMeasurements(trainee.id, date, measurements, req.user.id);
+      const measureReminder = await measurementsDue(trainee, trainerId, recorded);
+      const sub = pending.subscriptionId ? await Store.get('subscriptions', pending.subscriptionId) : null;
+      return res.json({
+        session, makeup: true, compensated: true, absenceDate: pending.date,
+        remaining: sub ? sub.totalSessions - sub.usedSessions : null,
+        total: sub ? sub.totalSessions : null,
+        measureReminder,
+      });
+    }
+  }
+
   const subs = (await Store.all('subscriptions'))
     .filter((s) => s.traineeId === trainee.id && subStatus(s) === 'active')
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
-  if (!subs.length) return res.status(400).json({ error: `لا يوجد اشتراك فعّال للمتدرب ${trainee.name} — يرجى التجديد أولًا.` });
+  if (!subs.length) {
+    return res.status(400).json({
+      error: kind === 'makeup'
+        ? `لا يوجد غياب مخصوم بانتظار التعويض للمتدرب ${trainee.name}، ولا اشتراك فعّال تُخصم منه الحصة — يرجى التجديد أولًا.`
+        : `لا يوجد اشتراك فعّال للمتدرب ${trainee.name} — يرجى التجديد أولًا.`,
+    });
+  }
 
   const absent = kind === 'absence';
   const makeup = kind === 'makeup';
@@ -964,9 +1016,9 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   });
 
   await notify(trainee.id, absent
-    ? `سُجّل غياب عن حصة ${date} وخُصمت من رصيدك — متبقي ${result.remaining} حصة من أصل ${result.total}. تواصل معنا لجدولة حصة تعويضية.`
+    ? `سُجّل غياب عن حصة ${date} وخُصمت من رصيدك — متبقي ${result.remaining} حصة من أصل ${result.total}. تواصل معنا لجدولة حصة تعويضية (بلا خصم إضافي).`
     : makeup
-      ? `تم تسجيل حصة تعويضية لك بتاريخ ${date} وخُصمت من رصيدك — متبقي ${result.remaining} حصة من أصل ${result.total}.`
+      ? `تم تسجيل حصة تعويضية لك بتاريخ ${date} — لا غياب مخصومًا عليك، فخُصمت كحصة عادية. متبقي ${result.remaining} من أصل ${result.total}.`
       : `تم تسجيل حصتك بتاريخ ${date} — متبقي ${result.remaining} حصة من أصل ${result.total}.`, 'session');
   if (absent) {
     const admins = await Store.find('users', { role: 'admin' });
@@ -1029,11 +1081,19 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
   ['date', 'time', 'style', 'notes'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   });
-  /* تصحيح النوع بين «عادية» و«تعويض» و«غياب» — ثلاثتها مخصومة من الرصيد
-     فلا يتغيّر الحساب المالي، ويتغيّر فقط توسيم الحصة واحتساب الحضور. */
-  if (req.body.kind !== undefined && ['regular', 'makeup', 'absence'].includes(req.body.kind)) {
+  /* تصحيح النوع بين «عادية» و«تعويض» و«غياب»: تبديلٌ في التوسيم واحتساب
+     الحضور لا في الحساب، لأن الثلاثة مخصومة من الرصيد هنا. أما التعويضية
+     المرتبطة بغياب فهي بلا خصم أصلًا، فتحويلها يقلب الحساب — تُحذف
+     وتُسجَّل من جديد. */
+  if (req.body.kind !== undefined && ['regular', 'makeup', 'absence'].includes(req.body.kind)
+    && req.body.kind !== session.kind) {
+    if (session.absenceSessionId) {
+      return res.status(400).json({ error: 'هذه حصة تعويضية عن غياب مخصوم (بلا خصم) — لا تُحوَّل، احذفها وسجّلها من جديد.' });
+    }
     patch.kind = req.body.kind;
     patch.absenceReason = req.body.kind === 'absence' ? String(req.body.absenceReason || '').slice(0, 200) : null;
+  } else if (req.body.kind === 'absence' && session.kind === 'absence' && req.body.absenceReason !== undefined) {
+    patch.absenceReason = String(req.body.absenceReason || '').slice(0, 200);
   }
   if (req.body.duration !== undefined) patch.duration = Number(req.body.duration) || session.duration;
   if (req.body.weight !== undefined) patch.weight = req.body.weight ? Number(req.body.weight) : null;
@@ -1051,9 +1111,10 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
 }));
 
 /* حذف حصة — الإدارة لأي حصة، والمدرب لحصصه هو (تصحيح إدخال خاطئ).
-   كل حصة مرتبطة باشتراك تُعاد لرصيده مهما كان نوعها (بما فيها التعويضية،
-   إذ صارت تُخصم كغيرها). الحصص التعويضية القديمة سُجّلت بلا اشتراك فلا
-   رصيد لها لتُعاد إليه. */
+   تُعاد الحصة لرصيد اشتراكها إن كانت قد خُصمت منه. والتعويضية المرتبطة
+   بغياب لم تُخصم أصلًا فلا شيء يُعاد — لكن حذفها يُعيد غيابها «بانتظار
+   التعويض» من جديد. ولهذا لا يُحذف غيابٌ عُوِّض قبل حذف تعويضته، وإلا
+   بقيت حصة تعويضية بلا خصم ولا غياب يقابلها. */
 app.delete('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   if (req.user.role === 'trainer') {
     const s = await Store.get('sessions', Number(req.params.id));
@@ -1063,8 +1124,16 @@ app.delete('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (
   const result = await Store.transaction(async (tx) => {
     const session = await tx.get('sessions', Number(req.params.id));
     if (!session) throw Object.assign(new Error('الحصة غير موجودة.'), { status: 404 });
+    if (session.kind === 'absence') {
+      const linked = await tx.find('sessions', { absenceSessionId: session.id });
+      if (linked.length) {
+        throw Object.assign(new Error(
+          `هذا الغياب عُوِّض بحصة يوم ${linked[0].date} — احذف الحصة التعويضية أولًا ثم احذف الغياب.`), { status: 400 });
+      }
+    }
     let refunded = false;
-    if (session.subscriptionId) {
+    // التعويضية المرتبطة بغياب لم تُخصم من الرصيد، فلا تُعاد إليه
+    if (session.subscriptionId && !session.absenceSessionId) {
       const sub = await tx.getForUpdate('subscriptions', session.subscriptionId);
       if (sub && sub.usedSessions > 0) {
         const used = sub.usedSessions - 1;
@@ -1789,10 +1858,15 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const missedCount = absenceSessions.length
     + myAppts.filter((a) => isMissedA(a) && !absenceSessionIds.has(a.sessionId)).length;
   const attendedCount = mySessions.length - absenceSessions.length;
+  /* الغياب الذي لم تُنفَّذ تعويضته بعد — هو وحده «مستحق تعويض»، فالحصة
+     خُصمت يوم الغياب وتعويضها لاحقًا لا يُخصم مرة ثانية. */
+  const compensatedIds = new Set(mySessions.filter((s) => s.absenceSessionId).map((s) => s.absenceSessionId));
+  const owedMakeups = absenceSessions.filter((s) => !compensatedIds.has(s.id)).length;
   const attendance = {
     attended: attendedCount,
     missed: missedCount,
     absenceSessions: absenceSessions.length,
+    owedMakeups,
     pct: (attendedCount + missedCount) ? Math.round((attendedCount / (attendedCount + missedCount)) * 100) : null,
   };
 

@@ -144,6 +144,10 @@ async function renderShell(route, renderView) {
   } catch (e) { /* تجاهل */ }
 
   await renderView(document.getElementById('view'));
+
+  /* نشرة «ما الجديد» بعد اكتمال الصفحة — مرة واحدة لكل مستخدم بعد التحديث.
+     المستخدم الذي عليه تغيير كلمة مروره يراها بعد أن ينتهي من ذلك. */
+  if (!API.user.mustChangePassword) maybeShowWhatsNew();
 }
 
 function toggleTheme() {

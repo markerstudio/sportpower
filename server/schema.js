@@ -55,6 +55,9 @@ const SCHEMA = {
       mfaSecret: col('text'),
       mfaEnrolledAt: col('text'),
       mfaExempt: col('bool'),
+      /* آخر إصدار عُرضت نشرته «ما الجديد» على هذا المستخدم — تظهر مرة
+         واحدة لكل شخص عند أول دخول بعد التحديث، ثم لا تتكرر */
+      seenRelease: col('text'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },
@@ -106,10 +109,14 @@ const SCHEMA = {
       notes: col('text'),
       weight: col('num'),
       subscriptionId: col('int', { ref: ref('subscriptions', 'setnull') }),
-      /* regular = حصة نُفّذت · makeup = تعويضية (تُخصم كالعادية) ·
-         absence = غياب: تُخصم من الرصيد وتُحتسب غيابًا في الحضور والتقارير */
+      /* regular = حصة نُفّذت · absence = غياب: تُخصم من الرصيد وتُحتسب
+         غيابًا في الحضور والتقارير · makeup = تعويضية: تُنفَّذ مقابل غياب
+         سبق خصمه فلا تُخصم مرة ثانية (absenceSessionId يشير إليه)، وإن
+         سُجّلت بلا غياب معلّق خُصمت كالحصة العادية. */
       kind: col('text', { default: "'regular'" }),
       absenceReason: col('text'),
+      /* الغياب الذي تُعوّضه هذه الحصة — وجوده يعني أنها بلا خصم جديد */
+      absenceSessionId: col('int'),
       createdAt: col('text'),
     },
     indexes: [['date'], ['trainerId'], ['traineeId'], ['branchId'], ['branchId', 'date'], ['trainerId', 'date']],
