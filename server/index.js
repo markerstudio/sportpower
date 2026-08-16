@@ -679,7 +679,14 @@ app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'),
   const user = await Store.get('users', req.params.id);
   if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
   if (user.id === req.user.id) return res.status(400).json({ error: 'لا تُصدر بيانات دخول لحسابك — استخدم تغيير كلمة المرور.' });
-  const password = 'sp-' + crypto.randomBytes(4).toString('hex');
+  /* إصدار بيانات الدخول = إعادة تعيين كلمة المرور وقراءتها. لولا هذا القيد
+     لاستطاع المحاسب إصدارها لحساب الإدارة والدخول به — وهو تصعيد صلاحية.
+     فالمحاسب يُصدرها للمتدربين وحدهم، وإعادة تعيين كلمات الموظفين تبقى
+     صلاحية إدارة (PUT /api/users/:id). */
+  if (req.user.role !== 'admin' && user.role !== 'trainee') {
+    return res.status(403).json({ error: 'إصدار بيانات الدخول لحسابات الموظفين صلاحية إدارة — المحاسب يُصدرها للمتدربين فقط.' });
+  }
+  const password = 'sp-' + crypto.randomBytes(6).toString('hex');
   const updated = await Store.update('users', user.id, { password: Store.hashPassword(password), mustChangePassword: true });
   await Store.deleteWhere('tokens', { userId: user.id });
   res.json({
@@ -716,7 +723,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   while (users.some((u) => u.username === username)) {
     username = (digits || 'client') + '-' + crypto.randomBytes(2).toString('hex');
   }
-  const password = 'sp-' + crypto.randomBytes(4).toString('hex');
+  const password = 'sp-' + crypto.randomBytes(6).toString('hex');
 
   const pkg = subscription.packageId ? await Store.get('packages', Number(subscription.packageId)) : null;
 
@@ -1298,9 +1305,11 @@ app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (
 app.get('/api/appointments', auth, h(async (req, res) => {
   let list = await Store.all('appointments');
   if (req.user.role === 'trainer') {
-    // all=1: برنامج الفرع كاملًا (كل المدربين) — وإلا مواعيده هو فقط
-    if (req.query.all) {
-      if (req.user.branchId) list = list.filter((a) => !a.branchId || a.branchId === req.user.branchId);
+    /* all=1: برنامج الفرع كاملًا (كل المدربين) — وإلا مواعيده هو فقط.
+       المدرب غير المسنَد لفرع لا فرعَ يُفتح له، فيبقى على مواعيده هو بدل
+       أن ينكشف له جدول الفروع كلها. */
+    if (req.query.all && req.user.branchId) {
+      list = list.filter((a) => !a.branchId || a.branchId === req.user.branchId);
     } else {
       list = list.filter((a) => a.trainerId === req.user.id);
     }
