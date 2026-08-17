@@ -123,21 +123,26 @@ async function viewPackages(root) {
 
 function packageCard(p, branches, onDone) {
   const features = (p.features || '').split('\n').filter(Boolean);
+  /* فروع الباقة وعملتها: السعر يُعرض بعملة أول فرع تخدمه (باقات عمّان
+     بالدينار وباقات فلسطين بالشيكل)، والباقة العامة بعملة النظام. */
+  const ids = Array.isArray(p.branchIds) && p.branchIds.length ? p.branchIds : (p.branchId ? [p.branchId] : []);
+  const names = ids.map((id) => (branches.find((b) => b.id === id) || {}).name).filter(Boolean);
+  const cur = ids.length ? branchCur(ids[0]) : ACTIVE_CURRENCY;
   return el('div', { class: 'card meal-card pkg-card' + (p.active === false ? ' pkg-card--off' : '') },
     el('div', { class: 'meal-card__head' },
       el('h4', {}, p.name),
       p.active === false ? el('span', { class: 'tag tag--neutral' }, 'موقوفة') : el('span', { class: 'tag tag--accent' }, 'متاحة')),
-    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price) : '—'),
+    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price, cur) : '—'),
     el('div', { class: 'macros' },
       el('span', { class: 'macro' }, el('b', {}, categoryLabel(p.category || 'personal'))),
       el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
       el('span', { class: 'macro' }, 'المدة ', el('b', {}, (p.durationDays || 30) + ' يوم')),
       p.sessionsPerWeek ? el('span', { class: 'macro' }, el('b', {}, String(p.sessionsPerWeek)), ' أسبوعيًا') : '',
-      el('span', { class: 'macro' }, p.branchId ? ((branches.find((b) => b.id === p.branchId) || {}).name || '—') : 'كل الفروع')),
+      el('span', { class: 'macro' }, names.length ? names.join(' · ') : 'كل الفروع')),
     p.description ? el('p', { class: 'meal-card__desc' }, p.description) : '',
     features.length ? el('ul', { class: 'pkg-card__features' }, ...features.map((f) => el('li', {}, f))) : '',
     p.price !== undefined && p.sessions
-      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions))}`)
+      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions), cur)}`)
       : '',
     el('div', { style: 'display:flex;gap:6px;margin-top:auto;flex-wrap:wrap' },
       el('button', { class: 'btn btn--outline btn--sm', onclick: () => openPackageModal(onDone, branches, p) }, 'تعديل'),
@@ -164,7 +169,21 @@ function openPackageModal(onDone, branches, existing) {
   const priceIn = input({ type: 'number', min: 0, value: existing ? existing.price : 1200 });
   const durationIn = input({ type: 'number', min: 1, value: existing ? existing.durationDays || 30 : 30 });
   const perWeekIn = input({ type: 'number', min: 1, max: 7, value: existing ? existing.sessionsPerWeek || '' : 3 });
-  const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: existing ? existing.branchId || '' : '' });
+  /* فروع الباقة: باقات فلسطين لبيت لحم وبيت ساحور، وباقات عمّان لعمّان.
+     بلا اختيار = متاحة لكل الفروع. */
+  const current = existing && Array.isArray(existing.branchIds) ? existing.branchIds
+    : (existing && existing.branchId ? [existing.branchId] : []);
+  const branchBoxes = branches.map((b) => {
+    const chk = input({ type: 'checkbox' });
+    chk.checked = current.includes(b.id);
+    chk.dataset.branch = b.id;
+    return el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' }, chk, b.name);
+  });
+  const branchesField = el('div', { class: 'span-2' },
+    el('div', { class: 'field__label', style: 'margin-bottom:6px' }, 'فروع الباقة (بلا اختيار = كل الفروع)'),
+    el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap' }, ...branchBoxes),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
+      'اختر مجموعة الفروع التي تُباع فيها هذه الباقة — وسعرها يُعرض بعملة الفرع.'));
   const categorySel = select(PACKAGE_CATEGORIES, { value: existing ? existing.category || 'personal' : 'personal' });
   const descIn = textarea({ value: existing ? existing.description : '', placeholder: 'وصف مختصر يظهر للزبون في العقد…' });
   const featuresIn = textarea({ value: existing ? existing.features : '', placeholder: 'ميزة في كل سطر:\nبرنامج تدريبي مخصص\nبرنامج غذائي\nقراءات InBody', style: 'min-height:110px' });
@@ -177,7 +196,9 @@ function openPackageModal(onDone, branches, existing) {
         const body = {
           name: nameIn.value, sessions: sessionsIn.value, price: priceIn.value,
           durationDays: durationIn.value, sessionsPerWeek: perWeekIn.value || null,
-          branchId: branchSel.value || null, category: categorySel.value,
+          branchIds: branchBoxes.filter((l) => l.querySelector('input').checked)
+            .map((l) => Number(l.querySelector('input').dataset.branch)),
+          branchId: null, category: categorySel.value,
           description: descIn.value, features: featuresIn.value,
         };
         try {
@@ -191,7 +212,8 @@ function openPackageModal(onDone, branches, existing) {
       el('div', { class: 'span-2' }, field('اسم الباقة *', nameIn)),
       field('عدد الحصص *', sessionsIn), field(`السعر (${curInfo().name}) *`, priceIn),
       field('مدة الصلاحية (يوم)', durationIn), field('حصص أسبوعيًا', perWeekIn),
-      field('نوع الباقة (يظهر في العقد)', categorySel), field('الفرع', branchSel),
+      el('div', { class: 'span-2' }, field('نوع الباقة (يظهر في العقد)', categorySel)),
+      branchesField,
       el('div', { class: 'span-2' }, field('وصف الباقة', descIn)),
       el('div', { class: 'span-2' }, field('ما تشمله الباقة (ميزة بكل سطر)', featuresIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الباقة'))),
@@ -308,7 +330,7 @@ function traineePackagesCard(data, traineeId, onDone) {
         el('span', { class: 'macro' }, 'الحصص ', el('b', {}, String(sub.totalSessions))),
         el('span', { class: 'macro' }, 'المستخدمة ', el('b', {}, String(sub.usedSessions))),
         el('span', { class: 'macro' }, 'المتبقية ', el('b', {}, String(sub.remaining))),
-        showPrices && sub.price !== undefined ? el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(sub.price))) : '',
+        showPrices && sub.price !== undefined ? el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoneyB(sub.price, sub.branchId))) : '',
         el('span', { class: 'macro' }, 'من ', el('b', {}, sub.startDate)),
         el('span', { class: 'macro' }, 'إلى ', el('b', {}, sub.endDate)),
         statusTag(sub.status, sub.expiring)))
@@ -321,7 +343,7 @@ function traineePackagesCard(data, traineeId, onDone) {
       el('div', { class: 'meal-card__head' },
         el('h4', {}, p.name),
         isCurrent ? el('span', { class: 'tag tag--accent' }, 'باقته الحالية') : ''),
-      showPrices && p.price !== undefined ? el('div', { class: 'pkg-card__price' }, fmtMoney(p.price)) : '',
+      showPrices && p.price !== undefined ? el('div', { class: 'pkg-card__price' }, fmtMoneyB(p.price, data.trainee && data.trainee.branchId)) : '',
       el('div', { class: 'macros' },
         el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
         el('span', { class: 'macro' }, 'المدة ', el('b', {}, (p.durationDays || 30) + ' يوم')),

@@ -434,6 +434,9 @@ const SCHEMA = {
       price: col('num', { notNull: true }),
       durationDays: col('int'),
       branchId: col('int', { ref: ref('branches', 'setnull') }),
+      /* الباقة قد تخدم مجموعة فروع: باقات فلسطين لبيت لحم وبيت ساحور،
+         وباقات عمّان لعمّان. الفارغة = متاحة لكل الفروع. */
+      branchIds: col('json'),
       sessionsPerWeek: col('int'),
       /* نوع الباقة في العقد: personal (تدريب شخصي) · group (تدريب مجموعات) ·
          saver (باقات التوفير) — تُعرض مجمّعة في العقد الإلكتروني */

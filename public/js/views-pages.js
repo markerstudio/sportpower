@@ -1566,7 +1566,7 @@ function openUserEditModal(onDone, user, branches) {
   const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
   /* فروع المحاسب: محاسبة تخدم فرعين تُسنَد لهما فلا ترى غيرهما. بلا اختيار
      = كل الفروع. (محاسبة عمّان مثلًا لا يظهر لها فرعا بيت لحم وبيت ساحور.) */
-  const branchBoxes = user.role === 'accountant'
+  const branchBoxes = ['accountant', 'trainer', 'nutritionist'].includes(user.role)
     ? branches.map((b) => {
       const chk = input({ type: 'checkbox' });
       chk.checked = Array.isArray(user.branchIds) && user.branchIds.includes(b.id);
@@ -1576,10 +1576,12 @@ function openUserEditModal(onDone, user, branches) {
     : null;
   const branchesField = branchBoxes
     ? el('div', { class: 'span-2' },
-      el('div', { class: 'field__label', style: 'margin-bottom:6px' }, 'فروع هذا المحاسب (بلا اختيار = كل الفروع)'),
+      el('div', { class: 'field__label', style: 'margin-bottom:6px' },
+        'الفروع المسؤول عنها (بلا اختيار = كل الفروع)'),
       el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap' }, ...branchBoxes),
       el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
-        'المحاسب المقيَّد لا يرى أرقام غير فروعه: لا اشتراكات ولا دفعات ولا تقارير ولا حتى أسماء فروع أخرى.'))
+        'اختر مجموعة الفروع التي يخدمها: بيت لحم وبيت ساحور معًا مثلًا، أو عمّان وحده. '
+        + 'المقيَّد لا يرى غير فروعه — لا مشتركين ولا اشتراكات ولا دفعات ولا تقارير ولا حتى أسماء فروع أخرى.'))
     : el('span');
 
   const close = modal(`تعديل «${user.name}»`, [

@@ -948,7 +948,9 @@ module.exports = function registerActions(app, { auth, requireRole, h, notify, s
   app.get('/api/action-center', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     /* المدرب يرى قرارات فرعه: التعويضات والغيابات والأوزان والاشتراكات
        المقتربة من الانتهاء ومن بقي بلا هدف — بلا الأرقام المالية. */
-    const branch = req.user.role === 'trainer' ? (req.user.branchId || null) : branchParam(req);
+    const branch = req.user.role === 'trainer'
+      ? (req.branchScope || (req.user.branchId ? [req.user.branchId] : null))
+      : branchParam(req);
     const result = await buildActions({ branch, subStatus });
     if (req.query.status === 'open') result.actions = result.actions.filter((a) => a.status === 'open');
     if (req.user.role === 'trainer') {
@@ -967,7 +969,9 @@ module.exports = function registerActions(app, { auth, requireRole, h, notify, s
   }));
 
   /* تسجيل تنفيذ إجراء: نُفّذ / أُجّل / أُعيد فتحه */
-  app.post('/api/action-center/resolve', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  /* شطب القرار: المدرب أيضًا — مركز قراراته قائمة مهام يُنجزها بنفسه،
+     ويُسجَّل باسمه في السجل كأي منفِّذ. */
+  app.post('/api/action-center/resolve', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     const key = String(req.body.key || '').slice(0, 120);
     const status = req.body.status;
     if (!key) return res.status(400).json({ error: 'مُعرّف الإجراء مطلوب.' });

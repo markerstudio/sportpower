@@ -1982,8 +1982,9 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   if (finance) finance.remaining = Math.max(0, finance.totalDue - finance.totalPaid);
 
   /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
+  // باقات فرعه فقط: باقات فلسطين لفروع فلسطين وباقات عمّان لعمّان
   const availablePackages = packages
-    .filter((p) => p.active !== false && (!p.branchId || p.branchId === trainee.branchId))
+    .filter((p) => p.active !== false && clients.packageServesBranch(p, trainee.branchId))
     .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
     .map(clients.withCategory)
     .map((p) => (showPrices ? p : clients.stripPackagePrice(p)));

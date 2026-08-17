@@ -51,6 +51,19 @@ const clean = (v, max) => String(v === undefined || v === null ? '' : v).trim().
 
 /* أنواع الباقات في العقد — يختار الزبون نوعه أولًا ثم الباقة داخله */
 const PACKAGE_CATEGORIES = ['personal', 'group', 'saver'];
+
+/* فروع الباقة: قائمة نظيفة من المعرّفات، والفارغة تعني «كل الفروع» */
+const cleanBranchIds = (v) => {
+  if (!Array.isArray(v)) return null;
+  const ids = [...new Set(v.map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+  return ids.length ? ids : null;
+};
+/* هل تخدم الباقة هذا الفرع؟ عامة · مُسنَدة له · ضمن مجموعة فروعها */
+const packageServesBranch = (p, branchId) => {
+  if (Array.isArray(p.branchIds) && p.branchIds.length) return p.branchIds.includes(Number(branchId));
+  if (p.branchId) return Number(p.branchId) === Number(branchId);
+  return true;
+};
 const CATEGORY_LABELS = {
   personal: 'تدريب شخصي',
   group: 'تدريب مجموعات',
@@ -66,9 +79,16 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
   app.get('/api/packages', auth, h(async (req, res) => {
     await ensureDefaultPackages();
     let list = await Store.all('packages');
+    /* باقات الفرع: الباقة متاحة له إن كانت عامة، أو مُسنَدة إليه بعينه،
+       أو ضمن مجموعة فروعها (باقات فلسطين مثلًا لفرعَي بيت لحم وبيت ساحور) */
     if (req.query.branch) {
       const b = Number(req.query.branch);
-      list = list.filter((p) => !p.branchId || p.branchId === b);
+      list = list.filter((p) => packageServesBranch(p, b));
+    } else if (req.user.role === 'trainee' && req.user.branchId) {
+      // المشترك لا يُعرض له إلا باقات فرعه
+      list = list.filter((p) => packageServesBranch(p, req.user.branchId));
+    } else if (req.branchScope) {
+      list = list.filter((p) => req.branchScope.some((b) => packageServesBranch(p, b)));
     }
     if (req.query.active === '1' || !canSeePrices(req.user.role)) list = list.filter((p) => p.active !== false);
     if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
@@ -76,6 +96,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     res.json(canSeePrices(req.user.role) ? list : list.map(stripPackagePrice));
   }));
 
+  /* هل تخدم هذه الباقة هذا الفرع؟ */
   app.post('/api/packages', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const { name, sessions, price, durationDays, branchId, sessionsPerWeek, description, features } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم الباقة مطلوب.' });
@@ -84,6 +105,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     res.json(withCategory(await Store.insert('packages', {
       name: clean(name, 120), sessions: Number(sessions), price: Number(price),
       durationDays: Number(durationDays) || 30, branchId: Number(branchId) || null,
+      branchIds: cleanBranchIds(req.body.branchIds),
       sessionsPerWeek: Number(sessionsPerWeek) || null,
       category: PACKAGE_CATEGORIES.includes(req.body.category) ? req.body.category : 'personal',
       description: clean(description, 500), features: clean(features, 1000),
@@ -102,6 +124,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       if (req.body[k] !== undefined && req.body[k] !== '') patch[k] = Number(req.body[k]);
     });
     if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
+    if (req.body.branchIds !== undefined) patch.branchIds = cleanBranchIds(req.body.branchIds);
     if (req.body.active !== undefined) patch.active = !!req.body.active;
     if (PACKAGE_CATEGORIES.includes(req.body.category)) patch.category = req.body.category;
     res.json(withCategory(await Store.update('packages', pkg.id, patch)));
@@ -188,7 +211,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     const expired = contract.expiresAt && contract.expiresAt < todayStr();
     const status = expired && contract.status === 'open' ? 'expired' : contract.status;
     const list = packages
-      .filter((p) => p.active !== false && (!p.branchId || !contract.branchId || p.branchId === contract.branchId))
+      .filter((p) => p.active !== false && (!contract.branchId || packageServesBranch(p, contract.branchId)))
       .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
       .map(withCategory);
 
@@ -336,3 +359,4 @@ module.exports.ensureDefaultPackages = ensureDefaultPackages;
 module.exports.PACKAGE_CATEGORIES = PACKAGE_CATEGORIES;
 module.exports.CATEGORY_LABELS = CATEGORY_LABELS;
 module.exports.withCategory = withCategory;
+module.exports.packageServesBranch = packageServesBranch;
