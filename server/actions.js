@@ -9,6 +9,7 @@
      improve   🟢 إجراءات تحسين  — ترفع الأداء وليست عاجلة
    ============================================================ */
 const Store = require('./store');
+const { matchBranch, branchParam } = require('./scope');
 const ops = require('./ops');
 
 const monthOf = (d) => (d || '').slice(0, 7);
@@ -48,7 +49,12 @@ function readThresholds(settings) {
   return out;
 }
 
-const GOAL_LABELS = { loss: 'نزول وزن', muscle: 'زيادة عضل', maintain: 'تثبيت وزن' };
+const GOAL_LABELS = {
+  loss: 'نزول وزن', fat: 'نزول دهون', muscle: 'بناء كتلة عضلية',
+  football: 'لاعب كرة قدم', athlete: 'لاعب رياضي', therapy: 'علاجي',
+  // قديم — يبقى ليُقرأ في السجلات المسجَّلة قبل توسعة القائمة
+  maintain: 'تثبيت وزن',
+};
 
 /* صياغة عربية سليمة للأعداد (٣–١٠ جمع، وما فوقها مفرد) — والنصوص محايدة الجنس */
 const countLabel = (n, singular, dual, plural) => {
@@ -138,6 +144,9 @@ async function buildActions({ branch, subStatus }) {
     Store.find('tasks', { month }),
   ]);
 
+  // أهداف الشهر — لقياس من بقي من المشتركين بلا هدف تدريبي
+  const monthGoals = await Store.find('traineeGoals', { month });
+
   // تاريخ القياسات الكامل — للمرشحين وحدهم (من لديه قراءة حديثة)
   const candidateIds = [...new Set(inbodyRecent.map((r) => r.traineeId))];
   const inbody = candidateIds.length
@@ -145,16 +154,16 @@ async function buildActions({ branch, subStatus }) {
     : [];
 
   const data = { users, branches, subscriptions, targets, settings, packages, sessions, appointments,
-    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks };
+    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks, monthGoals };
 
   const TH = readThresholds(data.settings[0]);
   const nowIso = new Date().toISOString().slice(0, 16);
-  const inBranch = (x) => !branch || x.branchId === branch;
+  const inBranch = (x) => matchBranch(branch)(x.branchId);
 
   const userById = (id) => data.users.find((u) => u.id === id) || {};
   const branchName = (id) => (data.branches.find((b) => b.id === id) || {}).name || '—';
   const trainees = data.users.filter((u) => u.role === 'trainee' && u.active !== false && inBranch(u));
-  const scopedBranches = data.branches.filter((b) => !branch || b.id === branch);
+  const scopedBranches = data.branches.filter((b) => matchBranch(branch)(b.id));
 
   const actions = [];
   const add = (a) => actions.push(a);
@@ -206,6 +215,44 @@ async function buildActions({ branch, subStatus }) {
       ].filter(Boolean),
     });
   });
+
+  /* ============================================================
+     🟡 مهم — مشترك فعّال بلا هدف تدريبي هذا الشهر
+     الهدف التدريبي هو ما يحوّل الاشتراك إلى خطة؛ ومن مضى عليه شهر بلا
+     هدف يتدرّب بلا وجهة — والمدرب هو المسؤول عن كتابته.
+     ============================================================ */
+  {
+    const withGoal = new Set(data.monthGoals.filter(inBranch).map((g) => g.traineeId));
+    const activeIds = [...new Set(data.subscriptions
+      .filter((s) => subStatus(s) === 'active' && inBranch(s))
+      .map((s) => s.traineeId))];
+    const noGoal = activeIds
+      .map((id) => userById(id))
+      .filter((u) => u.id && u.active !== false && !withGoal.has(u.id));
+
+    noGoal.forEach((trainee) => {
+      // آخر مدرب درّبه فعلًا هو أولى الناس بكتابة هدفه
+      const lastSession = data.sessions
+        .filter((s) => s.traineeId === trainee.id && s.trainerId)
+        .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).pop();
+      const trainer = lastSession ? userById(lastSession.trainerId) : {};
+      add({
+        key: `goal:${trainee.id}:${month}`,
+        type: 'goal', priority: 'important',
+        title: `${trainee.name}: بلا هدف تدريبي في ${month}`,
+        reason: 'مشترك فعّال لم يُكتب له هدف تدريبي هذا الشهر — لا أسلوب ولا عدد حصص ولا نسبة التزام بخطة الأكل ولا تغيّرات مستهدفة.',
+        suggestion: 'اكتب هدفه من ملفه: الأسلوب التدريبي والغاية منه، حصص الشهر، الغيابات المسموحة ومهلة تعويضها، والتزام الأكل والتغيّرات المطلوبة.',
+        ownerLabel: `المسؤول: ${trainer.name || 'مدرب المشترك'}`,
+        owner: { type: 'trainee', id: trainee.id, name: trainee.name, phone: trainee.phone },
+        branchName: branchName(trainee.branchId),
+        metrics: [{ label: 'الشهر', value: month }],
+        actions: [
+          link('فتح ملف المشترك', `#/trainee/${trainee.id}`),
+          trainer.id ? { kind: 'task', label: 'إنشاء مهمة للمدرب', trainerId: trainer.id, title: `كتابة هدف تدريبي لـ${trainee.name} لشهر ${month}` } : null,
+        ].filter(Boolean),
+      });
+    });
+  }
 
   /* ============================================================
      🟡 مهم — عيد ميلاد غدًا (تنبيه قبل يوم بطلب العميل)
@@ -898,10 +945,24 @@ async function buildActions({ branch, subStatus }) {
    المسارات
    ============================================================ */
 module.exports = function registerActions(app, { auth, requireRole, h, notify, subStatus }) {
-  app.get('/api/action-center', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    const branch = req.query.branch ? Number(req.query.branch) : null;
+  app.get('/api/action-center', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+    /* المدرب يرى قرارات فرعه: التعويضات والغيابات والأوزان والاشتراكات
+       المقتربة من الانتهاء ومن بقي بلا هدف — بلا الأرقام المالية. */
+    const branch = req.user.role === 'trainer' ? (req.user.branchId || null) : branchParam(req);
     const result = await buildActions({ branch, subStatus });
     if (req.query.status === 'open') result.actions = result.actions.filter((a) => a.status === 'open');
+    if (req.user.role === 'trainer') {
+      const TRAINER_TYPES = ['absence', 'followup', 'weekly-gap', 'weighing', 'measurements', 'progress', 'renewal', 'goal', 'rating'];
+      result.actions = result.actions.filter((a) => TRAINER_TYPES.includes(a.type));
+      const open = result.actions.filter((a) => a.status === 'open');
+      result.summary = {
+        urgent: open.filter((a) => a.priority === 'urgent').length,
+        important: open.filter((a) => a.priority === 'important').length,
+        improve: open.filter((a) => a.priority === 'improve').length,
+        handled: result.actions.length - open.length,
+        total: result.actions.length,
+      };
+    }
     res.json(result);
   }));
 

@@ -25,6 +25,7 @@ const NAV = {
     ['#/settings', 'الإعدادات والتحكم', 'gear'],
   ],
   trainer: [
+    ['#/actions', 'قراراتي اليومية', 'compass'],
     ['#/trainer', 'لوحتي', 'grid'],
     ['#/calendar', 'مواعيدي', 'calendar'],
     ['#/trainees', 'المتدربون', 'users'],
@@ -249,7 +250,7 @@ async function route() {
     '#/sales': guard(['admin', 'accountant'], viewSales),
     '#/loyalty': guard(['admin', 'accountant'], viewLoyalty),
     '#/points': guard(['trainee'], viewMyPoints),
-    '#/actions': guard(['admin', 'accountant'], viewActionCenter),
+    '#/actions': guard(['admin', 'accountant', 'trainer'], viewActionCenter),
     '#/packages': guard(['admin', 'accountant'], viewPackages),
     '#/ratings': guard(['admin'], viewRatings),
   };

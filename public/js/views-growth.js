@@ -24,7 +24,7 @@ async function viewSales(root) {
     const [leads, summary, branches] = await Promise.all([
       API.get('/api/leads?month=' + state.month),
       API.get('/api/leads/summary?month=' + state.month),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
     ]);
     container.innerHTML = '';
 

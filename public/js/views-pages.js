@@ -135,11 +135,31 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
   /* المدرب أيضًا يختار المدرب: البرنامج اليومي يُوزَّع بين المدربين، وله أن
      يحجز موعدًا على برنامج زميله كما تفعل الإدارة (بطلب العميل). */
   if (isStaff && (!trainers || !trainers.length)) trainers = await API.get('/api/users?role=trainer').catch(() => []);
+  /* الفرع أولًا ثم المدرب: الإدارة تختار الفرع فتنحصر قائمة المدربين في
+     مدربيه — أسرع من البحث في كل مدربي الشركة (بطلب العميل). */
+  const branches = isStaff ? await API.get('/api/branches').then(rememberBranches).catch(() => []) : [];
+  const trainerOf = (id) => trainers.find((t) => t.id === id) || {};
+  const startBranch = existing
+    ? (trainerOf(existing.trainerId).branchId || existing.branchId || '')
+    : (API.user.role === 'trainer' ? (API.user.branchId || '') : '');
+  const branchSel = isStaff && branches.length
+    ? select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: startBranch || '' })
+    : null;
   const trainerSel = isStaff && trainers.length
     ? select(trainers.map((t) => [t.id, t.name]), {
       value: existing ? existing.trainerId : (API.user.role === 'trainer' ? API.user.id : undefined),
     })
     : null;
+  const syncBranch = () => {
+    if (!branchSel || !trainerSel) return;
+    const b = branchSel.value ? Number(branchSel.value) : null;
+    const list = b ? trainers.filter((t) => t.branchId === b) : trainers;
+    const keep = trainerSel.value;
+    trainerSel.innerHTML = '';
+    (list.length ? list : trainers).forEach((t) => trainerSel.append(el('option', { value: t.id }, t.name)));
+    if ([...trainerSel.options].some((o) => o.value === String(keep))) trainerSel.value = keep;
+  };
+  if (branchSel) branchSel.addEventListener('change', syncBranch);
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId || '' : (prefillTraineeId || '') });
   // «تعويض» و«test» (حصة تجريبية) — بطلب العميل في البرنامج اليومي
   const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض'], ['test', 'Test — حصة تجريبية']],
@@ -208,8 +228,9 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         } catch (ex) { toast(ex.message, true); }
       },
     },
+      branchSel ? field('الفرع', branchSel) : el('span'),
       trainerSel ? field('المدرب', trainerSel) : el('span'),
-      field('نوع الحصة', kindSel),
+      el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       manualField,
       traineeField,
       prospectFields,
@@ -248,6 +269,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         }, 'حذف الموعد'))
         : el('span')),
   ]);
+  syncBranch();
   syncKind();
   if (isProspect) {
     prospectFields.style.display = '';
@@ -264,7 +286,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
    ============================================================ */
 async function openOnboardModal(onDone, prefill = {}) {
   const [branches, trainers, packages] = await Promise.all([
-    API.get('/api/branches'),
+    API.get('/api/branches').then(rememberBranches),
     API.get('/api/users?role=trainer'),
     API.get('/api/packages').catch(() => []),
   ]);
@@ -427,7 +449,7 @@ async function viewSubscriptions(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
   const state = { branch: '' };
-  const branches = await API.get('/api/branches').catch(() => []);
+  const branches = await API.get('/api/branches').then(rememberBranches).catch(() => []);
 
   async function render() {
     container.innerHTML = '';
@@ -473,7 +495,7 @@ async function viewSubscriptions(root) {
             el('span', { class: 'num' }, String(s.totalSessions)),
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
-            fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
+            fmtMoneyB(s.price, s.branchId), s.startDate, s.endDate, statusTag(s.status, s.expiring),
             el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
               // تعديل تواريخ الاشتراك وحصصه وقيمته — بطلب العميل من هذه الصفحة مباشرة
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(render, s, byName(s)) }, 'تعديل'),
@@ -584,7 +606,7 @@ async function viewBranches(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [branches, users] = await Promise.all([API.get('/api/branches'), API.get('/api/users')]);
+    const [branches, users] = await Promise.all([API.get('/api/branches').then(rememberBranches), API.get('/api/users')]);
     container.innerHTML = '';
 
     container.append(el('div', { class: 'card filters' },
@@ -683,6 +705,8 @@ function openBranchModal(onDone) {
   const addrIn = input({ placeholder: 'العنوان' });
   const phoneIn = input({ placeholder: 'الهاتف', dir: 'ltr', style: 'text-align:end' });
   const freezeIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا = بلا سقف' });
+  // عملة الفرع: فارغة = عملة النظام الافتراضية
+  const curSel = select([['', 'عملة النظام الافتراضية'], ...Object.entries(CURRENCIES).map(([c, v]) => [c, `${v.name} (${v.symbol})`])]);
   const close = modal('فرع جديد', [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -691,13 +715,13 @@ function openBranchModal(onDone) {
         try {
           await API.post('/api/branches', {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
-            freezeLimit: freezeIn.value || null,
+            freezeLimit: freezeIn.value || null, currency: curSel.value || null,
           });
           toast('تمت إضافة الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
-      field('سقف التجميد المسموح للفرع', freezeIn),
+      field('سقف التجميد المسموح للفرع', freezeIn), field('عملة الفرع', curSel),
       el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'إضافة')),
   ]);
 }
@@ -709,7 +733,7 @@ function openUserModal(onDone, branches, users) {
   const passIn = input({ placeholder: 'كلمة المرور', dir: 'ltr', style: 'text-align:end' });
   const phoneIn = input({ placeholder: '05XXXXXXXX', dir: 'ltr', style: 'text-align:end' });
   const branchSel = select(branches.map((b) => [b.id, b.name]));
-  const goalSel = select([['loss', 'نزول وزن'], ['muscle', 'زيادة عضل'], ['maintain', 'تثبيت وزن']]);
+  const goalSel = select(Object.entries(GOAL_LABELS));
   const specIn = input({ placeholder: 'مثال: قوة وبناء عضل' });
 
   /* المدربون بالتناوب — لا يُسند مدرب ثابت للمتدرب */
@@ -1086,7 +1110,7 @@ async function viewTraineeRoster(root) {
   const state = { branch: '', status: '', cols: new Set(['phone', 'residence']) };
   const container = el('div', { class: 'content' });
   root.append(container);
-  const branches = await API.get('/api/branches').catch(() => []);
+  const branches = await API.get('/api/branches').then(rememberBranches).catch(() => []);
 
   async function render() {
     container.innerHTML = '';
@@ -1162,9 +1186,9 @@ async function viewTraineeRoster(root) {
             s ? el('b', { class: 'num' }, String(s.remaining)) : '—',
             s ? s.startDate : '—', s ? s.endDate : '—',
             s ? statusTag(s.status) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
-            s ? fmtMoney(s.price) : '—', fmtMoney(r.paidCurrent),
-            el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
-            fmtMoney(r.paidTotal)];
+            s ? fmtMoneyB(s.price, r.branchId) : '—', fmtMoneyB(r.paidCurrent, r.branchId),
+            el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoneyB(r.dueCurrent, r.branchId)),
+            fmtMoneyB(r.paidTotal, r.branchId)];
         },
         {
           pageSize: 20, emptyText: 'لا متدربين مطابقين.',
@@ -1207,7 +1231,7 @@ async function viewReports(root) {
     container.append(spinnerCard());
     const [report, branches, kpis, growthReport, health] = await Promise.all([
       API.get(`/api/reports/monthly?month=${state.month}&branch=${state.branch}`),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get('/api/kpi?month=' + state.month).catch(() => []),
       API.get(`/api/reports/growth?month=${state.month}&branch=${state.branch}`).catch(() => null),
       API.get('/api/reports/health?month=' + state.month).catch(() => null),
@@ -1271,6 +1295,9 @@ async function viewReports(root) {
           el('span', { class: 'num', style: b.missed ? 'color:var(--status-danger)' : '' }, String(b.missed)),
           b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
           delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true)]))));
+
+    /* الأهداف التدريبية: إنتاج كل مدرب ومن بقي بلا هدف */
+    container.append(await goalsSummaryCard(state.month, state.branch));
 
     /* نتائج المشتركين ومشاكلهم — قسم ثابت في التقرير الشهري (سرّي عن المتدرب) */
     if (report.flags) {
@@ -1372,7 +1399,7 @@ async function viewSettings(root) {
     container.innerHTML = '';
     container.append(spinnerCard());
     const [branches, users, cfg] = await Promise.all([
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get('/api/users'),
       (API._config = null, API.config()),
     ]);
@@ -1395,7 +1422,8 @@ async function viewSettings(root) {
       el('div', { class: 'filters' },
         field('عملة النظام', currencySel),
         el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:420px' },
-          'تسري العملة على كل المبالغ: الاشتراكات، الدفعات، اللوحات، والتقارير.'))));
+          'هذه العملة الافتراضية للنظام. الفرع الذي له عملة خاصة (من «تعديل الفرع») '
+          + 'تُعرض مبالغه بعملته هو — فتغيير عملة فرع لا يغيّر بقية الفروع.'))));
 
     /* --- 2) الفروع --- */
     container.append(el('div', { class: 'card' },
@@ -1502,6 +1530,8 @@ function openBranchEditModal(onDone, branch) {
   const addrIn = input({ value: branch.address || '' });
   const phoneIn = input({ value: branch.phone || '', dir: 'ltr', style: 'text-align:end' });
   const freezeIn = input({ type: 'number', min: 0, value: branch.freezeLimit ?? '', placeholder: 'اتركه فارغًا = بلا سقف' });
+  const curSel = select([['', 'عملة النظام الافتراضية'], ...Object.entries(CURRENCIES).map(([c, v]) => [c, `${v.name} (${v.symbol})`])],
+    { value: branch.currency || '' });
   const close = modal(`تعديل «${branch.name}»`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -1511,14 +1541,16 @@ function openBranchEditModal(onDone, branch) {
           await API.put('/api/branches/' + branch.id, {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
             freezeLimit: freezeIn.value === '' ? null : freezeIn.value,
+            currency: curSel.value || null,
           });
           toast('تم حفظ الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
-      field('سقف التجميد المسموح للفرع', freezeIn),
+      field('سقف التجميد المسموح للفرع', freezeIn), field('عملة الفرع', curSel),
       el('div', { style: 'font-size:12px;color:var(--app-muted)' },
-        'تجاوز المجمّدين لهذا السقف يظهر بالأحمر في KPI الفروع.'),
+        'تجاوز المجمّدين لهذا السقف يظهر بالأحمر في KPI الفروع. '
+        + 'وعملة الفرع تخصّه وحده — تغييرها لا يمسّ بقية الفروع ولا عملة النظام.'),
       el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ')),
   ]);
 }
@@ -1532,6 +1564,23 @@ function openUserEditModal(onDone, user, branches) {
   const goalSel = user.role === 'trainee' ? select(Object.entries(GOAL_LABELS), { value: user.goal || 'loss' }) : null;
   const residenceIn = user.role === 'trainee' ? input({ value: user.residence || '', placeholder: 'الحي / المنطقة' }) : null;
   const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
+  /* فروع المحاسب: محاسبة تخدم فرعين تُسنَد لهما فلا ترى غيرهما. بلا اختيار
+     = كل الفروع. (محاسبة عمّان مثلًا لا يظهر لها فرعا بيت لحم وبيت ساحور.) */
+  const branchBoxes = user.role === 'accountant'
+    ? branches.map((b) => {
+      const chk = input({ type: 'checkbox' });
+      chk.checked = Array.isArray(user.branchIds) && user.branchIds.includes(b.id);
+      chk.dataset.branch = b.id;
+      return el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' }, chk, b.name);
+    })
+    : null;
+  const branchesField = branchBoxes
+    ? el('div', { class: 'span-2' },
+      el('div', { class: 'field__label', style: 'margin-bottom:6px' }, 'فروع هذا المحاسب (بلا اختيار = كل الفروع)'),
+      el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap' }, ...branchBoxes),
+      el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
+        'المحاسب المقيَّد لا يرى أرقام غير فروعه: لا اشتراكات ولا دفعات ولا تقارير ولا حتى أسماء فروع أخرى.'))
+    : el('span');
 
   const close = modal(`تعديل «${user.name}»`, [
     el('form', {
@@ -1545,6 +1594,10 @@ function openUserEditModal(onDone, user, branches) {
             goal: goalSel ? goalSel.value : undefined,
             residence: residenceIn ? residenceIn.value.trim() || null : undefined,
             specialty: specIn ? specIn.value : undefined,
+            branchIds: branchBoxes
+              ? branchBoxes.filter((l) => l.querySelector('input').checked)
+                .map((l) => Number(l.querySelector('input').dataset.branch))
+              : undefined,
           });
           toast('تم حفظ التعديلات.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
@@ -1556,6 +1609,7 @@ function openUserEditModal(onDone, user, branches) {
       field('الفرع', branchSel),
       goalSel ? field('الهدف', goalSel) : (specIn ? field('التخصص', specIn) : el('span')),
       residenceIn ? field('مكان السكن (الحي/المنطقة)', residenceIn) : el('span'),
+      branchesField,
       el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
         'اسم المستخدم بالإنجليزية والأرقام فقط (ويُسمح بـ . _ -) — أبلغ صاحبه بأي تغيير فهو مفتاح دخوله.'),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
@@ -1635,7 +1689,7 @@ async function viewMyTrainees(root) {
   const [trainees, subs, branches] = await Promise.all([
     API.get('/api/users?role=trainee'),
     API.get('/api/subscriptions'),
-    API.get('/api/branches'),
+    API.get('/api/branches').then(rememberBranches),
   ]);
   container.innerHTML = '';
   const state = { branch: '' };

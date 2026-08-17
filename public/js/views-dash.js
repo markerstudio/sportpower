@@ -182,7 +182,7 @@ async function viewAdminDash(root) {
     container.append(spinnerCard());
     const [data, branches] = await Promise.all([
       API.get(`/api/dashboard/admin?month=${state.month}&branch=${state.branch}`),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
     ]);
     container.innerHTML = '';
 
@@ -283,8 +283,9 @@ async function viewTrainerDash(root) {
     // المتابعة اليومية: سجل اليوم + مهامي (KPI)
     await renderTrainerOps(container);
 
-    // البرامج التدريبية — تُربط تلقائيًا بكل المتدربين
-    await renderTrainerPrograms(container, render);
+    /* الأهداف التدريبية: هدف لكل مشترك — ومن بقي بلا هدف يظهر هنا صراحةً
+       (حلّت محل «البرنامج التدريبي» الواحد الذي كان يُربط بالجميع) */
+    await trainerGoalsCard(container, render);
 
     /* جدول اليوم: برنامج الفرع كاملًا مع اختيار المدرب — لا مواعيد المدرب وحده */
     const schedCard = el('div', { class: 'card' });
@@ -605,7 +606,7 @@ async function viewAccountantDash(root) {
     container.append(spinnerCard());
     const [data, branches, expenses, targets, debts] = await Promise.all([
       API.get(`/api/dashboard/accountant?month=${state.month}&branch=${state.branch}`),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get(`/api/expenses?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')),
       API.get('/api/targets').catch(() => []),
       API.get('/api/debts' + (state.branch ? `?branch=${state.branch}` : '')).catch(() => null),
@@ -951,7 +952,7 @@ async function viewTraineePage(root, traineeId) {
     if (API.user.role === 'admin') {
       actions.append(el('button', {
         class: 'btn btn--outline btn--sm',
-        onclick: async () => openEditTraineeModal(refresh, t, [], await API.get('/api/branches')),
+        onclick: async () => openEditTraineeModal(refresh, t, [], await API.get('/api/branches').then(rememberBranches)),
       }, 'تعديل البيانات'));
     }
     if (['admin', 'accountant'].includes(API.user.role) && data.payments) {
@@ -1003,17 +1004,24 @@ async function viewTraineePage(root, traineeId) {
       (data.attendance.owedMakeups ?? data.attendance.absenceSessions) ? 'warn' : undefined),
     kpiTile(data.attendance.pct !== null ? data.attendance.pct + '%' : '—', 'نسبة الحضور', 'pulse', 'blue'));
   if (data.finance) {
+    // مبالغ المشترك بعملة فرعه (فرع عمّان بالدينار مثلًا)
+    const cur = branchCur(t.branchId);
     statTiles.append(
-      kpiTile(fmtMoney(data.finance.totalPaid), 'إجمالي المدفوع', 'wallet'),
-      kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
+      kpiTile(fmtMoney(data.finance.totalPaid, cur), 'إجمالي المدفوع', 'wallet'),
+      kpiTile(fmtMoney(data.finance.remaining, cur), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
   }
   container.append(statTiles);
 
   /* النتائج والمشاكل — رصد داخلي سرّي (الخادم يُرسل null لحساب المتدرب) */
   if (data.flags) container.append(traineeFlagsCard(data, traineeId, refreshPage));
 
-  /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب) */
-  container.append(traineePackagesCard(data, traineeId, refreshPage));
+  /* الاشتراك والباقات: يفتحها من يريدها ولا تتصدّر الصفحة (بطلب العميل) */
+  const packagesBox = el('details', { class: 'card', style: 'padding:0' },
+    el('summary', {
+      style: 'cursor:pointer;padding:16px 18px;font-family:var(--font-display);font-weight:800;font-size:14px',
+    }, 'الباقات والاشتراكات — اضغط للعرض'),
+    el('div', { style: 'padding:0 4px 4px' }, traineePackagesCard(data, traineeId, refreshPage)));
+  container.append(packagesBox);
 
   /* تقييم الحصص: المتدرب يقيّم حصصه — والنتيجة سرّية تصل للإدارة */
   if (API.user.role === 'trainee' && API.user.id === traineeId) {
@@ -1043,11 +1051,8 @@ async function viewTraineePage(root, traineeId) {
     } catch (e) { /* تجاهل */ }
   }
 
-  /* البرنامج التدريبي — يُربط تلقائيًا بكل المتدربين */
-  try {
-    const programs = await API.get('/api/programs' + (API.user.role === 'trainer' ? '?all=1' : ''));
-    if (programs.length) container.append(programsListCard(programs, 'البرنامج التدريبي'));
-  } catch (e) { /* تجاهل */ }
+  /* الأهداف التدريبية لهذا المشترك وحده */
+  container.append(await traineeGoalsCard(traineeId, refreshPage));
 
   /* تاريخ الاشتراكات + الدفعات */
   const historyGrid = el('div', { class: 'grid-2eq' });
@@ -1061,7 +1066,7 @@ async function viewTraineePage(root, traineeId) {
     dataTable(['الباقة', 'الحصص', 'المستخدم', ...(showPrices ? ['القيمة'] : []), 'من', 'إلى', 'الحالة', ...(canEditSubs ? [''] : [])],
       data.subscriptions.slice().reverse().map((s) => [
         s.packageName || '—', String(s.totalSessions), String(s.usedSessions),
-        ...(showPrices ? [fmtMoney(s.price)] : []),
+        ...(showPrices ? [fmtMoneyB(s.price, s.branchId ?? t.branchId)] : []),
         s.startDate, s.endDate, statusTag(s.status, s.expiring),
         ...(canEditSubs ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
           el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(refreshPage, s, t.name) }, 'تعديل'),
@@ -1081,7 +1086,7 @@ async function viewTraineePage(root, traineeId) {
     historyGrid.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'سجل الدفعات'),
       dataTable(['التاريخ', 'المبلغ', 'الطريقة', 'ملاحظة', ...(isMoneyStaff ? [''] : [])],
-        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount),
+        data.payments.slice().reverse().map((p) => [p.date, fmtMoneyB(p.amount, p.branchId ?? t.branchId),
           p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
           p.note || '—',
           ...(isMoneyStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },

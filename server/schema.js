@@ -23,6 +23,9 @@ const SCHEMA = {
       phone: col('text'),
       /* سقف التجميد المسموح للفرع — يقارَن بعدد المجمّدين فعليًا في KPI الفروع */
       freezeLimit: col('int'),
+      /* عملة الفرع: فرع عمّان بالدينار وفروع فلسطين بالشيكل — تغييرها لفرع
+         لا يمسّ غيره. الفارغة تعني عملة النظام الافتراضية. */
+      currency: col('text'),
     },
     indexes: [],
   },
@@ -62,6 +65,9 @@ const SCHEMA = {
       /* آخر إصدار عُرضت نشرته «ما الجديد» على هذا المستخدم — تظهر مرة
          واحدة لكل شخص عند أول دخول بعد التحديث، ثم لا تتكرر */
       seenRelease: col('text'),
+      /* فروع المحاسب: محاسبة تخدم فرعين تُسنَد لهما معًا فلا ترى غيرهما.
+         فارغة = كل الفروع (للإدارة، ولمحاسب لم يُقيَّد بعد). */
+      branchIds: col('json'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },
@@ -338,6 +344,32 @@ const SCHEMA = {
     indexes: [['contactDate'], ['stage'], ['branchId']],
   },
 
+  /* الهدف التدريبي للمشترك: يُكتب لشخص بعينه لا للجميع — الأسلوب والغاية
+     منه، وكم حصة في الشهر، وكم غيابًا مسموحًا ومهلة تعويضه، ونسبة الالتزام
+     المطلوبة بخطة الأكل، والتغيّرات المستهدفة خلال مدة الهدف. */
+  traineeGoals: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      trainerId: col('int', { ref: ref('users', 'setnull') }),
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
+      title: col('text'),
+      style: col('text'),            // الأسلوب التدريبي
+      purpose: col('text'),          // الهدف من الأسلوب
+      sessionsPerMonth: col('int'),
+      allowedAbsences: col('int'),
+      makeupMonths: col('int'),      // مهلة تعويض الغياب بالأشهر
+      mealCommitPct: col('int'),     // الالتزام المطلوب بخطة الأكل %
+      durationMonths: col('int'),    // مدة الهدف بالأشهر
+      targetChanges: col('text'),    // التغيّرات المطلوبة خلال المدة
+      notes: col('text'),
+      date: col('text', { notNull: true }),
+      month: col('text', { notNull: true }),
+      status: col('text', { default: "'active'" }),
+      createdBy: col('int'),
+    },
+    indexes: [['traineeId'], ['trainerId'], ['branchId'], ['month'], ['trainerId', 'month'], ['traineeId', 'month']],
+  },
+
   programs: {
     columns: {
       trainerId: col('int', { ref: ref('users', 'setnull') }),
@@ -491,7 +523,7 @@ const CREATE_ORDER = [
   'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'pointsLog', 'redemptions',
-  'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',
+  'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'traineeGoals', 'actionLog',
 ];
 
 const COLLECTIONS = CREATE_ORDER.slice();

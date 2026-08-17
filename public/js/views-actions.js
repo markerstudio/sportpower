@@ -18,7 +18,7 @@ const ACTION_TYPE_LABELS = {
   'weekly-gap': 'نقص حصص الأسبوع', pace: 'إيقاع أسرع من الباقة',
   weighing: 'الميزان الأسبوعي', payment: 'متابعة دفعة',
   'trainer-log': 'إدخال المدرب', 'no-input': 'يوم بلا إدخال',
-  birthday: 'عيد ميلاد غدًا',
+  birthday: 'عيد ميلاد غدًا', goal: 'بلا هدف تدريبي',
 };
 
 const THRESHOLD_FIELDS = [
@@ -41,20 +41,25 @@ async function viewActionCenter(root) {
   const state = { branch: '', showHandled: false, priority: '' };
   const container = el('div', { class: 'content' });
   root.append(container);
+  /* المدرب يرى قرارات فرعه للتنفيذ لا للإدارة: بلا فلتر فروع ولا عتبات
+     ولا سجل تنفيذ — تلك أدوات من يدير المتابعة. */
+  const isTrainer = API.user.role === 'trainer';
 
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard('جارٍ تحليل بيانات النظام واستخراج الإجراءات المطلوبة…'));
     const [data, branches, log] = await Promise.all([
       API.get('/api/action-center' + (state.branch ? '?branch=' + state.branch : '')),
-      API.get('/api/branches'),
-      API.get('/api/action-center/log').catch(() => []),
+      isTrainer ? Promise.resolve([]) : API.get('/api/branches').then(rememberBranches),
+      isTrainer ? Promise.resolve([]) : API.get('/api/action-center/log').catch(() => []),
     ]);
-    // مفتاح الدولة لروابط الواتساب
-    try {
-      const st = await API.get('/api/settings');
-      OPS_SETTINGS.waCountryCode = st.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
-    } catch (e) { /* الافتراضي */ }
+    // مفتاح الدولة لروابط الواتساب — الإعدادات للإدارة والمحاسب فقط
+    if (!isTrainer) {
+      try {
+        const st = await API.get('/api/settings');
+        OPS_SETTINGS.waCountryCode = st.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
+      } catch (e) { /* الافتراضي */ }
+    }
     container.innerHTML = '';
 
     /* --- شريط الفلاتر --- */
@@ -65,7 +70,7 @@ async function viewActionCenter(root) {
       value: state.priority, onchange: (e) => { state.priority = e.target.value; render(); },
     });
     container.append(el('div', { class: 'card filters' },
-      field('الفرع', branchSel), field('الأولوية', prioritySel),
+      isTrainer ? el('span') : field('الفرع', branchSel), field('الأولوية', prioritySel),
       el('button', {
         class: 'btn ' + (state.showHandled ? 'btn--accent' : 'btn--outline'),
         onclick: () => { state.showHandled = !state.showHandled; render(); },
@@ -74,8 +79,11 @@ async function viewActionCenter(root) {
 
     /* --- الشرح: لماذا هذه الصفحة --- */
     container.append(el('div', { class: 'alert alert--info' },
-      'هذه ليست لوحة أرقام — النظام يفحص بيانات اليوم ويحوّل كل مشكلة يكتشفها إلى إجراء جاهز للتنفيذ: '
-      + 'لكل بطاقة سبب ظهورها، أولويتها، الشخص أو الفرع المسؤول، وأزرار تنفيذ مباشرة.'));
+      isTrainer
+        ? 'قراراتك اليومية: من غاب ويستحق تعويضًا، من لم يتوزّن، من اقترب اشتراكه من الانتهاء (قبل أسبوع فتجهّز خطته)، '
+          + 'ومن بقي من مشتركيك بلا هدف تدريبي هذا الشهر.'
+        : 'هذه ليست لوحة أرقام — النظام يفحص بيانات اليوم ويحوّل كل مشكلة يكتشفها إلى إجراء جاهز للتنفيذ: '
+          + 'لكل بطاقة سبب ظهورها، أولويتها، الشخص أو الفرع المسؤول، وأزرار تنفيذ مباشرة.'));
 
     /* --- عدّادات الأولويات --- */
     const s = data.summary;
@@ -109,8 +117,8 @@ async function viewActionCenter(root) {
     /* --- عتبات الاكتشاف (المدير) --- */
     if (API.user.role === 'admin') container.append(thresholdsCard(data.thresholds, render));
 
-    /* --- سجل التنفيذ --- */
-    container.append(el('div', { class: 'card' },
+    /* --- سجل التنفيذ (لمن يدير المتابعة) --- */
+    if (!isTrainer) container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'سجل تنفيذ الإجراءات — من نفّذ ومتى'),
       pagedTable(['التاريخ', 'الإجراء', 'الحالة', 'الملاحظة', 'المنفِّذ'],
         log,
@@ -125,6 +133,23 @@ async function viewActionCenter(root) {
   }
 
   await render();
+}
+
+/* غلاف البطاقة بلا أزرار الحالة — يُستعمل لعرض المدرب */
+function acCardShell(a, meta, buttons, controls, handled) {
+  return el('div', { class: 'ac-card ac-card--' + a.priority + (handled ? ' ac-card--handled' : '') },
+    el('div', { class: 'ac-card__head' },
+      el('span', { class: 'tag ' + meta.tag }, meta.emoji + ' ' + meta.title.replace('إجراءات ', '')),
+      ACTION_TYPE_LABELS[a.type] ? el('span', { class: 'tag tag--neutral' }, ACTION_TYPE_LABELS[a.type]) : '',
+      a.branchName ? el('span', { style: 'font-size:12px;color:var(--app-muted)' }, a.branchName) : ''),
+    el('h4', { class: 'ac-card__title' }, a.title),
+    el('div', { class: 'ac-card__reason' }, a.reason),
+    a.suggestion ? el('div', { class: 'ac-card__suggestion' }, '➜ ' + a.suggestion) : '',
+    a.metrics && a.metrics.length
+      ? el('div', { class: 'macros' }, ...a.metrics.map((m) => el('span', { class: 'macro' }, m.label + ' ', el('b', {}, m.value))))
+      : '',
+    buttons.length ? el('div', { class: 'ac-card__actions' }, ...buttons) : '',
+    controls);
 }
 
 /* ============================================================
@@ -155,8 +180,9 @@ function actionCard(a, onDone) {
     return null;
   }).filter(Boolean);
 
-  /* أزرار الحالة */
+  /* أزرار الحالة — تسجيل التنفيذ صلاحية الإدارة والمحاسب */
   const controls = el('div', { class: 'ac-card__controls' });
+  if (API.user.role === 'trainer') return acCardShell(a, meta, buttons, controls, handled);
   if (handled) {
     controls.append(
       el('span', { class: 'tag ' + (a.status === 'snoozed' ? 'tag--warning' : 'tag--accent') },

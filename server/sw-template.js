@@ -16,6 +16,7 @@ const CORE = [
   '/js/api.js',
   '/js/ui.js',
   '/js/whats-new.js',
+  '/js/views-goals.js',
   '/js/views-dash.js',
   '/js/views-pages.js',
   '/js/views-ops.js',

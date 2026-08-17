@@ -13,15 +13,18 @@ const METRIC_OPTIONS = [
    لوحة المتابعة اليومية (الإدارة/المحاسب)
    ============================================================ */
 async function viewDaily(root) {
-  const state = { date: todayISO() };
+  // فرع المتابعة: «أي فرع أتابع اليوم؟» — والمحاسب لا تُعرض له غير فروعه
+  const state = { date: todayISO(), branch: '' };
   const container = el('div', { class: 'content' });
   root.append(container);
+  const branches = await API.get('/api/branches').then(rememberBranches).catch(() => []);
 
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
+    const branchQ = state.branch ? '&branch=' + state.branch : '';
     const [data, trainers] = await Promise.all([
-      API.get('/api/daily?date=' + state.date),
+      API.get(`/api/daily?date=${state.date}${branchQ}`),
       API.user.role === 'admin' ? API.get('/api/users?role=trainer') : Promise.resolve([]),
     ]);
     const tasks = API.user.role === 'admin' || API.user.role === 'accountant'
@@ -29,7 +32,10 @@ async function viewDaily(root) {
     container.innerHTML = '';
 
     const dateIn = input({ type: 'date', value: state.date, onchange: (e) => { state.date = e.target.value; render(); } });
-    const bar = el('div', { class: 'card filters' }, field('اليوم', dateIn));
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
+    const bar = el('div', { class: 'card filters' }, field('اليوم', dateIn), field('الفرع', branchSel));
     if (API.user.role === 'admin') {
       bar.append(el('button', { class: 'btn btn--accent', onclick: () => openTaskModal(render, trainers, state.date) }, '+ مهمة لمدرب'));
     }
@@ -101,7 +107,7 @@ async function viewDaily(root) {
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `الفروع — ${data.date}`),
       dataTable(['الفرع', 'التحصيل', 'جدد', 'تجديد', 'تجميد', 'عائد', 'إلغاء', 'حصص'],
-        data.branches.map((b) => [b.branch, fmtMoney(b.collected),
+        data.branches.map((b) => [b.branch, fmtMoneyB(b.collected, b.branchId),
           String(b.newSubs), String(b.renewals), String(b.freezes), String(b.returns), String(b.cancels), String(b.sessions)]))));
 
     // سجل المدربين اليومي
@@ -193,7 +199,7 @@ async function viewKpi(root) {
     const [targets, kpis, branches, trainers, board] = await Promise.all([
       API.get('/api/targets'),
       API.get('/api/kpi?month=' + state.month),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get('/api/users?role=trainer'),
       API.get(`/api/kpi/board?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')).catch(() => null),
     ]);
@@ -407,7 +413,7 @@ async function viewFrozen(root) {
     container.append(spinnerCard());
     const [rows, branches, settings] = await Promise.all([
       API.get('/api/frozen'),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get('/api/settings'),
     ]);
     OPS_SETTINGS.frozenMessage = settings.frozenMessage || '';

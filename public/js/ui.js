@@ -324,7 +324,12 @@ function progressRing(used, total, caption) {
 
 /* ---------- مساعدات عامة ---------- */
 const ROLE_LABELS = { admin: 'الإدارة', trainer: 'مدرب', accountant: 'محاسب', trainee: 'متدرب', nutritionist: 'أخصائية تغذية' };
-const GOAL_LABELS = { loss: 'نزول وزن', muscle: 'زيادة عضل', maintain: 'تثبيت وزن' };
+const GOAL_LABELS = {
+  loss: 'نزول وزن', fat: 'نزول دهون', muscle: 'بناء كتلة عضلية',
+  football: 'لاعب كرة قدم', athlete: 'لاعب رياضي', therapy: 'علاجي',
+  // قديم — يبقى ليُقرأ في السجلات المسجَّلة قبل توسعة القائمة
+  maintain: 'تثبيت وزن',
+};
 const MEAL_TYPES = { breakfast: 'فطور', lunch: 'غداء', dinner: 'عشاء', snack: 'سناك' };
 const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
@@ -335,8 +340,21 @@ const CURRENCIES = {
   USD: { symbol: '$', name: 'دولار' },
 };
 let ACTIVE_CURRENCY = 'ILS';
-const curInfo = () => CURRENCIES[ACTIVE_CURRENCY] || CURRENCIES.ILS;
-const fmtMoney = (n) => Number(n || 0).toLocaleString('en') + ' ' + curInfo().symbol;
+const curInfo = (code) => CURRENCIES[code || ACTIVE_CURRENCY] || CURRENCIES.ILS;
+const fmtMoney = (n, code) => Number(n || 0).toLocaleString('en') + ' ' + curInfo(code).symbol;
+
+/* عملة كل فرع: فرع عمّان بالدينار وفروع فلسطين بالشيكل — تغيير عملة فرع
+   لا يغيّر النظام كله. تُملأ الخريطة مرة واحدة عند تحميل الفروع، وأي مبلغ
+   يخصّ فرعًا بعينه يُعرض بعملته. */
+const BRANCH_CURRENCY = {};
+function rememberBranchCurrencies(branches) {
+  (branches || []).forEach((b) => { BRANCH_CURRENCY[b.id] = b.currency || null; });
+}
+/* غلاف يُستعمل مع كل طلب للفروع فيحفظ عملاتها ويُعيد القائمة كما هي */
+const rememberBranches = (branches) => { rememberBranchCurrencies(branches); return branches; };
+const branchCur = (branchId) => (branchId != null ? BRANCH_CURRENCY[branchId] : null) || ACTIVE_CURRENCY;
+/* مبلغ يخصّ فرعًا: يُعرض بعملة ذلك الفرع */
+const fmtMoneyB = (n, branchId) => fmtMoney(n, branchCur(branchId));
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonthISO = () => todayISO().slice(0, 7);
 

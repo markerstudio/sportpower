@@ -32,7 +32,7 @@ async function viewPackages(root) {
     const [packages, contracts, branches, settings] = await Promise.all([
       API.get('/api/packages'),
       API.get('/api/contracts'),
-      API.get('/api/branches'),
+      API.get('/api/branches').then(rememberBranches),
       API.get('/api/settings').catch(() => ({})),
     ]);
     OPS_SETTINGS.waCountryCode = settings.waCountryCode || OPS_SETTINGS.waCountryCode || '970';

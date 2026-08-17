@@ -8,6 +8,7 @@
    ============================================================ */
 const crypto = require('crypto');
 const Store = require('./store');
+const { matchBranch, branchParam } = require('./scope');
 const ops = require('./ops');
 
 const monthOf = (d) => (d || '').slice(0, 7);
@@ -149,7 +150,7 @@ async function buildGrowthReport(month, branch, subStatus) {
     : [];
 
   const data = { subscriptions, subEvents, payments, users, expenses, targets, branches, sessions };
-  const inBranch = (x) => !branch || x.branchId === branch;
+  const inBranch = (x) => matchBranch(branch)(x.branchId);
 
   const ev = data.subEvents.filter((e) => inBranch(e) && monthOf(e.date) === month);
   const newCount = ev.filter((e) => e.type === 'new').length;
@@ -200,7 +201,7 @@ async function buildGrowthReport(month, branch, subStatus) {
   // المالية: التحصيل − المصاريف = صافي الربح
   const monthPays = pays.filter((p) => monthOf(p.date) === month);
   const revenue = monthPays.reduce((s, p) => s + p.amount, 0);
-  const monthExpenses = data.expenses.filter((e) => e.month === month && (!branch || e.branchId === branch));
+  const monthExpenses = data.expenses.filter((e) => e.month === month && matchBranch(branch)(e.branchId));
   const expensesTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
 
   // الأهداف: الشهرية (مع الترحيل) + السنوية مقسمة على الأشهر
@@ -412,7 +413,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
      ============================================================ */
   app.get('/api/reports/growth', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    const branch = req.query.branch ? Number(req.query.branch) : null;
+    const branch = branchParam(req);
     res.json(await buildGrowthReport(month, branch, subStatus));
   }));
 

@@ -4,6 +4,7 @@
    لوحة المتابعة اليومية، سجل المجمدين (استيراد Excel + واتساب)
    ============================================================ */
 const Store = require('./store');
+const { matchBranch, branchParam } = require('./scope');
 
 const monthOf = (d) => (d || '').slice(0, 7);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -302,12 +303,12 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('programs'),
     ]);
 
-    const inBranch = (x) => !branch || x.branchId === branch;
+    const inBranch = (x) => matchBranch(branch)(x.branchId);
     const sessions = sessionsAll.filter(delivered).filter(inBranch);
     const absences = sessionsAll.filter((s) => !delivered(s)).filter(inBranch);
     const scopedPayments = payments.filter((p) => p.subscriptionId != null && inBranch(p));
     const scopedEvents = subEvents.filter(inBranch);
-    const scopedBranches = branches.filter((b) => !branch || b.id === branch);
+    const scopedBranches = branches.filter((b) => matchBranch(branch)(b.id));
     const trainees = users.filter((u) => u.role === 'trainee');
     const traineeById = Object.fromEntries(trainees.map((t) => [t.id, t]));
 
@@ -397,7 +398,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     }));
 
     /* ---------- المبيعات ---------- */
-    const scopedLeads = leads.filter((l) => !branch || l.branchId === branch);
+    const scopedLeads = leads.filter((l) => matchBranch(branch)(l.branchId));
     const subscribed = scopedLeads.filter((l) => l.stage === 'subscribed').length;
     const sales = {
       newNumbers: scopedLeads.length,
@@ -423,7 +424,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
   app.get('/api/kpi/board', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    const branch = req.query.branch ? Number(req.query.branch) : null;
+    const branch = branchParam(req);
     res.json(await buildKpiBoard(month, branch));
   }));
 
@@ -432,6 +433,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
      ============================================================ */
   app.get('/api/daily', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const date = req.query.date || todayStr();
+    /* فرع المتابعة: يختاره المستخدم من الصفحة، ومحاسب الفرع لا يرى غير فروعه */
+    const branch = branchParam(req);
+    const mb = matchBranch(branch);
     const nowIso = new Date().toISOString().slice(0, 16).replace('T', 'T');
     /* لوحة يوم واحد: كل الجداول الكبيرة تُصفّى بالتاريخ في القاعدة،
        عدا المواعيد فنحتاج نافذة 30 يومًا لرصد الغياب المتكرر. */
@@ -447,9 +451,15 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('users'),
       Store.all('branches'),
     ]);
-    const sessions = allDaySessions.filter(delivered);
-    const daySessionAbsences = allDaySessions.filter((s) => !delivered(s));
-    const data = { payments, subEvents, sessions, users, branches, trainerLogs, tasks };
+    const scopedDay = allDaySessions.filter((s) => mb(s.branchId));
+    const sessions = scopedDay.filter(delivered);
+    const daySessionAbsences = scopedDay.filter((s) => !delivered(s));
+    const scopedDayAppts = dayAppts.filter((a) => mb(a.branchId));
+    const data = {
+      payments: payments.filter((p) => mb(p.branchId)),
+      subEvents: subEvents.filter((e) => mb(e.branchId)),
+      sessions, users, branches: branches.filter((b) => mb(b.id)), trainerLogs, tasks,
+    };
 
     // التحصيل اليومي لكل فرع
     const branchRows = data.branches.map((b) => {
@@ -472,17 +482,17 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const attendance = {
       sessions: data.sessions.length,
       uniqueTrainees: new Set(data.sessions.map((s) => s.traineeId)).size,
-      scheduled: dayAppts.length,
-      done: dayAppts.filter((a) => a.status === 'done').length,
+      scheduled: scopedDayAppts.length,
+      done: scopedDayAppts.filter((a) => a.status === 'done').length,
       missed: daySessionAbsences.length
-        + dayAppts.filter((a) => isMissed(a, nowIso) && !absSessionIds.has(a.sessionId)).length,
+        + scopedDayAppts.filter((a) => isMissed(a, nowIso) && !absSessionIds.has(a.sessionId)).length,
       absenceSessions: daySessionAbsences.length,
     };
 
     // من غاب أكثر من مرة خلال 30 يومًا → تنبيه للإدارة ومدرب الحصص
     const missedByTrainee = {};
     // مواعيد الـ Test لزوّار بلا حساب لا تدخل تنبيهات الغياب المتكرر — لا ملف لهم
-    windowAppts.filter((a) => a.traineeId && isMissed(a, nowIso))
+    windowAppts.filter((a) => a.traineeId && mb(a.branchId) && isMissed(a, nowIso))
       .forEach((a) => { (missedByTrainee[a.traineeId] = missedByTrainee[a.traineeId] || []).push(a); });
     const absentees = Object.entries(missedByTrainee)
       .filter(([, list]) => list.length >= 2)
@@ -516,7 +526,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     }
 
     // سجلات المدربين اليومية + إحصاءاتهم التلقائية + مهام اليوم
-    const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false);
+    const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false && mb(u.branchId));
     const trainerRows = trainers.map((t) => {
       const log = data.trainerLogs.find((l) => l.trainerId === t.id) || {};
       const ds = data.sessions.filter((s) => s.trainerId === t.id);
@@ -542,7 +552,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const mmdd = (d) => (d || '').slice(5, 10);
     const tomorrow = new Date(new Date(date + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
     const birthdays = data.users
-      .filter((u) => u.role === 'trainee' && u.active !== false && u.birthDate)
+      .filter((u) => u.role === 'trainee' && u.active !== false && u.birthDate && mb(u.branchId))
       .filter((u) => [mmdd(tomorrow), mmdd(date)].includes(mmdd(u.birthDate)))
       .map((u) => ({
         traineeId: u.id, name: u.name, phone: u.phone || '', birthDate: u.birthDate,
@@ -566,6 +576,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         cancels: branchRows.reduce((s, b) => s + b.cancels, 0),
         returns: branchRows.reduce((s, b) => s + b.returns, 0),
       },
+      branch: Array.isArray(branch) ? null : branch,
       branches: branchRows, attendance, absentees, trainerRows,
       noInput, trainersMissingLog, birthdays,
     });
