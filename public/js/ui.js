@@ -374,8 +374,32 @@ const CURRENCIES = {
   USD: { symbol: '$', name: 'دولار' },
 };
 let ACTIVE_CURRENCY = 'ILS';
-const curInfo = () => CURRENCIES[ACTIVE_CURRENCY] || CURRENCIES.ILS;
-const fmtMoney = (n) => Number(n || 0).toLocaleString('en') + ' ' + curInfo().symbol;
+/* عملة كل فرع — تُملأ من /api/branches عند رسم الصفحة.
+   الفرع بلا عملة يتبع عملة النظام. */
+const BRANCH_CURRENCY = {};
+const curInfo = (code) => CURRENCIES[code || ACTIVE_CURRENCY] || CURRENCIES.ILS;
+const branchCurrency = (branchId) => BRANCH_CURRENCY[branchId] || ACTIVE_CURRENCY;
+
+/* fmtMoney(1200) → بعملة النظام · fmtMoney(1200, 3) → بعملة الفرع ٣
+   · fmtMoney(1200, 'JOD') → بعملة بعينها */
+function fmtMoney(n, where) {
+  const code = typeof where === 'number' ? branchCurrency(where) : where;
+  return Number(n || 0).toLocaleString('en') + ' ' + curInfo(code).symbol;
+}
+
+/* مبالغ بعملات مختلفة: «١٢٠٠ ₪ · ٣٠٠ د.أ» — لا تُجمع في رقم واحد،
+   فجمع الدينار على الشيكل يعطي رقمًا لا يعني شيئًا. يقبل أيضًا رقمًا
+   مفردًا توافقًا مع الشاشات التي لم تنتقل بعد. */
+function fmtMoneyMap(byCurrency) {
+  if (byCurrency === null || byCurrency === undefined) return fmtMoney(0);
+  if (typeof byCurrency !== 'object') return fmtMoney(byCurrency);
+  const parts = Object.entries(byCurrency).filter(([, v]) => Number(v));
+  if (!parts.length) return fmtMoney(0);
+  return parts.map(([code, v]) => fmtMoney(v, code)).join(' · ');
+}
+/* هل يتجاوز المجموع عملةً واحدة؟ (لتنبيه الواجهة أن الرقم غير قابل للجمع) */
+const isMultiCurrency = (m) => !!m && typeof m === 'object'
+  && Object.values(m).filter((v) => Number(v)).length > 1;
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const thisMonthISO = () => todayISO().slice(0, 7);
 

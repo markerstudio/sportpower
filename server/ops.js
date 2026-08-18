@@ -99,7 +99,10 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
   }
 }
 
-module.exports = function registerOps(app, { auth, requireRole, h, notify, subStatus }) {
+module.exports = function registerOps(app, { auth, requireRole, h, notify, subStatus,
+  scopedBranchIds, branchWhere, scopeFilter, branchAllowed, denyOutOfScope }) {
+  /* نطاق الفروع: null = الكل. تُستعمل هنا كما في بقية الوحدات. */
+  const inScopeList = (scope, id) => !scope || scope.includes(Number(id));
   /* ============================================================
      أولًا: المتابعة اليومية للمدرب (حضور/انصراف + إنتاج المحتوى)
      ============================================================ */
@@ -107,6 +110,15 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     let logs = await Store.all('trainerLogs');
     if (req.user.role === 'trainer') logs = logs.filter((l) => l.trainerId === req.user.id);
     else if (!['admin', 'accountant'].includes(req.user.role)) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
+    else {
+      // سجل المدرب لا يحمل فرعًا — ننسبه لفرع صاحبه
+      const myBranches = scopedBranchIds(req);
+      if (myBranches) {
+        const mine = new Set((await Store.find('users', { role: 'trainer' }))
+          .filter((u) => inScopeList(myBranches, u.branchId)).map((u) => u.id));
+        logs = logs.filter((l) => mine.has(l.trainerId));
+      }
+    }
     if (req.query.trainer) logs = logs.filter((l) => l.trainerId === Number(req.query.trainer));
     if (req.query.date) logs = logs.filter((l) => l.date === req.query.date);
     if (req.query.month) logs = logs.filter((l) => monthOf(l.date) === req.query.month);
@@ -201,6 +213,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const data = await Store.load('targets', 'payments', 'sessions', 'subscriptions', 'subEvents', 'users', 'branches');
     let targets = data.targets;
     if (req.query.period) targets = targets.filter((t) => t.period === req.query.period);
+    // المحاسب المقيَّد يرى أهداف فروعه — لا أهداف الشركة ولا الفروع الأخرى
+    const myBranches = scopedBranchIds(req);
+    if (myBranches) targets = targets.filter((t) => t.scope === 'branch' && inScopeList(myBranches, t.refId));
     res.json(targets.map((t) => {
       const actual = computeActual(t, { ...data, subStatus });
       const effective = effectiveTarget(t, data.targets, data, subStatus);
@@ -280,7 +295,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const kpis = await computeKpis(month);
     if (req.user.role === 'trainer') return res.json(kpis.filter((k) => k.trainerId === req.user.id));
     if (!['admin', 'accountant'].includes(req.user.role)) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
-    res.json(kpis);
+    res.json(kpis.filter(scopeFilter(req)));
   }));
 
   /* ============================================================
@@ -288,6 +303,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
        المدرب · الفرع · المحاسب (بالفرع) · المبيعات
      كل رقم فيها مشتقّ من بيانات النظام لا من إدخال يدوي.
      ============================================================ */
+  /* النطاق قائمةُ فروع لا فرعًا واحدًا — محاسبةٌ قد تتولى فرعين */
   async function buildKpiBoard(month, branch) {
     const period = { gte: month + '-01', lte: month + '-31' };
     const [users, branches, subscriptions, sessionsAll, payments, subEvents,
@@ -321,12 +337,12 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       : [payments, sessionsAll, subEvents];
     const periodData = { payments: yearPayments, sessions: yearSessions, subscriptions, subEvents: yearEvents };
 
-    const inBranch = (x) => !branch || x.branchId === branch;
+    const inBranch = (x) => inScopeList(branch, x.branchId);
     const sessions = sessionsAll.filter(delivered).filter(inBranch);
     const absences = sessionsAll.filter((s) => !delivered(s)).filter(inBranch);
     const scopedPayments = payments.filter((p) => p.subscriptionId != null && inBranch(p));
     const scopedEvents = subEvents.filter(inBranch);
-    const scopedBranches = branches.filter((b) => !branch || b.id === branch);
+    const scopedBranches = branches.filter((b) => inScopeList(branch, b.id));
     const trainees = users.filter((u) => u.role === 'trainee');
     const traineeById = Object.fromEntries(trainees.map((t) => [t.id, t]));
 
@@ -423,7 +439,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     }));
 
     /* ---------- المبيعات ---------- */
-    const scopedLeads = leads.filter((l) => !branch || l.branchId === branch);
+    const scopedLeads = leads.filter((l) => inScopeList(branch, l.branchId));
     const subscribed = scopedLeads.filter((l) => l.stage === 'subscribed').length;
     const sales = {
       newNumbers: scopedLeads.length,
@@ -444,13 +460,12 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       return acc;
     }, {});
 
-    return { month, branch: branch || null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition };
+    return { month, branch: branch && branch.length === 1 ? branch[0] : null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition };
   }
 
   app.get('/api/kpi/board', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    const branch = req.query.branch ? Number(req.query.branch) : null;
-    res.json(await buildKpiBoard(month, branch));
+    res.json(await buildKpiBoard(month, scopedBranchIds(req)));
   }));
 
   /* ============================================================
@@ -458,6 +473,10 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
      ============================================================ */
   app.get('/api/daily', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const date = req.query.date || todayStr();
+    /* «المتابعة اليومية اختار الفرع الي بدي اتابعه» — واللوحة تحترم أيضًا
+       فروع المحاسب المقيَّد فلا يرى يوم فرعٍ ليس له. */
+    const myBranches = scopedBranchIds(req);
+    const inBranch = (x) => inScopeList(myBranches, x && x.branchId);
     const nowIso = new Date().toISOString().slice(0, 16).replace('T', 'T');
     /* لوحة يوم واحد: كل الجداول الكبيرة تُصفّى بالتاريخ في القاعدة،
        عدا المواعيد فنحتاج نافذة 30 يومًا لرصد الغياب المتكرر. */
@@ -473,9 +492,18 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('users'),
       Store.all('branches'),
     ]);
-    const sessions = allDaySessions.filter(delivered);
-    const daySessionAbsences = allDaySessions.filter((s) => !delivered(s));
-    const data = { payments, subEvents, sessions, users, branches, trainerLogs, tasks };
+    const sessions = allDaySessions.filter(delivered).filter(inBranch);
+    const daySessionAbsences = allDaySessions.filter((s) => !delivered(s)).filter(inBranch);
+    const data = {
+      payments: payments.filter(inBranch),
+      subEvents: subEvents.filter(inBranch),
+      sessions, users, trainerLogs, tasks,
+      branches: branches.filter((b) => inScopeList(myBranches, b.id)),
+    };
+    const scopedTraineeIds = new Set(users
+      .filter((u) => u.role === 'trainee' && inScopeList(myBranches, u.branchId)).map((u) => u.id));
+    const inScopeAppt = (a) => inScopeList(myBranches, a.branchId)
+      || (a.traineeId && scopedTraineeIds.has(a.traineeId));
 
     // التحصيل اليومي لكل فرع
     const branchRows = data.branches.map((b) => {
@@ -494,21 +522,22 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     });
 
     // حضور وغياب اليوم — الغياب المسجَّل كحصة يُعلِّم موعده أيضًا فلا يُعدّ مرتين
+    const scopedDayAppts = dayAppts.filter(inScopeAppt);
     const absSessionIds = new Set(daySessionAbsences.map((s) => s.id));
     const attendance = {
       sessions: data.sessions.length,
       uniqueTrainees: new Set(data.sessions.map((s) => s.traineeId)).size,
-      scheduled: dayAppts.length,
-      done: dayAppts.filter((a) => a.status === 'done').length,
+      scheduled: scopedDayAppts.length,
+      done: scopedDayAppts.filter((a) => a.status === 'done').length,
       missed: daySessionAbsences.length
-        + dayAppts.filter((a) => isMissed(a, nowIso) && !absSessionIds.has(a.sessionId)).length,
+        + scopedDayAppts.filter((a) => isMissed(a, nowIso) && !absSessionIds.has(a.sessionId)).length,
       absenceSessions: daySessionAbsences.length,
     };
 
     // من غاب أكثر من مرة خلال 30 يومًا → تنبيه للإدارة ومدرب الحصص
     const missedByTrainee = {};
     // مواعيد الـ Test لزوّار بلا حساب لا تدخل تنبيهات الغياب المتكرر — لا ملف لهم
-    windowAppts.filter((a) => a.traineeId && isMissed(a, nowIso))
+    windowAppts.filter((a) => a.traineeId && inScopeAppt(a) && isMissed(a, nowIso))
       .forEach((a) => { (missedByTrainee[a.traineeId] = missedByTrainee[a.traineeId] || []).push(a); });
     const absentees = Object.entries(missedByTrainee)
       .filter(([, list]) => list.length >= 2)
@@ -542,7 +571,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     }
 
     // سجلات المدربين اليومية + إحصاءاتهم التلقائية + مهام اليوم
-    const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false);
+    const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false
+      && inScopeList(myBranches, u.branchId));
     const trainerRows = trainers.map((t) => {
       const log = data.trainerLogs.find((l) => l.trainerId === t.id) || {};
       const ds = data.sessions.filter((s) => s.trainerId === t.id);
@@ -568,7 +598,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const mmdd = (d) => (d || '').slice(5, 10);
     const tomorrow = new Date(new Date(date + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
     const birthdays = data.users
-      .filter((u) => u.role === 'trainee' && u.active !== false && u.birthDate)
+      .filter((u) => u.role === 'trainee' && u.active !== false && u.birthDate
+        && inScopeList(myBranches, u.branchId))
       .filter((u) => [mmdd(tomorrow), mmdd(date)].includes(mmdd(u.birthDate)))
       .map((u) => ({
         traineeId: u.id, name: u.name, phone: u.phone || '', birthDate: u.birthDate,
@@ -584,6 +615,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     res.json({
       date,
+      branch: req.query.branch ? Number(req.query.branch) : null,
       totals: {
         collected: branchRows.reduce((s, b) => s + b.collected, 0),
         newSubs: branchRows.reduce((s, b) => s + b.newSubs, 0),
@@ -604,12 +636,18 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
   app.get('/api/frozen', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const { frozen, branches } = await Store.load('frozen', 'branches');
-    res.json(frozen.map((f) => ({ ...f, branchName: f.branchId ? (branches.find((b) => b.id === f.branchId) || {}).name : f.branchText || '—' })));
+    const myBranches = scopedBranchIds(req);
+    /* سجل بلا فرع (استيراد قديم بنصّ الفرع) يبقى ظاهرًا للإدارة وحدها —
+       نسبته غير مؤكدة فلا يُعرض لمحاسب فرعٍ بعينه. */
+    res.json(frozen
+      .filter((f) => !myBranches || myBranches.includes(Number(f.branchId)))
+      .map((f) => ({ ...f, branchName: f.branchId ? (branches.find((b) => b.id === f.branchId) || {}).name : f.branchText || '—' })));
   }));
 
   app.post('/api/frozen', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const { name, phone, birthDate, branchId, lastSubDate, reason } = req.body;
     if (!name) return res.status(400).json({ error: 'الاسم مطلوب.' });
+    if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
     res.json(await Store.insert('frozen', {
       name, phone: phone || '', birthDate: birthDate || null, branchId: Number(branchId) || null,
       branchText: null, lastSubDate: lastSubDate || null, freezeDate: todayStr(), reason: reason || '',
@@ -620,6 +658,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   app.put('/api/frozen/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const row = await Store.get('frozen', req.params.id);
     if (!row) return res.status(404).json({ error: 'السجل غير موجود.' });
+    if (!branchAllowed(req.user, row.branchId)) return denyOutOfScope(res);
     const patch = {};
     if (req.body.status !== undefined) {
       if (!FROZEN_STATUSES.includes(req.body.status)) return res.status(400).json({ error: 'حالة غير صحيحة.' });

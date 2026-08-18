@@ -15,6 +15,14 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const thisMonthStr = () => todayStr().slice(0, 7);
 const round1 = (n) => Math.round(n * 10) / 10;
 
+/* نطاق الفروع: قائمةُ فروع (نطاق المحاسب قد يضمّ فرعين) أو null = الكل.
+   يُقبل الرقم المفرد أيضًا توافقًا مع نداءات قديمة. */
+const asScope = (branch) => (branch == null ? null : (Array.isArray(branch) ? branch : [branch]).map(Number));
+const inScopeList = (scope, id) => !scope || scope.includes(Number(id));
+/* شرط القاعدة: فرعٌ واحد يُطابَق مباشرةً، وعدةُ فروع بـ IN */
+const scopeWhere = (scope, field = 'branchId') => (!scope ? {}
+  : { [field]: scope.length === 1 ? scope[0] : { in: scope } });
+
 /* نقاط الولاء الفعلية من الإعدادات (مع افتراضيات) */
 async function loyaltyPts() {
   const rows = await Store.all('settings');
@@ -123,11 +131,12 @@ async function ensureReferralCode(user) {
 /* ============================================================
    تقرير النمو الشهري — وفق مؤشرات ملف الشركة
    ============================================================ */
-async function buildGrowthReport(month, branch, subStatus) {
+async function buildGrowthReport(month, branchArg, subStatus) {
+  const branch = asScope(branchArg);
   const year = month.slice(0, 4);
   // السنة السابقة مشمولة لأن ترحيل الهدف قد يعود حتى 12 شهرًا (ويعبر رأس السنة)
   const prevYear = String(Number(year) - 1);
-  const scope = branch ? { branchId: branch } : {};
+  const scope = scopeWhere(branch);
   /* الأهداف السنوية تُحسب شهرًا بشهر، فنحتاج نافذة السنة — لا التاريخ كله.
      أما LTV (إجمالي ما دفعه العميل طوال بقائه) فيُحسب بتجميع في القاعدة. */
   const [subscriptions, subEvents, users, expenses, targets, branches, payments, lifetimePaid, payerCount] = await Promise.all([
@@ -149,7 +158,7 @@ async function buildGrowthReport(month, branch, subStatus) {
     : [];
 
   const data = { subscriptions, subEvents, payments, users, expenses, targets, branches, sessions };
-  const inBranch = (x) => !branch || x.branchId === branch;
+  const inBranch = (x) => inScopeList(branch, x.branchId);
 
   const ev = data.subEvents.filter((e) => inBranch(e) && monthOf(e.date) === month);
   const newCount = ev.filter((e) => e.type === 'new').length;
@@ -200,12 +209,12 @@ async function buildGrowthReport(month, branch, subStatus) {
   // المالية: التحصيل − المصاريف = صافي الربح
   const monthPays = pays.filter((p) => monthOf(p.date) === month);
   const revenue = monthPays.reduce((s, p) => s + p.amount, 0);
-  const monthExpenses = data.expenses.filter((e) => e.month === month && (!branch || e.branchId === branch));
+  const monthExpenses = data.expenses.filter((e) => e.month === month && inScopeList(branch, e.branchId));
   const expensesTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
 
   // الأهداف: الشهرية (مع الترحيل) + السنوية مقسمة على الأشهر
   const scopedTargets = data.targets.filter((t) => (t.scope === 'company' && !branch)
-    || (t.scope === 'branch' && (branch ? t.refId === branch : true)));
+    || (t.scope === 'branch' && inScopeList(branch, t.refId)));
   const nameOf = (t) => (t.scope === 'company' ? 'الشركة كاملة' : (data.branches.find((b) => b.id === t.refId) || {}).name || '—');
   const monthlyGoals = scopedTargets.filter((t) => t.period === month).map((t) => {
     const actual = ops.computeActual(t, { ...data, subStatus }) || 0;
@@ -371,14 +380,16 @@ function leadsSummary(leads, month) {
   };
 }
 
-module.exports = function registerGrowth(app, { auth, requireRole, h, notify, subStatus }) {
+module.exports = function registerGrowth(app, { auth, requireRole, h, notify, subStatus,
+  scopedBranchIds, scopeFilter, branchAllowed, denyOutOfScope }) {
   /* ============================================================
      المصاريف الشهرية (المحاسب/الإدارة)
      ============================================================ */
   app.get('/api/expenses', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     let list = await Store.all('expenses');
     if (req.query.month) list = list.filter((e) => e.month === req.query.month);
-    if (req.query.branch) list = list.filter((e) => e.branchId === Number(req.query.branch));
+    // المصروف بلا فرع مصروفُ شركةٍ — يخصّ الإدارة لا محاسب فرع
+    list = list.filter(scopeFilter(req));
     res.json(list);
   }));
 
@@ -386,6 +397,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
     const { month, branchId, category, label, amount, note } = req.body || {};
     if (!/^\d{4}-\d{2}$/.test(month || '')) return res.status(400).json({ error: 'الشهر مطلوب بصيغة YYYY-MM.' });
     if (!label || !amount || Number(amount) <= 0) return res.status(400).json({ error: 'البيان والمبلغ مطلوبان.' });
+    if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
     res.json(await Store.insert('expenses', {
       month, branchId: Number(branchId) || null, category: category || 'أخرى',
       label, amount: Number(amount), note: note || '', createdBy: req.user.id,
@@ -395,6 +407,8 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
   app.put('/api/expenses/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const row = await Store.get('expenses', req.params.id);
     if (!row) return res.status(404).json({ error: 'المصروف غير موجود.' });
+    if (!branchAllowed(req.user, row.branchId)) return denyOutOfScope(res);
+    if (req.body.branchId !== undefined && !branchAllowed(req.user, Number(req.body.branchId) || null)) return denyOutOfScope(res);
     const patch = {};
     ['month', 'category', 'label', 'note'].forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
     if (req.body.amount !== undefined) patch.amount = Number(req.body.amount);
@@ -403,7 +417,10 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
   }));
 
   app.delete('/api/expenses/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    await Store.remove('expenses', req.params.id);
+    const row = await Store.get('expenses', req.params.id);
+    if (!row) return res.status(404).json({ error: 'المصروف غير موجود.' });
+    if (!branchAllowed(req.user, row.branchId)) return denyOutOfScope(res);
+    await Store.remove('expenses', row.id);
     res.json({ ok: true });
   }));
 
@@ -412,14 +429,20 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
      ============================================================ */
   app.get('/api/reports/growth', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    const branch = req.query.branch ? Number(req.query.branch) : null;
-    res.json(await buildGrowthReport(month, branch, subStatus));
+    res.json(await buildGrowthReport(month, scopedBranchIds(req), subStatus));
   }));
 
   /* Branch Health Score — صحة كل فرع من 100 (أول رقم في التقرير الشهري) */
   app.get('/api/reports/health', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    res.json(await buildHealthScores(month, subStatus));
+    const all = await buildHealthScores(month, subStatus);
+    const mine = scopedBranchIds(req);
+    if (!mine) return res.json(all);
+    /* محاسب فرعٍ يرى صحة فروعه — ومعدّلها بينها، لا معدّل الشركة كاملة */
+    const branches = all.branches.filter((b) => mine.includes(b.branchId));
+    const scored = branches.filter((b) => b.score !== null);
+    const avg = scored.length ? Math.round(scored.reduce((t, b) => t + b.score, 0) / scored.length) : null;
+    res.json({ ...all, branches, company: { score: avg, label: avg === null ? 'لا بيانات' : healthLabel(avg) } });
   }));
 
   /* ============================================================
@@ -431,18 +454,19 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
     let list = await Store.all('leads');
     if (req.query.month) list = list.filter((l) => monthOf(l.contactDate) === req.query.month);
     if (req.query.stage) list = list.filter((l) => l.stage === req.query.stage);
-    if (req.query.branch) list = list.filter((l) => l.branchId === Number(req.query.branch));
+    list = list.filter(scopeFilter(req));
     res.json(list.sort((a, b) => (b.contactDate || '').localeCompare(a.contactDate || '')));
   }));
 
   app.get('/api/leads/summary', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
-    res.json(leadsSummary(await Store.all('leads'), month));
+    res.json(leadsSummary((await Store.all('leads')).filter(scopeFilter(req)), month));
   }));
 
   app.post('/api/leads', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const { name, phone, contactDate, residence, channel, trainingType, branchId, goal, stage, objection, note } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم العميل المحتمل مطلوب.' });
+    if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
     res.json(await Store.insert('leads', {
       contactDate: contactDate || todayStr(), name: String(name).trim(), phone: phone || '',
       residence: residence || '', channel: channel || '', trainingType: trainingType || '',
@@ -455,6 +479,7 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
   app.put('/api/leads/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const lead = await Store.get('leads', req.params.id);
     if (!lead) return res.status(404).json({ error: 'السجل غير موجود.' });
+    if (!branchAllowed(req.user, lead.branchId)) return denyOutOfScope(res);
     const patch = {};
     ['name', 'phone', 'contactDate', 'residence', 'channel', 'trainingType', 'goal', 'objection', 'note'].forEach((k) => {
       if (req.body[k] !== undefined) patch[k] = req.body[k];
@@ -547,8 +572,17 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
   /* لوحة الولاء (الإدارة/المحاسب): الأرصدة والطلبات والإحالات والتقارير */
   app.get('/api/loyalty/summary', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     await ensureDefaultRewards();
-    const { pointsLog, rewards, redemptions, referrals, users } = await Store.load('pointsLog', 'rewards', 'redemptions', 'referrals', 'users');
+    const all = await Store.load('pointsLog', 'rewards', 'redemptions', 'referrals', 'users');
+    const { rewards, users } = all;
     const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
+    /* لوحة الولاء تخصّ المشتركين — فمحاسب فرعٍ يرى مشتركي فروعه وحدهم */
+    const mine = scopedBranchIds(req);
+    const inScope = mine
+      ? (id) => mine.includes(Number((users.find((u) => u.id === id) || {}).branchId))
+      : () => true;
+    const pointsLog = all.pointsLog.filter((p) => inScope(p.traineeId));
+    const redemptions = all.redemptions.filter((r) => inScope(r.traineeId));
+    const referrals = all.referrals.filter((r) => inScope(r.referrerId) || inScope(r.traineeId));
     const balances = {};
     pointsLog.forEach((p) => { balances[p.traineeId] = (balances[p.traineeId] || 0) + p.points; });
     res.json({

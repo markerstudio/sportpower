@@ -102,6 +102,9 @@ async function notifyOnce(userId, text, type) {
 /* ============================================================
    بناء قائمة الإجراءات من بيانات النظام
    ============================================================ */
+/* النطاق قائمةُ فروع (نطاق المحاسب قد يضمّ فرعين) أو null = كل الفروع */
+const inScopeList = (scope, id) => !scope || scope.includes(Number(id));
+
 async function buildActions({ branch, subStatus }) {
   const today = todayStr();
   const month = thisMonthStr();
@@ -149,12 +152,12 @@ async function buildActions({ branch, subStatus }) {
 
   const TH = readThresholds(data.settings[0]);
   const nowIso = new Date().toISOString().slice(0, 16);
-  const inBranch = (x) => !branch || x.branchId === branch;
+  const inBranch = (x) => inScopeList(branch, x.branchId);
 
   const userById = (id) => data.users.find((u) => u.id === id) || {};
   const branchName = (id) => (data.branches.find((b) => b.id === id) || {}).name || '—';
   const trainees = data.users.filter((u) => u.role === 'trainee' && u.active !== false && inBranch(u));
-  const scopedBranches = data.branches.filter((b) => !branch || b.id === branch);
+  const scopedBranches = data.branches.filter((b) => inScopeList(branch, b.id));
 
   const actions = [];
   const add = (a) => actions.push(a);
@@ -781,7 +784,7 @@ async function buildActions({ branch, subStatus }) {
   const dayNum = Number(today.slice(8, 10));
   const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const revenueTargets = data.targets.filter((t) => t.metric === 'revenue' && t.period === month
-    && (branch ? (t.scope === 'branch' && t.refId === branch) : ['company', 'branch'].includes(t.scope)));
+    && (branch ? (t.scope === 'branch' && inScopeList(branch, t.refId)) : ['company', 'branch'].includes(t.scope)));
 
   revenueTargets.forEach((t) => {
     const effective = ops.effectiveTarget(t, data.targets, data, subStatus) || t.value;
@@ -897,10 +900,10 @@ async function buildActions({ branch, subStatus }) {
 /* ============================================================
    المسارات
    ============================================================ */
-module.exports = function registerActions(app, { auth, requireRole, h, notify, subStatus }) {
+module.exports = function registerActions(app, { auth, requireRole, h, notify, subStatus,
+  scopedBranchIds, branchAllowed, denyOutOfScope }) {
   app.get('/api/action-center', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    const branch = req.query.branch ? Number(req.query.branch) : null;
-    const result = await buildActions({ branch, subStatus });
+    const result = await buildActions({ branch: scopedBranchIds(req), subStatus });
     if (req.query.status === 'open') result.actions = result.actions.filter((a) => a.status === 'open');
     res.json(result);
   }));

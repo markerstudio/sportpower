@@ -6,9 +6,13 @@
 async function viewCalendar(root) {
   /* branchScope: المدرب يرى مواعيده وحده افتراضيًا، ويستطيع فتح برنامج
      الفرع كاملًا (كل المدربين) — بطلب العميل. */
-  const state = { start: weekStart(new Date()), trainer: '', branchScope: false };
+  /* «انا اختار الفرع بعدين اختار المدرب حتى يكون اسهل للادارة» */
+  const state = { start: weekStart(new Date()), trainer: '', branch: '', branchScope: false };
   const container = el('div', { class: 'content' });
   root.append(container);
+  const allBranches = ['admin', 'accountant'].includes(API.user.role)
+    ? await API.get('/api/branches').catch(() => [])
+    : [];
 
   async function render() {
     container.innerHTML = '';
@@ -18,10 +22,11 @@ async function viewCalendar(root) {
     const to = iso(end);
 
     const trainerQ = state.trainer ? `&trainer=${state.trainer}` : '';
+    const branchQ = state.branch ? `&branch=${state.branch}` : '';
     const scopeQ = API.user.role === 'trainer' && state.branchScope ? '&all=1' : '';
     const reqs = [
-      API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ + scopeQ),
-      API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ + scopeQ),
+      API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ + branchQ + scopeQ),
+      API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ + branchQ + scopeQ),
     ];
     // الإدارة والمحاسب يديران مواعيد كل المدربين
     const isAdmin = ['admin', 'accountant'].includes(API.user.role);
@@ -48,7 +53,24 @@ async function viewCalendar(root) {
       el('button', { class: 'btn btn--outline btn--sm', onclick: () => { state.start.setDate(state.start.getDate() + 7); render(); } }, '← الأسبوع التالي'),
       el('button', { class: 'btn btn--ghost btn--sm', onclick: () => { state.start = weekStart(new Date()); render(); } }, 'اليوم'));
     if (isAdmin) {
-      toolbar.append(select([['', 'كل المدربين'], ...trainers.map((t) => [t.id, t.name])], {
+      /* الفرع أولًا ثم مدربوه وحدهم — فتقصر القائمة على من يعني الإدارة.
+         تغيير الفرع يُسقط اختيار مدرب لم يعد ضمنه. */
+      if (allBranches.length > 1) {
+        toolbar.append(select([['', 'كل الفروع'], ...allBranches.map((b) => [b.id, b.name])], {
+          value: state.branch, style: 'width:160px',
+          onchange: (e) => {
+            state.branch = e.target.value;
+            const pick = trainers.find((t) => String(t.id) === String(state.trainer));
+            if (pick && state.branch && String(pick.branchId) !== String(state.branch)) state.trainer = '';
+            render();
+          },
+        }));
+      }
+      const inBranch = state.branch
+        ? trainers.filter((t) => String(t.branchId) === String(state.branch))
+        : trainers;
+      toolbar.append(select([['', state.branch ? 'كل مدربي الفرع' : 'كل المدربين'],
+        ...inBranch.map((t) => [t.id, t.name])], {
         value: state.trainer, style: 'width:170px', onchange: (e) => { state.trainer = e.target.value; render(); },
       }));
     }
@@ -140,6 +162,25 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
       value: existing ? existing.trainerId : (API.user.role === 'trainer' ? API.user.id : undefined),
     })
     : null;
+  /* الفرع أولًا ثم مدربوه — الإدارة والمحاسب يختاران الفرع فتقصر قائمة
+     المدربين عليه بدل عرض مدربي الشركة كلها. */
+  const apptBranches = isAdmin ? await API.get('/api/branches').catch(() => []) : [];
+  const branchPick = isAdmin && apptBranches.length > 1 && trainerSel
+    ? select([['', 'كل الفروع'], ...apptBranches.map((b) => [b.id, b.name])], {
+      value: existing ? (trainers.find((t) => t.id === existing.trainerId) || {}).branchId || '' : '',
+    })
+    : null;
+  const syncTrainerList = () => {
+    if (!branchPick || !trainerSel) return;
+    const keep = trainerSel.value;
+    const list = branchPick.value
+      ? trainers.filter((t) => String(t.branchId) === String(branchPick.value))
+      : trainers;
+    trainerSel.innerHTML = '';
+    list.forEach((t) => trainerSel.append(el('option', { value: t.id }, t.name)));
+    if (list.some((t) => String(t.id) === String(keep))) trainerSel.value = keep;
+  };
+  if (branchPick) branchPick.addEventListener('change', syncTrainerList);
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId || '' : (prefillTraineeId || '') });
   // «تعويض» و«test» (حصة تجريبية) — بطلب العميل في البرنامج اليومي
   const kindSel = select([['regular', 'عادية'], ['makeup', 'تعويض'], ['test', 'Test — حصة تجريبية']],
@@ -208,6 +249,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         } catch (ex) { toast(ex.message, true); }
       },
     },
+      branchPick ? field('الفرع', branchPick) : el('span'),
       trainerSel ? field('المدرب', trainerSel) : el('span'),
       field('نوع الحصة', kindSel),
       manualField,
@@ -249,12 +291,13 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         : el('span')),
   ]);
   syncKind();
+  syncTrainerList();
   if (isProspect) {
     prospectFields.style.display = '';
     traineeField.style.display = 'none';
   }
   if (readOnly) {
-    [trainerSel, traineeSel, kindSel, dateIn, timeIn, durIn, noteIn, statusSel, prospectNameIn, prospectPhoneIn, manualChk]
+    [branchPick, trainerSel, traineeSel, kindSel, dateIn, timeIn, durIn, noteIn, statusSel, prospectNameIn, prospectPhoneIn, manualChk]
       .forEach((n) => { if (n) n.disabled = true; });
   }
 }
@@ -683,6 +726,8 @@ function openBranchModal(onDone) {
   const addrIn = input({ placeholder: 'العنوان' });
   const phoneIn = input({ placeholder: 'الهاتف', dir: 'ltr', style: 'text-align:end' });
   const freezeIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا = بلا سقف' });
+  const curSel = select([['', `عملة النظام (${curInfo().name})`],
+    ...Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`])]);
   const close = modal('فرع جديد', [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -691,12 +736,13 @@ function openBranchModal(onDone) {
         try {
           await API.post('/api/branches', {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
-            freezeLimit: freezeIn.value || null,
+            freezeLimit: freezeIn.value || null, currency: curSel.value || null,
           });
           toast('تمت إضافة الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
+      field('عملة الفرع', curSel),
       field('سقف التجميد المسموح للفرع', freezeIn),
       el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'إضافة')),
   ]);
@@ -1401,15 +1447,20 @@ async function viewSettings(root) {
       el('h3', { class: 'card__title' }, 'الإعدادات العامة'),
       el('div', { class: 'filters' },
         field('عملة النظام', currencySel),
-        el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:420px' },
-          'تسري العملة على كل المبالغ: الاشتراكات، الدفعات، اللوحات، والتقارير.'))));
+        el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:460px' },
+          'العملة الافتراضية للنظام — يتبعها كل فرع لم تُحدَّد له عملة خاصة. '
+          + 'لفرعٍ بعملة مختلفة (عمّان بالدينار مثلًا) اضبطها من تعديل الفرع نفسه.'))));
 
     /* --- 2) الفروع --- */
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'الفروع',
         el('button', { class: 'btn btn--accent btn--sm', onclick: () => openBranchModal(render) }, '+ فرع جديد')),
-      dataTable(['الفرع', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', 'سقف التجميد', ''],
-        branches.map((b) => [b.name, b.address || '—', b.phone || '—',
+      dataTable(['الفرع', 'العملة', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', 'سقف التجميد', ''],
+        branches.map((b) => [b.name,
+          b.currency
+            ? el('span', { class: 'tag tag--petrol' }, curInfo(b.currency).name)
+            : el('span', { class: 'tag tag--neutral', title: 'يتبع عملة النظام' }, curInfo().name),
+          b.address || '—', b.phone || '—',
           String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
           String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
           b.freezeLimit ? String(b.freezeLimit) : el('span', { class: 'tag tag--neutral' }, 'بلا سقف'),
@@ -1443,7 +1494,10 @@ async function viewSettings(root) {
             : u.name,
           el('code', { style: 'direction:ltr;font-family:var(--font-mono);font-size:12px' }, u.username),
           el('span', { class: 'tag ' + (u.role === 'admin' ? 'tag--petrol' : 'tag--neutral') }, ROLE_LABELS[u.role] || u.role),
-          (branches.find((b) => b.id === u.branchId) || {}).name || '—',
+          u.role === 'accountant' && (u.branchIds || []).length
+            ? el('span', { class: 'tag tag--petrol', title: 'نطاق المحاسب' },
+              u.branchIds.map((id) => (branches.find((b) => b.id === id) || {}).name).filter(Boolean).join(' + '))
+            : (branches.find((b) => b.id === u.branchId) || {}).name || '—',
           u.phone || '—',
           u.active ? el('span', { class: 'tag tag--accent' }, 'فعّال') : el('span', { class: 'tag tag--danger' }, 'معطّل'),
           el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
@@ -1509,6 +1563,11 @@ function openBranchEditModal(onDone, branch) {
   const addrIn = input({ value: branch.address || '' });
   const phoneIn = input({ value: branch.phone || '', dir: 'ltr', style: 'text-align:end' });
   const freezeIn = input({ type: 'number', min: 0, value: branch.freezeLimit ?? '', placeholder: 'اتركه فارغًا = بلا سقف' });
+  /* عملة الفرع: عمّان بالدينار وفروع الضفة بالشيكل — تغييرها هنا لا يمسّ
+     بقية الفروع (كانت العملة إعدادًا عامًا يقلب النظام كله). */
+  const curSel = select([['', `عملة النظام (${curInfo().name})`],
+    ...Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`])],
+  { value: branch.currency || '' });
   const close = modal(`تعديل «${branch.name}»`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -1518,11 +1577,16 @@ function openBranchEditModal(onDone, branch) {
           await API.put('/api/branches/' + branch.id, {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
             freezeLimit: freezeIn.value === '' ? null : freezeIn.value,
+            currency: curSel.value || null,
           });
-          toast('تم حفظ الفرع.'); close(); onDone && onDone();
+          toast('تم حفظ الفرع — وتسري عملته على مبالغه وحده.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
+      field('عملة الفرع', curSel),
+      el('div', { style: 'font-size:12px;color:var(--app-muted)' },
+        'تسري على مبالغ هذا الفرع وحده — اشتراكاته ودفعاته وديونه. والمجاميع '
+        + 'التي تضمّ فروعًا بعملتين تُعرض مفصَّلة لا مجموعة في رقم واحد.'),
       field('سقف التجميد المسموح للفرع', freezeIn),
       el('div', { style: 'font-size:12px;color:var(--app-muted)' },
         'تجاوز المجمّدين لهذا السقف يظهر بالأحمر في KPI الفروع.'),
@@ -1540,6 +1604,29 @@ function openUserEditModal(onDone, user, branches) {
   const residenceIn = user.role === 'trainee' ? input({ value: user.residence || '', placeholder: 'الحي / المنطقة' }) : null;
   const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
 
+  /* فروع المحاسب: «محاسبة عمّان لا يكون عندها وصول للفروع الثانية».
+     يُختار فرع أو أكثر — فمحاسبةٌ واحدة تتولى بيت لحم وبيت ساحور معًا.
+     ولا شيء مختارًا = بلا تقييد (كما كان النظام قبل الفروع). */
+  const scopeBoxes = user.role === 'accountant'
+    ? branches.map((b) => {
+      const chk = input({ type: 'checkbox' });
+      chk.checked = (user.branchIds || []).includes(b.id);
+      return { id: b.id, chk, node: el('label', {
+        style: 'display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer;'
+          + 'border:1px solid var(--app-line);border-radius:8px;padding:8px 10px',
+      }, chk, b.name) };
+    })
+    : null;
+  const scopeHint = el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' });
+  const syncScopeHint = () => {
+    if (!scopeBoxes) return;
+    const picked = scopeBoxes.filter((x) => x.chk.checked).map((x) => (branches.find((b) => b.id === x.id) || {}).name);
+    scopeHint.textContent = picked.length
+      ? `يرى ${picked.join(' و')} فقط — لا مالية الفروع الأخرى ولا متدربيها. تغيير النطاق يُنهي جلساته ليسري فورًا.`
+      : 'بلا تحديد = يرى كل الفروع (الوضع الحالي). حدّد فرعًا أو أكثر لتقييده.';
+  };
+  if (scopeBoxes) scopeBoxes.forEach((x) => x.chk.addEventListener('change', syncScopeHint));
+
   const close = modal(`تعديل «${user.name}»`, [
     el('form', {
       class: 'form-grid',
@@ -1552,6 +1639,7 @@ function openUserEditModal(onDone, user, branches) {
             goal: goalSel ? goalSel.value : undefined,
             residence: residenceIn ? residenceIn.value.trim() || null : undefined,
             specialty: specIn ? specIn.value : undefined,
+            branchIds: scopeBoxes ? scopeBoxes.filter((x) => x.chk.checked).map((x) => x.id) : undefined,
           });
           toast('تم حفظ التعديلات.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
@@ -1563,10 +1651,18 @@ function openUserEditModal(onDone, user, branches) {
       field('الفرع', branchSel),
       goalSel ? field('الهدف', goalSel) : (specIn ? field('التخصص', specIn) : el('span')),
       residenceIn ? field('مكان السكن (الحي/المنطقة)', residenceIn) : el('span'),
+      scopeBoxes
+        ? el('div', { class: 'span-2' },
+          el('div', { class: 'field__label', style: 'margin-bottom:6px' }, 'الفروع التي يتولّاها هذا المحاسب'),
+          el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px' },
+            ...scopeBoxes.map((x) => x.node)))
+        : el('span'),
+      scopeBoxes ? scopeHint : el('span'),
       el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
         'اسم المستخدم بالإنجليزية والأرقام فقط (ويُسمح بـ . _ -) — أبلغ صاحبه بأي تغيير فهو مفتاح دخوله.'),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
+  syncScopeHint();
 }
 
 /* ============================================================

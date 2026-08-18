@@ -82,11 +82,16 @@ async function renderShell(route, renderView) {
   const app = document.getElementById('app');
   app.innerHTML = '';
 
-  // عملة النظام من الإعدادات
+  // عملة النظام من الإعدادات — والفروع قد يكون لكلٍّ منها عملته
   try {
     const cfg = await API.config();
     if (cfg.currency) ACTIVE_CURRENCY = cfg.currency;
   } catch (e) { /* الافتراضي شيكل */ }
+  try {
+    for (const b of await API.get('/api/branches')) {
+      if (b.currency) BRANCH_CURRENCY[b.id] = b.currency;
+    }
+  } catch (e) { /* الفروع تتبع عملة النظام */ }
 
   // مفتاح الدولة لروابط الواتساب — تحتاجه بطاقات الإجراءات والعقود
   if (['admin', 'accountant'].includes(API.user.role)) {

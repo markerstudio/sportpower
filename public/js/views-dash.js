@@ -209,13 +209,13 @@ async function viewAdminDash(root) {
     const k = data.kpis;
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
       kpiHero(k.sessionsMonth, 'حصة منفذة هذا الشهر', 'dumbbell'),
-      kpiHero(fmtMoney(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
+      kpiHero(fmtMoneyMap(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
       kpiHero(k.activeTrainees, 'متدرب فعّال', 'users', 'blue')));
     container.append(el('div', { class: 'kpis' },
       kpiTile(k.sessionsToday, 'حصص اليوم', 'calendar'),
       kpiTile(k.expiring, 'تنتهي قريبًا', 'alert', 'warn'),
       kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger'),
-      kpiTile(fmtMoney(k.outstanding), 'مستحقات غير محصلة', 'card', 'blue')));
+      kpiTile(fmtMoneyMap(k.outstanding), 'مستحقات غير محصلة', 'card', 'blue')));
 
     // رسم الحصص اليومية
     const days = Object.keys(data.daily).sort();
@@ -618,13 +618,28 @@ async function viewAccountantDash(root) {
       el('button', { class: 'btn btn--outline', onclick: () => { location.hash = '#/reports'; } }, 'التقارير الشهرية ←')));
 
     const k = data.kpis;
-    const expensesTotal = expenses.reduce((s, x) => s + x.amount, 0);
+    /* المصاريف بعملة فرعها، ومصروف الشركة (بلا فرع) بعملة النظام */
+    const expensesByCur = {};
+    expenses.forEach((x) => {
+      const c = branchCurrency(x.branchId);
+      expensesByCur[c] = Math.round(((expensesByCur[c] || 0) + Number(x.amount || 0)) * 100) / 100;
+    });
+    /* صافي الربح = التحصيل − المصاريف، لكل عملة على حدة. طرحُ دينارٍ من
+       شيكل لا معنى له، فلا نُخرج رقمًا واحدًا حين تتعدّد العملات. */
+    const netByCur = {};
+    for (const c of new Set([...Object.keys(k.collectedMonth || {}), ...Object.keys(expensesByCur)])) {
+      netByCur[c] = Math.round((((k.collectedMonth || {})[c] || 0) - (expensesByCur[c] || 0)) * 100) / 100;
+    }
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
-      kpiHero(fmtMoney(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
-      kpiHero(fmtMoney(expensesTotal), 'مصاريف هذا الشهر', 'card'),
-      kpiHero(fmtMoney(k.collectedMonth - expensesTotal), 'صافي الربح', 'chart', 'blue')));
+      kpiHero(fmtMoneyMap(k.collectedMonth), 'تحصيل هذا الشهر', 'wallet', 'green'),
+      kpiHero(fmtMoneyMap(expensesByCur), 'مصاريف هذا الشهر', 'card'),
+      kpiHero(fmtMoneyMap(netByCur), 'صافي الربح', 'chart', 'blue')));
+    if (isMultiCurrency(k.collectedMonth) || isMultiCurrency(k.outstanding)) {
+      container.append(el('div', { class: 'alert alert--info' },
+        'فروعك بعملتين مختلفتين — كل مبلغ معروض بعملته، ولا تُجمع العملتان في رقم واحد.'));
+    }
     container.append(el('div', { class: 'kpis' },
-      kpiTile(fmtMoney(k.outstanding), 'متبقٍ غير محصل', 'alert', 'warn'),
+      kpiTile(fmtMoneyMap(k.outstanding), 'متبقٍ غير محصل', 'alert', 'warn'),
       kpiTile(k.paymentsCount, 'عدد الدفعات', 'file'),
       kpiTile(k.renewed, 'اشتراكات مجددة', 'check'),
       kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger')));
@@ -657,15 +672,15 @@ async function viewAccountantDash(root) {
         el('h3', { class: 'card__title' }, `الديون المستحقة (${debts.totals.count} اشتراكًا · ${debts.totals.people} شخصًا)`,
           el('button', { class: 'btn btn--accent btn--sm', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ تسجيل سداد')),
         el('div', { class: 'kpis', style: 'margin-bottom:10px' },
-          kpiTile(fmtMoney(debts.totals.amount), 'إجمالي الديون', 'alert', 'danger'),
-          kpiTile(fmtMoney(debts.totals.oldAmount), 'ديون اشتراكات سابقة', 'card', 'warn'),
+          kpiTile(fmtMoneyMap(debts.totals.amount), 'إجمالي الديون', 'alert', 'danger'),
+          kpiTile(fmtMoneyMap(debts.totals.oldAmount), 'ديون اشتراكات سابقة', 'card', 'warn'),
           kpiTile(debts.totals.people, 'أشخاص عليهم دين', 'users')),
         pagedTable(['المتدرب', 'الفرع', 'الباقة', 'القيمة', 'المدفوع', 'المتبقي', 'ينتهي', 'الحالة', ''],
           debts.rows,
           (r) => [
             el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName),
-            r.branchName, r.packageName, fmtMoney(r.price), fmtMoney(r.paid),
-            el('b', { style: 'color:var(--status-danger)' }, fmtMoney(r.remaining)),
+            r.branchName, r.packageName, fmtMoney(r.price, r.currency), fmtMoney(r.paid, r.currency),
+            el('b', { style: 'color:var(--status-danger)' }, fmtMoney(r.remaining, r.currency)),
             r.endDate,
             r.old ? el('span', { class: 'tag tag--danger' }, 'دين سابق') : statusTag(r.status),
             el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
@@ -708,14 +723,14 @@ async function viewAccountantDash(root) {
       pagedTable(['المتدرب', 'قيمة الاشتراك', 'المدفوع', 'المتبقي', 'تاريخ البدء', 'تاريخ الانتهاء', 'الحالة'],
         data.subscriptions,
         (s) => [el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
-          fmtMoney(s.price), fmtMoney(s.paid),
+          fmtMoney(s.price, s.currency), fmtMoney(s.paid, s.currency),
           /* الاشتراك الملغى لا يُطالَب به — يظهر متبقيه رماديًا وخارج
              مجموع الديون، وإلا بدا دَينًا يُلاحَق وهو ليس كذلك */
           el('span', {
             style: s.cancelled ? 'color:var(--app-muted);text-decoration:line-through'
               : s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '',
             title: s.cancelled ? 'اشتراك ملغى — لا يدخل في إجمالي الديون' : null,
-          }, fmtMoney(s.remaining)),
+          }, fmtMoney(s.remaining, s.currency)),
           s.startDate, s.endDate, statusTag(s.status)],
         { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
@@ -859,8 +874,8 @@ function openDebtPaymentModal(onDone, debtRow) {
       },
     },
       el('div', { class: 'span-2' }, el('div', { class: 'alert alert--info' },
-        `${debtRow.packageName} — قيمة ${fmtMoney(debtRow.price)}، مدفوع ${fmtMoney(debtRow.paid)}، متبقٍ ${fmtMoney(debtRow.remaining)}.`)),
-      field(`المبلغ (${curInfo().name})`, amountIn), field('تاريخ السداد', dateIn),
+        `${debtRow.packageName} — قيمة ${fmtMoney(debtRow.price, debtRow.currency)}، مدفوع ${fmtMoney(debtRow.paid, debtRow.currency)}، متبقٍ ${fmtMoney(debtRow.remaining, debtRow.currency)}.`)),
+      field(`المبلغ (${curInfo(debtRow.currency).name})`, amountIn), field('تاريخ السداد', dateIn),
       field('طريقة الدفع', methodSel), field('ملاحظة', noteIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تسجيل السداد'))),
   ]);

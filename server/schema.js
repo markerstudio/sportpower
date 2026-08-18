@@ -23,6 +23,9 @@ const SCHEMA = {
       phone: col('text'),
       /* سقف التجميد المسموح للفرع — يقارَن بعدد المجمّدين فعليًا في KPI الفروع */
       freezeLimit: col('int'),
+      /* عملة الفرع: فرع عمّان بالدينار وفروع الضفة بالشيكل. الفارغ يعني
+         عملة النظام الافتراضية — فلا تنقلب أرقام فرعٍ بتغيير إعداد عام. */
+      currency: col('text'),
     },
     indexes: [],
   },
@@ -35,6 +38,9 @@ const SCHEMA = {
       name: col('text', { notNull: true }),
       phone: col('text'),
       branchId: col('int', { ref: ref('branches', 'setnull') }),
+      /* فروع المحاسب: محاسبةٌ واحدة تتولى بيت لحم وبيت ساحور معًا، وأخرى
+         عمّان وحدها. الفارغ يعني بلا تقييد (كما كان النظام قبل الفروع). */
+      branchIds: col('json'),
       trainerId: col('int'),
       goal: col('text'),
       specialty: col('text'),

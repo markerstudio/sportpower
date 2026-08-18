@@ -9,19 +9,32 @@ const METRIC_OPTIONS = [
   ['newSubs', 'اشتراكات جديدة/تجديد'], ['activeTrainees', 'المتدربون الفعالون'],
 ];
 
+/* تحصيل اليوم مفصَّلًا بالعملة — فروعٌ بعملتين لا يُجمع تحصيلها في رقم */
+function dailyByCurrency(data) {
+  const out = {};
+  (data.branches || []).forEach((b) => {
+    const c = branchCurrency(b.branchId);
+    out[c] = Math.round(((out[c] || 0) + Number(b.collected || 0)) * 100) / 100;
+  });
+  return out;
+}
+
 /* ============================================================
    لوحة المتابعة اليومية (الإدارة/المحاسب)
    ============================================================ */
 async function viewDaily(root) {
-  const state = { date: todayISO() };
+  // «المتابعة اليومية اختار الفرع الي بدي اتابعه»
+  const state = { date: todayISO(), branch: '' };
   const container = el('div', { class: 'content' });
   root.append(container);
+  const branches = await API.get('/api/branches').catch(() => []);
 
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
+    const branchQ = state.branch ? '&branch=' + state.branch : '';
     const [data, trainers] = await Promise.all([
-      API.get('/api/daily?date=' + state.date),
+      API.get('/api/daily?date=' + state.date + branchQ),
       API.user.role === 'admin' ? API.get('/api/users?role=trainer') : Promise.resolve([]),
     ]);
     const tasks = API.user.role === 'admin' || API.user.role === 'accountant'
@@ -30,6 +43,13 @@ async function viewDaily(root) {
 
     const dateIn = input({ type: 'date', value: state.date, onchange: (e) => { state.date = e.target.value; render(); } });
     const bar = el('div', { class: 'card filters' }, field('اليوم', dateIn));
+    // فرعٌ واحد لا يحتاج منتقيًا — المحاسب المقيَّد بفرعٍ يرى فرعه وحده
+    if (branches.length > 1) {
+      bar.append(field('الفرع', select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+        value: state.branch, style: 'width:180px',
+        onchange: (e) => { state.branch = e.target.value; render(); },
+      })));
+    }
     if (API.user.role === 'admin') {
       bar.append(el('button', { class: 'btn btn--accent', onclick: () => openTaskModal(render, trainers, state.date) }, '+ مهمة لمدرب'));
     }
@@ -37,7 +57,8 @@ async function viewDaily(root) {
 
     const t = data.totals;
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
-      kpiHero(fmtMoney(t.collected), 'التحصيل اليومي', 'wallet', 'green'),
+      kpiHero(state.branch ? fmtMoney(t.collected, Number(state.branch)) : fmtMoneyMap(dailyByCurrency(data)),
+        'التحصيل اليومي', 'wallet', 'green'),
       kpiHero(data.attendance.sessions, 'حصة منفذة اليوم', 'dumbbell'),
       kpiHero(data.attendance.missed, 'غيابات اليوم', 'alert', 'blue')));
     container.append(el('div', { class: 'kpis' },
@@ -101,7 +122,7 @@ async function viewDaily(root) {
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `الفروع — ${data.date}`),
       dataTable(['الفرع', 'التحصيل', 'جدد', 'تجديد', 'تجميد', 'عائد', 'إلغاء', 'حصص'],
-        data.branches.map((b) => [b.branch, fmtMoney(b.collected),
+        data.branches.map((b) => [b.branch, fmtMoney(b.collected, b.branchId),
           String(b.newSubs), String(b.renewals), String(b.freezes), String(b.returns), String(b.cancels), String(b.sessions)]))));
 
     // سجل المدربين اليومي
@@ -295,7 +316,7 @@ function renderKpiBoard(container, b) {
             title: x.freezeOverLimit ? `تجاوز السقف بـ ${x.freezeOverLimit}` : '',
           }, String(x.frozenNow) + (x.freezeOverLimit ? ' ⚠️' : '')),
           x.freezeLimit === null ? el('span', { class: 'tag tag--neutral' }, 'بلا سقف') : num(x.freezeLimit),
-          fmtMoney(x.collected), num(x.activeTrainees),
+          fmtMoney(x.collected, x.branchId), num(x.activeTrainees),
           x.retentionPct !== null ? progressBar(x.retentionPct) : '—',
           num(x.sessions), num(x.results),
           el('span', { class: 'num', style: x.problems ? 'color:var(--status-danger)' : '' }, String(x.problems))]),
@@ -306,7 +327,7 @@ function renderKpiBoard(container, b) {
     el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'KPI المحاسب — حسب الفرع'),
       dataTable(['الفرع', 'التحصيل', 'مشتركون جدد', 'جدد من التجميد', 'تجميد'],
-        b.accountant.map((x) => [x.branch, fmtMoney(x.collected), num(x.newSubs), num(x.returnedFromFreeze), num(x.freezesMonth)]),
+        b.accountant.map((x) => [x.branch, fmtMoney(x.collected, x.branchId), num(x.newSubs), num(x.returnedFromFreeze), num(x.freezesMonth)]),
         'لا فروع.')),
 
     /* --- المبيعات --- */
