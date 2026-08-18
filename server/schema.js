@@ -362,6 +362,40 @@ const SCHEMA = {
     indexes: [['trainerId']],
   },
 
+  /* ============================================================
+     أهداف المشتركين — «البرنامج التدريبي يتحوّل لأهداف المشتركين»
+     البرنامج القديم (programs) يُنشأ مرة ويُربط بكل المتدربين، وهو عكس
+     المطلوب: لكل شخص هدفه. الهدف هنا مربوط بمشترك بعينه، وله خطته
+     كاملةً — فيُحسب منه عددُ أهداف كل مدرب، ويُعرف من بقي بلا هدف.
+     ============================================================ */
+  traineeGoals: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      // مَن وضع الهدف — منه يُحسب «عدد الأهداف التدريبية» في KPI المدرب
+      trainerId: col('int', { ref: ref('users', 'setnull') }),
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
+      /* نوع الهدف: نزول وزن · نزول دهون · بناء كتلة عضلية · لاعب فطبول ·
+         لاعب رياضي · علاجي · تثبيت وزن */
+      kind: col('text'),
+      style: col('text'),          // الأسلوب التدريبي
+      purpose: col('text'),        // الهدف من الأسلوب
+      months: col('num'),          // مدة الخطة بالأشهر
+      sessionsPlanned: col('int'), // كم حصة خلال هذه الأشهر
+      allowedAbsences: col('int'), // عدد الغيابات المسموحة
+      makeupMonths: col('num'),    // يكون التعويض خلال كم شهر
+      mealCommitPct: col('int'),   // نسبة الالتزام بخطة الأكل المطلوبة
+      targetChanges: col('text'),  // التغيّرات المستهدفة خلال المدة
+      startDate: col('text'),
+      endDate: col('text'),
+      status: col('text', { default: "'active'" }), // active | done | cancelled
+      outcome: col('text'),        // ما تحقق فعلًا عند الإغلاق
+      notes: col('text'),
+      createdBy: col('int'),
+      createdAt: col('text'),
+    },
+    indexes: [['traineeId'], ['trainerId'], ['branchId'], ['status'], ['startDate']],
+  },
+
   pointsLog: {
     columns: {
       traineeId: col('int', { notNull: true, ref: ref('users') }),
@@ -503,7 +537,7 @@ const CREATE_ORDER = [
   'branches', 'users', 'packages', 'meals', 'rewards', 'settings',
   'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'trainerLogs', 'tasks', 'targets', 'frozen',
-  'subEvents', 'expenses', 'leads', 'programs', 'pointsLog', 'redemptions',
+  'subEvents', 'expenses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',
 ];
 

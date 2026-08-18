@@ -48,7 +48,7 @@ function readThresholds(settings) {
   return out;
 }
 
-const GOAL_LABELS = { loss: 'نزول وزن', muscle: 'زيادة عضل', maintain: 'تثبيت وزن' };
+const { GOAL_LABELS, improvedFor } = require('./goals');
 
 /* صياغة عربية سليمة للأعداد (٣–١٠ جمع، وما فوقها مفرد) — والنصوص محايدة الجنس */
 const countLabel = (n, singular, dual, plural) => {
@@ -123,7 +123,7 @@ async function buildActions({ branch, subStatus }) {
 
   const [users, branches, subscriptions, targets, settings, packages,
     sessions, appointments, inbodyRecent, payments, subEvents, sessionRatings, actionLog,
-    trainerLogs, monthTasks] = await Promise.all([
+    trainerLogs, monthTasks, traineeGoals] = await Promise.all([
     Store.all('users'),
     Store.all('branches'),
     Store.all('subscriptions'),
@@ -139,6 +139,7 @@ async function buildActions({ branch, subStatus }) {
     Store.find('actionLog', { date: { gte: daysAgo(180) } }),
     Store.find('trainerLogs', { date: { gte: daysAgo(30) } }),
     Store.find('tasks', { month }),
+    Store.all('traineeGoals'),
   ]);
 
   // تاريخ القياسات الكامل — للمرشحين وحدهم (من لديه قراءة حديثة)
@@ -148,7 +149,7 @@ async function buildActions({ branch, subStatus }) {
     : [];
 
   const data = { users, branches, subscriptions, targets, settings, packages, sessions, appointments,
-    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks };
+    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks, traineeGoals };
 
   const TH = readThresholds(data.settings[0]);
   const nowIso = new Date().toISOString().slice(0, 16);
@@ -682,11 +683,8 @@ async function buildActions({ branch, subStatus }) {
     const dFat = last.bodyFatPct != null && base.bodyFatPct != null ? +(last.bodyFatPct - base.bodyFatPct).toFixed(1) : null;
     const dMuscle = last.muscleMass != null && base.muscleMass != null ? +(last.muscleMass - base.muscleMass).toFixed(1) : null;
 
-    let improved;
-    if (trainee.goal === 'muscle') improved = (dMuscle != null && dMuscle > 0.3) || (dWeight != null && dWeight > 0.5 && (dFat == null || dFat <= 0));
-    else if (trainee.goal === 'maintain') improved = (dFat != null && dFat < -0.5) || (dMuscle != null && dMuscle > 0.3);
-    else improved = (dWeight != null && dWeight < -0.5) || (dFat != null && dFat < -0.5);
-    if (improved) continue;
+    // الحكم على التقدّم يتبع هدف المتدرب — التصنيف الواحد في goals.js
+    if (improvedFor(trainee.goal, { dWeight, dFat, dMuscle })) continue;
 
     const changes = [
       dWeight != null ? `الوزن ${dWeight > 0 ? '+' : ''}${dWeight} كغ` : null,
@@ -714,6 +712,59 @@ async function buildActions({ branch, subStatus }) {
         waAction(trainee.phone, `مرحبًا ${trainee.name} 👋 راجعنا قياساتك في سبورت باور ونحبّ نعدّل خطتك التدريبية لنتائج أسرع — متى يناسبك نلتقي؟`),
       ].filter(Boolean),
     });
+  }
+
+  /* ============================================================
+     🟡 مهم — مشترك فعّال بلا هدف تدريبي
+     «ببين عندي مين من المشتركين ما انعملو هدف تدريبي، ويجيني ع القرارات
+     اذا في حدا خلال الشهر ما انعمله هدف تدريبي.»
+     نُمهله أسبوعًا من اشتراكه قبل المطالبة — الهدف يُبنى بعد أول قياس
+     وأول حصص، لا يوم التسجيل.
+     ============================================================ */
+  const goalTraineeIds = new Set(data.traineeGoals
+    .filter((g) => (g.status || 'active') === 'active').map((g) => g.traineeId));
+  const activeSubOf = {};
+  data.subscriptions.filter((s) => subStatus(s) === 'active').forEach((s) => {
+    if (!activeSubOf[s.traineeId] || s.startDate < activeSubOf[s.traineeId].startDate) activeSubOf[s.traineeId] = s;
+  });
+
+  for (const trainee of trainees) {
+    const sub = activeSubOf[trainee.id];
+    if (!sub) continue;                                  // بلا اشتراك فعّال لا هدف يُطالَب به
+    if (goalTraineeIds.has(trainee.id)) continue;
+    if (sub.startDate > daysAgo(7)) continue;            // أُمهل أسبوعه الأول
+
+    // آخر من درّبه — هو المرشَّح لوضع الهدف، فتصل المهمة لصاحبها
+    const last = deliveredSessions
+      .filter((s) => s.traineeId === trainee.id)
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).pop();
+    const trainer = last ? userById(last.trainerId) : {};
+    const daysIn = daysBetween(sub.startDate, today);
+
+    add({
+      key: `nogoal:${trainee.id}:${month}`,
+      type: 'goal', priority: 'important',
+      title: `${trainee.name} بلا هدف تدريبي — ${daysLabel(daysIn)} على اشتراكه`,
+      reason: `اشتراكه فعّال منذ ${sub.startDate} ولم يُوضع له هدف تدريبي بعد`
+        + (trainer.name ? ` — آخر من درّبه ${trainer.name}.` : '.')
+        + ' وبلا هدف لا خطة تُقاس ولا نعرف إن كان يتقدّم أم يراوح مكانه.',
+      suggestion: 'ضع هدفه من ملفه: الأسلوب التدريبي، الهدف منه، عدد الحصص والغيابات المسموحة، والتغيّرات المستهدفة.',
+      ownerLabel: `المسؤول: ${trainer.name || 'المدرب'} — ${branchName(trainee.branchId)}`,
+      owner: { type: 'trainee', id: trainee.id, name: trainee.name, phone: trainee.phone },
+      branchName: branchName(trainee.branchId),
+      metrics: [
+        { label: 'على اشتراكه', value: daysLabel(daysIn) },
+        { label: 'حصص نُفّذت', value: String(sub.usedSessions) },
+      ],
+      actions: [
+        link('وضع الهدف من ملفه', `#/trainee/${trainee.id}`),
+        trainer.id ? { kind: 'task', label: 'إنشاء مهمة للمدرب', trainerId: trainer.id, title: `وضع هدف تدريبي لـ${trainee.name}` } : null,
+      ].filter(Boolean),
+    });
+    if (trainer.id) {
+      await notifyOnce(trainer.id,
+        `🎯 ${trainee.name} بلا هدف تدريبي — ضعه من ملفه حتى تُقاس خطته (شهر ${month}).`, 'program');
+    }
   }
 
   /* ============================================================

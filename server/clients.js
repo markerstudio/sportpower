@@ -244,7 +244,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
 
     const submission = {
       name: clean(name, 120), phone: clean(phone, 30), birthDate: birthDate || null,
-      goal: ['loss', 'muscle', 'maintain'].includes(goal) ? goal : 'loss',
+      goal: require('./goals').isGoal(goal) ? goal : 'loss',
       address: clean(address, 200),
       packageId: pkg.id, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price,
       packageCategory: catOf(pkg), packageCategoryLabel: CATEGORY_LABELS[catOf(pkg)],

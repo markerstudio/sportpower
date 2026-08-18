@@ -1005,7 +1005,7 @@ function mealCard(meal, { slotLabel, actions } = {}) {
     el('p', { class: 'meal-card__desc' }, el('b', {}, 'المكونات: '), meal.ingredients || '—'),
     el('p', { class: 'meal-card__desc' }, el('b', {}, 'التحضير: '), meal.preparation || '—'),
     el('div', { style: 'display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:auto' },
-      el('span', { class: 'tag tag--neutral' }, 'الهدف: ' + (GOAL_LABELS[meal.goal] || meal.goal)),
+      el('span', { class: 'tag tag--neutral' }, 'المسار: ' + (MEAL_GOALS[meal.goal] || GOAL_LABELS[meal.goal] || meal.goal)),
       slotLabel ? el('span', { class: 'tag tag--petrol' }, slotLabel) : (actions || '')));
 }
 
@@ -1021,7 +1021,7 @@ async function viewMeals(root) {
 
   const searchIn = input({ placeholder: 'ابحث بالاسم أو المكونات…', oninput: debounce(() => { state.search = searchIn.value; render(); }) });
   const typeSel = select([['', 'كل الأنواع'], ...Object.entries(MEAL_TYPES)], { onchange: (e) => { state.type = e.target.value; render(); } });
-  const goalSel = select([['', API.user.role === 'trainee' ? 'حسب هدفي' : 'كل الأهداف'], ...Object.entries(GOAL_LABELS)], { onchange: (e) => { state.goal = e.target.value; render(); } });
+  const goalSel = select([['', API.user.role === 'trainee' ? 'حسب هدفي' : 'كل المسارات'], ...Object.entries(MEAL_GOALS)], { onchange: (e) => { state.goal = e.target.value; render(); } });
   const calIn = input({ type: 'number', placeholder: 'مثال: 450', oninput: debounce(() => { state.maxCalories = calIn.value; render(); }) });
   const protIn = input({ type: 'number', placeholder: 'مثال: 25', oninput: debounce(() => { state.minProtein = protIn.value; render(); }) });
 
@@ -1053,7 +1053,7 @@ async function viewMeals(root) {
 function openMealModal(onDone) {
   const nameIn = input({ placeholder: 'اسم الوجبة' });
   const typeSel = select(Object.entries(MEAL_TYPES));
-  const goalSel = select(Object.entries(GOAL_LABELS));
+  const goalSel = select(Object.entries(MEAL_GOALS));
   const cal = input({ type: 'number', placeholder: 'سعرة' });
   const prot = input({ type: 'number', placeholder: 'غرام' });
   const carb = input({ type: 'number', placeholder: 'غرام' });

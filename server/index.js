@@ -11,6 +11,7 @@ const Store = require('./store');
 const growth = require('./growth');
 const clients = require('./clients');
 const flags = require('./flags');
+const goals = require('./goals');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -909,7 +910,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       createdAt: new Date().toISOString(),
       name: String(name).trim(), phone: String(phone).trim(),
       birthDate: birthDate || null, residence: residence || null, branchId: Number(branchId) || null,
-      goal: goal || 'loss', joinedAt: todayStr(),
+      goal: goals.isGoal(goal) ? goal : 'loss', joinedAt: todayStr(),
       mustChangePassword: true, tempPasswordExpires: tempPasswordDeadline(),
       sourceTrainerId: Number(sourceTrainerId) || null,
       ...normalizeSource(req.body || {}),
@@ -1887,7 +1888,12 @@ app.get('/api/meals', auth, h(async (req, res) => {
   if (q.maxCalories) list = list.filter((m) => m.calories <= Number(q.maxCalories));
   if (q.minProtein) list = list.filter((m) => m.protein >= Number(q.minProtein));
   if (q.search) list = list.filter((m) => m.name.includes(q.search) || (m.ingredients || '').includes(q.search));
-  if (req.user.role === 'trainee' && !q.goal && !q.all) list = list.filter((m) => m.goal === req.user.goal);
+  /* الهدف قد يكون «لاعب فطبول» بينما المكتبة مبنية على ثلاثة مسارات —
+     نُصفّي بمسار هدفه لا باسمه، وإلا رأى صفحةً فارغة. */
+  if (req.user.role === 'trainee' && !q.goal && !q.all) {
+    const path = goals.mealGoalOf(req.user.goal);
+    list = list.filter((m) => m.goal === path);
+  }
   res.json(list);
 }));
 
@@ -2186,6 +2192,16 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     ? (await Store.find('traineeFlags', { traineeId: id })).sort((a, b) => b.id - a.id)
     : null;
 
+  /* الهدف التدريبي الخاص بهذا المشترك — يراه هو ومدربه والإدارة */
+  const myGoals = (await Store.find('traineeGoals', { traineeId: id }))
+    .map((g) => ({
+      ...g,
+      kindLabel: goals.GOAL_LABELS[g.kind] || null,
+      trainerName: (users.find((u) => u.id === g.trainerId) || {}).name || null,
+      progress: require('./trainee-goals').progressOf(g, mySessions),
+    }))
+    .sort((a, b) => b.id - a.id);
+
   res.json({
     trainee: publicUser(trainee),
     trainerName: lastSession ? (users.find((u) => u.id === lastSession.trainerId) || {}).name : null,
@@ -2204,6 +2220,8 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     finance,
     ratings: myRatings,
     flags: myFlags,
+    goals: myGoals,
+    goalKinds: goals.GOAL_KEYS.map((k) => ({ key: k, label: goals.GOAL_LABELS[k] })),
   });
 }));
 
@@ -2558,6 +2576,9 @@ clients(app, { auth, requireRole, h, notify, ...scope });
 
 /* نتائج المشتركين ومشاكلهم — رصد داخلي سرّي عن المتدرب */
 require('./flags')(app, { auth, requireRole, h, notify, ...scope });
+
+/* أهداف المشتركين: هدفٌ لكل مشترك بخطته، بدل برنامج واحد يُربط بالجميع */
+require('./trainee-goals')(app, { auth, requireRole, h, notify, ...scope });
 
 /* مركز القرارات: تحويل كل مشكلة يكتشفها النظام إلى إجراء قابل للتنفيذ */
 require('./actions')(app, { auth, requireRole, h, notify, subStatus, ...scope });

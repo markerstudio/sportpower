@@ -307,7 +307,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   async function buildKpiBoard(month, branch) {
     const period = { gte: month + '-01', lte: month + '-31' };
     const [users, branches, subscriptions, sessionsAll, payments, subEvents,
-      trainerLogs, tasks, targets, flags, mealPlans, leads, programs] = await Promise.all([
+      trainerLogs, tasks, targets, flags, mealPlans, leads, programs, traineeGoals] = await Promise.all([
       Store.all('users'),
       Store.all('branches'),
       Store.all('subscriptions'),
@@ -321,6 +321,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('mealPlans'),
       Store.find('leads', { contactDate: period }),
       Store.all('programs'),
+      Store.all('traineeGoals'),
     ]);
 
     /* نافذة أوسع للأهداف نصف السنوية والسنوية: قياسها على بيانات الشهر
@@ -345,6 +346,11 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const scopedBranches = branches.filter((b) => inScopeList(branch, b.id));
     const trainees = users.filter((u) => u.role === 'trainee');
     const traineeById = Object.fromEntries(trainees.map((t) => [t.id, t]));
+    /* أهداف المشتركين: ما وُضع هذا الشهر (رقمُ المدرب)، ومن له هدف فعّال
+       (لمعرفة من بقي بلا هدف). */
+    const monthGoals = traineeGoals.filter((g) => (g.createdAt || g.startDate || '').slice(0, 7) === month);
+    const goalTraineeIds = new Set(traineeGoals
+      .filter((g) => (g.status || 'active') === 'active').map((g) => g.traineeId));
 
     /* ---------- المدرب ---------- */
     const trainerRows = users
@@ -362,7 +368,11 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
           .filter((p) => mineIds.has(p.traineeId)).reduce((s, p) => s + p.amount, 0);
         const myFlags = flags.filter((f) => myTraineeIds.has(f.traineeId));
         const myEvents = scopedEvents.filter((e) => myTraineeIds.has(e.traineeId) || mineIds.has(e.traineeId));
-        const goalsOf = (g) => [...myTraineeIds].filter((id) => (traineeById[id] || {}).goal === g).length;
+        const goalMix = {};
+        [...myTraineeIds].forEach((id) => {
+          const g = (traineeById[id] || {}).goal || 'loss';
+          goalMix[g] = (goalMix[g] || 0) + 1;
+        });
 
         /* الهدف نصف السنوي أو السنوي يُقاس على فترته كاملة، وبيانات هذه
            اللوحة محدودة بالشهر — فقياسه عليها يُظهره متأخرًا دائمًا.
@@ -392,8 +402,15 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
           renewals: myEvents.filter((e) => e.type === 'renewal').length,
           results: myFlags.filter((f) => f.kind === 'result').length,
           problems: myFlags.filter((f) => f.kind === 'problem').length,
-          traineeGoals: { loss: goalsOf('loss'), muscle: goalsOf('muscle'), maintain: goalsOf('maintain') },
-          goalsCreated: logs.reduce((s, l) => s + (Number(l.goalsCreated) || 0), 0),
+          /* «كم هدفًا تدريبيًا وضعه هذا الشهر» — من جدول الأهداف نفسه لا
+             من إدخال يدوي في سجله اليومي. والقديم يبقى معروضًا باسمه. */
+          goalsCreated: monthGoals.filter((g) => g.trainerId === t.id).length,
+          goalsLoggedManually: logs.reduce((s, l) => s + (Number(l.goalsCreated) || 0), 0),
+          // من درّبهم هذا الشهر ولا هدف فعّال لهم — يظهر باسمه لا كرقم
+          traineesWithoutGoal: [...myTraineeIds].filter((id) => !goalTraineeIds.has(id))
+            .map((id) => (traineeById[id] || {}).name).filter(Boolean),
+          // توزيع أهداف متدربيه (نزول/عضل/…) — للاطّلاع لا للتقييم
+          traineeGoalMix: goalMix,
           mealPlans: mealPlans.filter((p) => p.createdBy === t.id && (p.date || '').startsWith(month)).length,
           programs: programs.filter((p) => p.trainerId === t.id && (p.createdAt || '').startsWith(month)).length,
           tasksTotal: myTasks.length,
