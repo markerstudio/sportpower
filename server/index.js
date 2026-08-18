@@ -500,6 +500,36 @@ async function refreshSubscriptionAlerts(adminId) {
 
 const numOrNull = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
 
+/* ------------------------------------------------------------
+   كشف الإدخال المكرر (خط الدفاع الثاني)
+   الواجهة تُغلق النموذج أثناء انتظار الخادم، لكن الطلب قد يصل مرتين
+   رغم ذلك: إعادة إرسال من المتصفح، أو صفحة قديمة مفتوحة على جهاز آخر،
+   أو ضغطة من نسخة مخزَّنة في عامل الخدمة. فنمنع التكرار عند المصدر:
+   الحصة لا تتكرر لنفس المتدرب في نفس التاريخ والساعة إطلاقًا، والدفعة
+   والاشتراك لا يتكرران بنفس التفاصيل خلال نافذة قصيرة.
+   ------------------------------------------------------------ */
+/* ------------------------------------------------------------
+   «المتبقي» (الديون) — تعريف واحد يستعمله الجميع
+   كانت لوحة الإدارة تطرح إجمالي المدفوع من إجمالي المستحق، فيُغطّي
+   فائضُ اشتراكٍ عجزَ اشتراكٍ آخر ويظهر الرقم أقل من الواقع؛ وكانت
+   اللوحتان تحسبان الاشتراكات الملغاة ضمن المستحق بينما تستثنيها صفحة
+   الديون — فثلاثة أرقام لنفس السؤال. الحساب هنا لكل اشتراك على حدة،
+   بلا اشتراكات ملغاة، ولا يقلّ عن صفر.
+   ------------------------------------------------------------ */
+const outstandingOf = (sub, paid) => Math.max(0, Math.round((sub.price - (paid || 0)) * 100) / 100);
+const countsTowardDebt = (sub) => sub.status !== 'cancelled';
+function outstandingTotal(subs, paidBySub) {
+  return Math.round(subs.filter(countsTowardDebt)
+    .reduce((t, s) => t + outstandingOf(s, paidBySub[s.id]), 0) * 100) / 100;
+}
+
+const DUP_WINDOW_MS = 2 * 60 * 1000;
+const withinDupWindow = (row) => {
+  if (!row || !row.createdAt) return false;
+  const t = Date.parse(row.createdAt);
+  return Number.isFinite(t) && Date.now() - t < DUP_WINDOW_MS;
+};
+
 /* ترقيم اختياري للقوائم الكبيرة: ?limit=&offset= (بلا حد افتراضيًا) */
 function pageOpts(req, extra = {}) {
   const opts = { ...extra };
@@ -605,6 +635,7 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
   }
   const user = await Store.insert('users', {
     username: String(username).toLowerCase(), password: Store.hashPassword(password),
+    createdAt: new Date().toISOString(),
     name, role, phone: phone || '', branchId: branchId || null,
     trainerId: trainerId || null, goal: goal || null, specialty: specialty || null,
     residence: residence || null,
@@ -740,6 +771,17 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   // اسم مستخدم من رقم الجوال + كلمة مرور تلقائية تُعرض مرة واحدة
   const users = await Store.all('users');
   const digits = String(phone).replace(/\D/g, '');
+
+  /* تسجيل مكرر: نفس الاسم والجوال خلال دقيقتين = إرسال ثانٍ للطلب —
+     كان يُنشئ حسابًا واشتراكًا ودفعة مرتين. */
+  const twin = users.find((u) => u.role === 'trainee' && withinDupWindow(u)
+    && String(u.phone || '').replace(/\D/g, '') === digits && u.name === String(name).trim());
+  if (twin) {
+    return res.status(409).json({
+      error: `سُجّل ${twin.name} بالفعل قبل قليل — لم يُنشأ حساب ثانٍ. افتح ملفه من قائمة المتدربين.`,
+      duplicate: true, traineeId: twin.id,
+    });
+  }
   let username = digits || 'client';
   while (users.some((u) => u.username === username)) {
     username = (digits || 'client') + '-' + crypto.randomBytes(2).toString('hex');
@@ -751,6 +793,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   const result = await Store.transaction(async (tx) => {
     const user = await tx.insert('users', {
       username, password: Store.hashPassword(password), role: 'trainee',
+      createdAt: new Date().toISOString(),
       name: String(name).trim(), phone: String(phone).trim(),
       birthDate: birthDate || null, residence: residence || null, branchId: Number(branchId) || null,
       goal: goal || 'loss', joinedAt: todayStr(),
@@ -764,6 +807,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       price: Number(subscription.price),
       startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
+      createdAt: new Date().toISOString(),
     });
     await tx.insert('subEvents', {
       subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
@@ -774,6 +818,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
         subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId,
         amount: Number(payment.amount), date: payment.date || todayStr(),
         method: payment.method || 'كاش', note: 'دفعة الاشتراك عند التسجيل', createdBy: req.user.id,
+        createdAt: new Date().toISOString(),
       });
     }
     let appt = null;
@@ -874,12 +919,27 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!totalSessions || !price || !startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
   const pkg = packageId ? await Store.get('packages', Number(packageId)) : null;
-  const prior = (await Store.all('subscriptions')).some((s) => s.traineeId === trainee.id);
+  if (startDate > endDate) return res.status(400).json({ error: 'تاريخ البدء بعد تاريخ الانتهاء.' });
+  const mine = await Store.find('subscriptions', { traineeId: trainee.id });
+  const prior = mine.length > 0;
+
+  /* اشتراك مكرر: نفس المتدرب وبنفس التفاصيل خلال دقيقتين = إرسال ثانٍ
+     للطلب نفسه. كان التجديد يُنشئ اشتراكين بدل واحد فيتضاعف المستحق
+     ويتوزّع الرصيد على اثنين. نُعيد الاشتراك الأصلي بدل إنشاء توأمه. */
+  const twin = mine
+    .filter((x) => x.totalSessions === Number(totalSessions) && x.price === Number(price)
+      && x.startDate === startDate && x.endDate === endDate && withinDupWindow(x))
+    .sort((x, y) => y.id - x.id)[0];
+  if (twin) {
+    return res.json({ ...twin, duplicate: true, status: subStatus(twin), remaining: twin.totalSessions - twin.usedSessions });
+  }
+
   const sub = await Store.insert('subscriptions', {
     traineeId: trainee.id, branchId: trainee.branchId,
     totalSessions: Number(totalSessions), usedSessions: 0, price: Number(price),
     startDate, endDate, status: 'active',
     packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
+    createdAt: new Date().toISOString(),
   });
   // سجل الحدث لِلوحة المتابعة اليومية (جديد أم تجديد)
   await Store.insert('subEvents', {
@@ -960,6 +1020,18 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!date || !time || !duration) return res.status(400).json({ error: 'التاريخ والساعة والمدة مطلوبة.' });
 
+  /* المتدرب لا يحضر حصتين في اللحظة نفسها — فوجود حصة بنفس التاريخ
+     والساعة يعني إرسالًا مكررًا لا حصةً ثانية. نردّ بالخطأ صراحةً بدل
+     خصم حصة إضافية من رصيده بصمت. */
+  const clash = (await Store.find('sessions', { traineeId: trainee.id, date, time }, { limit: 1 }))[0];
+  if (clash) {
+    return res.status(409).json({
+      error: `لهذا المتدرب حصة مسجَّلة بالفعل يوم ${date} الساعة ${time} — لم تُسجَّل حصة ثانية ولم يُخصم رصيد إضافي.`
+        + ' إن كانت حصةً مختلفة فعلًا فغيّر الساعة.',
+      duplicate: true, sessionId: clash.id,
+    });
+  }
+
   // المدربون بالتناوب: الحصة تُنسب لمن نفّذها فعليًا — والمدرب نفسه يستطيع
   // نسبتها لمدرب آخر (الموعد على برنامجه لكن درّب غيره)
   const trainerId = Number(req.body.trainerId) || (req.user.role === 'trainer' ? req.user.id : 0);
@@ -1024,6 +1096,14 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   const result = await Store.transaction(async (tx) => {
     const sub = await tx.getForUpdate('subscriptions', subs[0].id);
     if (!sub || subStatus(sub) !== 'active') throw Object.assign(new Error('نفد رصيد الاشتراك — يرجى التجديد.'), { status: 400 });
+    /* إعادة فحص التكرار داخل المعاملة: قفل الاشتراك يُسلسِل طلبين متزامنين
+       لنفس المتدرب، فيرى الثاني حصة الأول ولا يخصم مرة ثانية. */
+    const again = await tx.find('sessions', { traineeId: trainee.id, date, time }, { limit: 1 });
+    if (again.length) {
+      throw Object.assign(new Error(
+        `لهذا المتدرب حصة مسجَّلة بالفعل يوم ${date} الساعة ${time} — لم تُسجَّل حصة ثانية ولم يُخصم رصيد إضافي.`),
+      { status: 409 });
+    }
     const session = await tx.insert('sessions', {
       traineeId: trainee.id, trainerId, branchId: trainee.branchId,
       date, time, duration: Number(duration), style: absent ? '' : (style || ''), notes: notes || '',
@@ -1203,11 +1283,38 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
   const sub = await Store.get('subscriptions', Number(subscriptionId));
   if (!sub) return res.status(400).json({ error: 'الاشتراك غير موجود.' });
   if (!amount || Number(amount) <= 0 || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان.' });
+  const value = Math.round(Number(amount) * 100) / 100;
+  const payMethod = method || 'كاش';
+
+  /* دفعة مكررة: نفس الاشتراك والمبلغ والتاريخ والطريقة خلال دقيقتين =
+     إرسال ثانٍ للطلب نفسه، لا دفعة ثانية. نُعيد الدفعة الأصلية بدل أن
+     نُضاعف التحصيل في التقارير ونُظهر المتبقي أقل مما هو عليه. */
+  const twin = (await Store.find('payments', { subscriptionId: sub.id, amount: value, date, method: payMethod }))
+    .filter(withinDupWindow)
+    .sort((x, y) => y.id - x.id)[0];
+  if (twin) return res.json({ ...twin, duplicate: true, loyaltyPoint: false });
+
+  /* لا تتجاوز الدفعات قيمة الاشتراك: الزيادة كانت تُسجَّل بصمت فتُخفي
+     دَينًا على اشتراك آخر (لوحة الإدارة تطرح إجمالي المدفوع من إجمالي
+     المستحق) وتُظهر «التحصيل» أعلى من الواقع. */
+  const paidBefore = await Store.sum('payments', 'amount', { subscriptionId: sub.id });
+  const left = Math.round((sub.price - paidBefore) * 100) / 100;
+  if (value > left + 0.001) {
+    return res.status(400).json({
+      error: left > 0
+        ? `المتبقي على هذا الاشتراك ${left} فقط — لا تُسجَّل دفعة أكبر منه. `
+          + 'إن كان المبلغ يخص اشتراكًا آخر فاختره من «دفعة على اشتراك سابق» أو «سداد دين».'
+        : 'هذا الاشتراك مسدَّد بالكامل — لا متبقي عليه. اختر الاشتراك الذي عليه الدين.',
+      remaining: Math.max(0, left),
+    });
+  }
+
   const payment = await Store.insert('payments', {
     subscriptionId: sub.id, traineeId: sub.traineeId, branchId: sub.branchId,
-    amount: Number(amount), date, method: method || 'كاش', note: note || '', createdBy: req.user.id,
+    amount: value, date, method: payMethod, note: note || '', createdBy: req.user.id,
     // سداد دين سابق: الدفعة تُنسب لاشتراك قديم غير مسدَّد ولا تمس رصيد الاشتراك الحالي
     debt: !!req.body.debt,
+    createdAt: new Date().toISOString(),
   });
   // ولاء المشترك: نقطة إن اكتمل السداد دفعةً واحدة على تجديد في وقته
   const loyalty = await growth.evaluateLoyalty(sub.id).catch(() => null);
@@ -1233,7 +1340,7 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
   const branchOf = (id) => (branches.find((b) => b.id === id) || {}).name || '—';
 
   const rows = subscriptions
-    .filter((s) => s.status !== 'cancelled' && (!branch || s.branchId === branch))
+    .filter((s) => countsTowardDebt(s) && (!branch || s.branchId === branch))
     .map((s) => {
       const paid = paidBySub[s.id] || 0;
       const status = subStatus(s);
@@ -1241,7 +1348,7 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
         subscriptionId: s.id, traineeId: s.traineeId, traineeName: nameOf(s.traineeId),
         phone: phoneOf(s.traineeId), branchId: s.branchId, branchName: branchOf(s.branchId),
         packageName: s.packageName || `${s.totalSessions} حصة`,
-        price: s.price, paid, remaining: Math.round((s.price - paid) * 100) / 100,
+        price: s.price, paid, remaining: outstandingOf(s, paid),
         startDate: s.startDate, endDate: s.endDate, status,
         // دين قديم = اشتراك انتهت مدته أو رصيده وما زال عليه متبقٍ
         old: status === 'expired',
@@ -1318,6 +1425,19 @@ app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (
     if (req.body[k] !== undefined) patch[k] = k === 'amount' ? Number(req.body[k]) : req.body[k];
   });
   if (req.body.debt !== undefined) patch.debt = !!req.body.debt;
+  // تعديل المبلغ يخضع لنفس سقف الاشتراك — وإلا صار التعديل بابًا خلفيًا للتجاوز
+  if (patch.amount !== undefined) {
+    if (!(patch.amount > 0)) return res.status(400).json({ error: 'المبلغ غير صالح.' });
+    patch.amount = Math.round(patch.amount * 100) / 100;
+    const sub = await Store.get('subscriptions', payment.subscriptionId);
+    if (sub) {
+      const others = (await Store.sum('payments', 'amount', { subscriptionId: sub.id })) - payment.amount;
+      const left = Math.round((sub.price - others) * 100) / 100;
+      if (patch.amount > left + 0.001) {
+        return res.status(400).json({ error: `أقصى مبلغ لهذه الدفعة ${left} (قيمة الاشتراك ناقص بقية دفعاته).` });
+      }
+    }
+  }
   res.json(await Store.update('payments', payment.id, patch));
 }));
 
@@ -1708,13 +1828,13 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
   const period = { gte: month + '-01', lte: month + '-31' };
   const paidScope = { ...scope, subscriptionId: { isNull: false } };
 
-  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, totalPaid] = await Promise.all([
+  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub] = await Promise.all([
     Store.find('sessions', { ...scope, date: period }),
     Store.count('sessions', { ...scope, date: todayStr(), kind: { ne: 'absence' } }),
     Store.all('subscriptions'),
     Store.all('users'),
     Store.find('payments', { ...paidScope, date: period }),
-    Store.sum('payments', 'amount', paidScope),
+    Store.groupSum('payments', 'amount', 'subscriptionId', null),
   ]);
   const monthSessions = allMonthSessions.filter(delivered);
   const monthAbsences = allMonthSessions.filter((s) => !delivered(s));
@@ -1723,7 +1843,6 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
   const activeTrainees = new Set(subs.filter((s) => s.status === 'active').map((s) => s.traineeId)).size;
 
   const collected = monthPayments.reduce((s, p) => s + p.amount, 0);
-  const totalDue = subs.reduce((s, x) => s + x.price, 0);
 
   const trainers = users.filter((u) => u.role === 'trainer' && inBranch(u)).map((t) => {
     const ts = monthSessions.filter((s) => s.trainerId === t.id);
@@ -1749,7 +1868,8 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
       expiring: subs.filter((s) => s.expiring).length,
       expired: subs.filter((s) => s.status === 'expired').length,
       collectedMonth: collected,
-      outstanding: Math.max(0, totalDue - totalPaid),
+      // نفس تعريف صفحة الديون بالضبط — لا رقمين لنفس السؤال
+      outstanding: outstandingTotal(subs, paidBySub),
     },
     trainers, daily,
     expiringList: subs.filter((s) => s.expiring || s.status === 'expired').map((s) => ({
@@ -1817,7 +1937,9 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
       const trainee = users.find((u) => u.id === s.traineeId) || {};
       return {
         id: s.id, traineeId: s.traineeId, traineeName: trainee.name, branchId: s.branchId,
-        price: s.price, paid, remaining: Math.max(0, s.price - paid),
+        price: s.price, paid, remaining: outstandingOf(s, paid),
+        // الاشتراك الملغى لا يُطالَب به — يظهر في الجدول ولا يدخل مجموع الديون
+        cancelled: !countsTowardDebt(s),
         startDate: s.startDate, endDate: s.endDate,
         status: subStatus(s), renewed: subscriptions.filter((x) => x.traineeId === s.traineeId).length > 1,
       };
@@ -1833,7 +1955,7 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
     kpis: {
       collectedMonth: monthPayments.reduce((s, p) => s + p.amount, 0),
       paymentsCount: monthPayments.length,
-      outstanding: subs.reduce((s, x) => s + x.remaining, 0),
+      outstanding: Math.round(subs.filter((x) => !x.cancelled).reduce((s, x) => s + x.remaining, 0) * 100) / 100,
       expired: subs.filter((s) => s.status === 'expired').length,
       renewed: subs.filter((s) => s.renewed).length,
     },
@@ -2114,7 +2236,12 @@ async function buildTraineeRoster({ branch, status }) {
       },
       subscriptionsCount: mine.length,
       paidCurrent,
-      dueCurrent: current ? Math.max(0, current.price - paidCurrent) : 0,
+      dueCurrent: current ? outstandingOf(current, paidCurrent) : 0,
+      /* المتبقي على كل اشتراكاته لا على الحالي وحده — دَينُ اشتراكٍ سابق
+         كان يسقط من التقرير فيظهر إجمالي الديون أقل من صفحة الديون. */
+      dueAll: mine.filter(countsTowardDebt)
+        .reduce((t, sub) => t + outstandingOf(sub, myPays.filter((p) => p.subscriptionId === sub.id)
+          .reduce((x, p) => x + p.amount, 0)), 0),
       paidTotal: myPays.reduce((s, p) => s + p.amount, 0),
       lastPayment: myPays.reduce((m, p) => (p.date > m ? p.date : m), ''),
     };
@@ -2144,8 +2271,8 @@ async function buildTraineeRoster({ branch, status }) {
     totals: {
       trainees: rows.length,
       active: rows.filter((r) => r.subscription && r.subscription.status === 'active').length,
-      paidTotal: rows.reduce((s, r) => s + r.paidTotal, 0),
-      dueTotal: rows.reduce((s, r) => s + r.dueCurrent, 0),
+      paidTotal: Math.round(rows.reduce((s, r) => s + r.paidTotal, 0) * 100) / 100,
+      dueTotal: Math.round(rows.reduce((s, r) => s + r.dueAll, 0) * 100) / 100,
       withResidence: rows.filter((r) => r.residence).length,
     },
   };
@@ -2173,7 +2300,8 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   if (on('username')) head.push('اسم المستخدم');
   if (on('joinedAt')) head.push('تاريخ الانضمام');
   head.push('الباقة', 'عدد الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'حالة الاشتراك',
-    'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي عليه', 'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
+    'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي على الاشتراك الحالي', 'إجمالي المتبقي عليه',
+    'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
   if (on('lastSession')) head.push('آخر حصة');
 
   const lines = [`تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`, ''];
@@ -2188,7 +2316,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
     if (on('joinedAt')) out.push(cell(r.joinedAt));
     out.push(cell(s && s.packageName), s ? s.totalSessions : '', s ? s.usedSessions : '', s ? s.remaining : '',
       s ? s.startDate : '', s ? s.endDate : '', s ? SUB_STATUS_AR[s.status] || s.status : 'بلا اشتراك',
-      s ? s.price : '', r.paidCurrent, r.dueCurrent, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
+      s ? s.price : '', r.paidCurrent, r.dueCurrent, r.dueAll, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
     if (on('lastSession')) out.push(cell(r.lastSession));
     lines.push(out.join(','));
   });

@@ -1148,7 +1148,7 @@ async function viewTraineeRoster(root) {
       tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
         ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
           'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
-          'قيمة الاشتراك', 'المدفوع', 'المتبقي عليه', 'إجمالي ما دفعه'],
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه'],
         // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
         data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
         (r) => {
@@ -1164,6 +1164,8 @@ async function viewTraineeRoster(root) {
             s ? statusTag(s.status) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
             s ? fmtMoney(s.price) : '—', fmtMoney(r.paidCurrent),
             el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
+            // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
+            el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
             fmtMoney(r.paidTotal)];
         },
         {

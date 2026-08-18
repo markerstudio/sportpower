@@ -12,10 +12,9 @@ function viewLogin(root) {
   const form = el('form', {
     onsubmit: async (e) => {
       e.preventDefault();
-      // ضغطة مزدوجة أثناء انتظار الخادم كانت تُظهر خطوة التحقق مرتين
+      // القفل أثناء انتظار الخادم يتكفّل به حارس الإرسال في el()؛
+      // هنا نُعيد فتح الزر عند الخطأ وحده لأن النجاح ينقل الصفحة
       const btn = e.target.querySelector('button[type=submit]');
-      if (btn.disabled) return;
-      btn.disabled = true;
       err.textContent = '';
       try {
         const res = await API.login(user.value.trim(), pass.value);
@@ -55,8 +54,6 @@ function viewLogin(root) {
       onsubmit: async (e) => {
         e.preventDefault();
         const vbtn = e.target.querySelector('button[type=submit]');
-        if (vbtn.disabled) return;
-        vbtn.disabled = true;
         mfaErr.textContent = '';
         try {
           const data = await API.loginMfa(res.mfaToken, codeIn.value, trustChk.checked, user.value.trim().toLowerCase());
@@ -712,7 +709,13 @@ async function viewAccountantDash(root) {
         data.subscriptions,
         (s) => [el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
           fmtMoney(s.price), fmtMoney(s.paid),
-          el('span', { style: s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(s.remaining)),
+          /* الاشتراك الملغى لا يُطالَب به — يظهر متبقيه رماديًا وخارج
+             مجموع الديون، وإلا بدا دَينًا يُلاحَق وهو ليس كذلك */
+          el('span', {
+            style: s.cancelled ? 'color:var(--app-muted);text-decoration:line-through'
+              : s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '',
+            title: s.cancelled ? 'اشتراك ملغى — لا يدخل في إجمالي الديون' : null,
+          }, fmtMoney(s.remaining)),
           s.startDate, s.endDate, statusTag(s.status)],
         { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
