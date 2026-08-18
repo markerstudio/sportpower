@@ -12,10 +12,9 @@ function viewLogin(root) {
   const form = el('form', {
     onsubmit: async (e) => {
       e.preventDefault();
-      // ضغطة مزدوجة أثناء انتظار الخادم كانت تُظهر خطوة التحقق مرتين
+      // القفل أثناء انتظار الخادم يتكفّل به حارس الإرسال في el()؛
+      // هنا نُعيد فتح الزر عند الخطأ وحده لأن النجاح ينقل الصفحة
       const btn = e.target.querySelector('button[type=submit]');
-      if (btn.disabled) return;
-      btn.disabled = true;
       err.textContent = '';
       try {
         const res = await API.login(user.value.trim(), pass.value);
@@ -55,8 +54,6 @@ function viewLogin(root) {
       onsubmit: async (e) => {
         e.preventDefault();
         const vbtn = e.target.querySelector('button[type=submit]');
-        if (vbtn.disabled) return;
-        vbtn.disabled = true;
         mfaErr.textContent = '';
         try {
           const data = await API.loginMfa(res.mfaToken, codeIn.value, trustChk.checked, user.value.trim().toLowerCase());
@@ -712,7 +709,13 @@ async function viewAccountantDash(root) {
         data.subscriptions,
         (s) => [el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
           fmtMoney(s.price), fmtMoney(s.paid),
-          el('span', { style: s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(s.remaining)),
+          /* الاشتراك الملغى لا يُطالَب به — يظهر متبقيه رماديًا وخارج
+             مجموع الديون، وإلا بدا دَينًا يُلاحَق وهو ليس كذلك */
+          el('span', {
+            style: s.cancelled ? 'color:var(--app-muted);text-decoration:line-through'
+              : s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '',
+            title: s.cancelled ? 'اشتراك ملغى — لا يدخل في إجمالي الديون' : null,
+          }, fmtMoney(s.remaining)),
           s.startDate, s.endDate, statusTag(s.status)],
         { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
@@ -1120,14 +1123,14 @@ async function viewTraineePage(root, traineeId) {
         el('span', {}, el('i', { style: 'background:var(--blue-500)' }), 'نسبة الدهون %'))));
   if (rs.length) {
     inbodyCard.append(lineChart(rs.map((r) => r.date.slice(5)), rs.map((r) => r.weight), rs.map((r) => r.bodyFatPct)));
-    inbodyCard.append(inbodyComparisonTable(rs));
+    inbodyCard.append(inbodyComparisonTable(rs, t.goal));
     // تعديل القراءات وحذفها — للإدارة والمدرب
     if (['admin', 'trainer'].includes(API.user.role)) {
       inbodyCard.append(el('h4', { style: 'margin:14px 0 6px;font-size:13px;color:var(--app-muted)' }, 'كل القراءات — تعديل وحذف'),
         dataTable(['التاريخ', 'الوزن', 'التغيّر ⇅', 'دهون %', 'عضل', 'الخصر', 'ملاحظة', ''],
           rs.map((r, i) => ({ r, prev: i > 0 ? rs[i - 1] : null })).reverse().map(({ r, prev }) => [r.date, r.weight ?? '—',
             // مقارنة بالقراءة التي قبلها زمنيًا — الاتجاه يعكس الطلوع والنزول الفعلي
-            changeArrow(r.weight, prev && prev.weight),
+            changeArrow(r.weight, prev && prev.weight, { goodWhenUp: goodWhenUpForGoal(t.goal) }),
             r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.waist ?? '—', r.notes || '—',
             el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openInbodyEditModal(refreshPage, r) }, 'تعديل'),
@@ -1475,8 +1478,9 @@ function openInbodyEditModal(onDone, r) {
   ]);
 }
 
-function inbodyComparisonTable(readings) {
+function inbodyComparisonTable(readings, goal) {
   const first = readings[0], last = readings[readings.length - 1];
+  const weightUpIsGood = goodWhenUpForGoal(goal);
   const rows = [
     ['الوزن (كغ)', 'weight'], ['نسبة الدهون %', 'bodyFatPct'], ['كتلة العضلات (كغ)', 'muscleMass'],
     ['دهون الجسم (كغ)', 'fatMass'], ['الماء (لتر)', 'water'], ['BMI', 'bmi'], ['النقاط', 'score'],
@@ -1487,10 +1491,14 @@ function inbodyComparisonTable(readings) {
     rows.map(([label, k]) => {
       const a = first[k], b = last[k];
       const delta = a != null && b != null ? +(b - a).toFixed(1) : null;
-      // العضل والماء والصدر واليد والرجل: الزيادة تقدم — والخصر والحوض والدهون: النقصان تقدم
-      const good = ['muscleMass', 'water', 'score', 'chest', 'arm', 'leg'].includes(k) ? delta > 0 : delta < 0;
+      /* العضل والماء والصدر واليد والرجل: الزيادة تقدم — والخصر والحوض
+         والدهون: النقصان تقدم. أما الوزن فيتبع هدف المتدرب: زيادةٌ لمن
+         يبني عضلًا تقدّم، وبلا حكم لمن هدفه التثبيت. */
+      const good = k === 'weight'
+        ? (weightUpIsGood === null ? null : weightUpIsGood ? delta > 0 : delta < 0)
+        : ['muscleMass', 'water', 'score', 'chest', 'arm', 'leg'].includes(k) ? delta > 0 : delta < 0;
+      const tone = delta === 0 || good === null ? 'tag--neutral' : good ? 'tag--accent' : 'tag--danger';
       return [label, a ?? '—', b ?? '—',
-        delta === null ? '—' : el('span', { class: 'tag ' + (delta === 0 ? 'tag--neutral' : good ? 'tag--accent' : 'tag--danger') },
-          (delta > 0 ? '+' : '') + delta)];
+        delta === null ? '—' : el('span', { class: 'tag ' + tone }, (delta > 0 ? '+' : '') + delta)];
     }));
 }

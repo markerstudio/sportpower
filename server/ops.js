@@ -258,12 +258,17 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       const parts = [tasksPct, targetsPct].filter((v) => v !== null);
       const kpi = parts.length ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length) : null;
 
-      const monthSessions = data.sessions.filter((s) => s.trainerId === t.id && monthOf(s.date) === month);
+      /* الغياب مخصوم من رصيد المتدرب لكنه ليس تدريبًا نفّذه المدرب —
+         كان يُحتسب هنا حصةً ومتدربًا فريدًا فيرفع أرقام المدرب زورًا،
+         بينما تستثنيه كل بقية التقارير (فتختلف الأرقام بين الشاشات). */
+      const monthAll = data.sessions.filter((s) => s.trainerId === t.id && monthOf(s.date) === month);
+      const monthSessions = monthAll.filter(delivered);
       return {
         trainerId: t.id, name: t.name, branchId: t.branchId,
         tasksTotal: myTasks.length, tasksDone: myTasks.filter((x) => x.status === 'done').length,
         tasksPct, targetsPct, kpi,
         sessions: monthSessions.length,
+        absences: monthAll.length - monthSessions.length,
         hours: hoursOf(monthSessions),
         uniqueTrainees: new Set(monthSessions.map((s) => s.traineeId)).size,
       };
@@ -302,6 +307,20 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.all('programs'),
     ]);
 
+    /* نافذة أوسع للأهداف نصف السنوية والسنوية: قياسها على بيانات الشهر
+       وحده كان يُظهرها متأخرة أبدًا. تُحمَّل فقط إن وُجد هدف يحتاجها. */
+    const year = month.slice(0, 4);
+    const wideTargets = targets.some((t) => /^\d{4}$/.test(t.period) || /^\d{4}-H[12]$/.test(t.period));
+    const yearRange = { gte: year + '-01-01', lte: year + '-12-31' };
+    const [yearPayments, yearSessions, yearEvents] = wideTargets
+      ? await Promise.all([
+        Store.find('payments', { date: yearRange }),
+        Store.find('sessions', { date: yearRange }),
+        Store.find('subEvents', { date: yearRange }),
+      ])
+      : [payments, sessionsAll, subEvents];
+    const periodData = { payments: yearPayments, sessions: yearSessions, subscriptions, subEvents: yearEvents };
+
     const inBranch = (x) => !branch || x.branchId === branch;
     const sessions = sessionsAll.filter(delivered).filter(inBranch);
     const absences = sessionsAll.filter((s) => !delivered(s)).filter(inBranch);
@@ -329,9 +348,16 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         const myEvents = scopedEvents.filter((e) => myTraineeIds.has(e.traineeId) || mineIds.has(e.traineeId));
         const goalsOf = (g) => [...myTraineeIds].filter((id) => (traineeById[id] || {}).goal === g).length;
 
+        /* الهدف نصف السنوي أو السنوي يُقاس على فترته كاملة، وبيانات هذه
+           اللوحة محدودة بالشهر — فقياسه عليها يُظهره متأخرًا دائمًا.
+           نقيس الشهري من بيانات الشهر، والأطول من نافذته الكاملة. */
         const targetPcts = targets
           .filter((x) => x.scope === 'trainer' && x.refId === t.id && monthInPeriod(x.period, month))
-          .map((x) => Math.min(Math.round(((computeActual(x, { payments, sessions: sessionsAll, subscriptions, subEvents, subStatus }) || 0) / x.value) * 100), 120));
+          .map((x) => {
+            const wide = /^\d{4}$/.test(x.period) || /^\d{4}-H[12]$/.test(x.period);
+            const src = wide ? periodData : { payments, sessions: sessionsAll, subscriptions, subEvents, subStatus };
+            return Math.min(Math.round(((computeActual(x, { ...src, subStatus }) || 0) / x.value) * 100), 120);
+          });
 
         return {
           trainerId: t.id, name: t.name, branchId: t.branchId,

@@ -70,7 +70,15 @@ const TITLES = {
   '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
 };
 
+/* جيل الرسم: نقرتان سريعتان على القائمة كانتا تُشغّلان رسمتين معًا،
+   وكلٌّ منهما تُفرّغ الصفحة ثم تنتظر الخادم ثم تُلحق هيكلها — فينتهي
+   الأمر بهيكلين فوق بعض ومعالجات مكررة (وضغطة واحدة تُرسل طلبين).
+   كل رسمة تحمل رقمها، وأي رسمة تجاوزها غيرُها تنسحب بصمت. */
+let renderSeq = 0;
+
 async function renderShell(route, renderView) {
+  const mine = ++renderSeq;
+  const stale = () => mine !== renderSeq;
   const app = document.getElementById('app');
   app.innerHTML = '';
 
@@ -125,6 +133,8 @@ async function renderShell(route, renderView) {
       el('button', { class: 'iconbtn', title: 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
     el('div', { id: 'view' }));
 
+  if (stale()) return;
+  app.innerHTML = '';
   app.append(el('div', { class: 'shell' }, sidebar, backdrop, main));
 
   // تنبيه أمان: كلمة المرور الافتراضية لم تُغيَّر بعد
@@ -133,7 +143,7 @@ async function renderShell(route, renderView) {
       el('div', { class: 'alert alert--warning', style: 'margin:16px 28px 0;justify-content:space-between' },
         el('span', {}, '⚠️ ما زلت تستخدم كلمة المرور الافتراضية — غيّرها الآن لتأمين الحساب.'),
         el('button', { class: 'btn btn--accent btn--sm', onclick: openPasswordModal }, 'تغيير كلمة المرور')),
-      document.getElementById('view'));
+      main.querySelector('#view'));
   }
 
   // عدّاد الإشعارات
@@ -143,7 +153,9 @@ async function renderShell(route, renderView) {
     if (unread) bellBtn.append(el('span', { class: 'bell__count' }, String(unread)));
   } catch (e) { /* تجاهل */ }
 
-  await renderView(document.getElementById('view'));
+  if (stale()) return;
+  await renderView(main.querySelector('#view'));
+  if (stale()) return;
 
   /* نشرة «ما الجديد» بعد اكتمال الصفحة — مرة واحدة لكل مستخدم بعد التحديث.
      المستخدم الذي عليه تغيير كلمة مروره يراها بعد أن ينتهي من ذلك. */

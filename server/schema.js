@@ -62,6 +62,8 @@ const SCHEMA = {
       /* آخر إصدار عُرضت نشرته «ما الجديد» على هذا المستخدم — تظهر مرة
          واحدة لكل شخص عند أول دخول بعد التحديث، ثم لا تتكرر */
       seenRelease: col('text'),
+      /* لحظة الإنشاء (ISO) — يكشف بها الخادم التسجيل المكرر خلال ثوانٍ */
+      createdAt: col('text'),
     },
     indexes: [['role'], ['branchId'], ['referralCode']],
   },
@@ -79,6 +81,9 @@ const SCHEMA = {
       cancelReason: col('text'),
       packageId: col('int', { ref: ref('packages', 'setnull') }),
       packageName: col('text'),
+      /* لحظة الإنشاء (ISO) — يكشف بها الخادم الإدخال المكرر خلال ثوانٍ
+         (ضغطة مزدوجة أو إعادة إرسال) فلا يُنشأ اشتراكان بدل واحد */
+      createdAt: col('text'),
     },
     indexes: [['traineeId'], ['branchId'], ['status'], ['endDate'], ['branchId', 'status']],
   },
@@ -97,6 +102,8 @@ const SCHEMA = {
       createdBy: col('int'),
       /* سداد دين على اشتراك سابق — يُميَّز في السجل ولا يخلط بتحصيل الاشتراك الحالي */
       debt: col('bool', { default: 'false' }),
+      /* لحظة الإنشاء (ISO) — تكشف الدفعة المكررة خلال ثوانٍ فلا تُسجَّل مرتين */
+      createdAt: col('text'),
     },
     indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date']],
   },

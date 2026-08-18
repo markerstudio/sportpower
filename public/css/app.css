@@ -71,6 +71,9 @@ a { color: var(--action); }
 .btn--lg { padding: 13px 28px; font-size: var(--text-base); }
 .btn--full { width: 100%; }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
+/* نموذج قيد الإرسال — إشارة بصرية أن الطلب جارٍ فلا يُكرَّر الضغط */
+form.is-busy { cursor: progress; }
+form.is-busy .btn[type=submit] { position: relative; }
 
 /* ---------- وسوم وحالات ---------- */
 .tag {

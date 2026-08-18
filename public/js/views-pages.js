@@ -21,7 +21,7 @@ async function viewCalendar(root) {
     const scopeQ = API.user.role === 'trainer' && state.branchScope ? '&all=1' : '';
     const reqs = [
       API.get(`/api/appointments?from=${from}&to=${to}` + trainerQ + scopeQ),
-      API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ),
+      API.get(`/api/sessions?from=${from}&to=${to}` + trainerQ + scopeQ),
     ];
     // الإدارة والمحاسب يديران مواعيد كل المدربين
     const isAdmin = ['admin', 'accountant'].includes(API.user.role);
@@ -789,6 +789,10 @@ async function viewInbody(root) {
 
   const trainees = API.user.role === 'trainee' ? [] : await API.get('/api/users?role=trainee');
   const state = { trainee: API.user.role === 'trainee' ? API.user.id : (trainees[0] || {}).id };
+  /* هدف المتدرب المعروض — يحدد قراءة اتجاه الوزن (زيادةٌ لبناء العضل تقدّم) */
+  const currentGoal = () => (API.user.role === 'trainee'
+    ? API.user.goal
+    : (trainees.find((t) => t.id === state.trainee) || {}).goal);
   container.innerHTML = '';
 
   // حصيلة النتائج والمشاكل بالفرع — للموظفين وحدهم
@@ -823,8 +827,9 @@ async function viewInbody(root) {
       dataTable(['التاريخ', 'الوزن', 'التغيّر ⇅', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة',
         ...(isStaff ? ['رصد (سرّي)'] : [])],
         readings.map((r, i) => [r.date, r.weight,
-          // السهم مقارنةً بالقراءة السابقة زمنيًا — طلوع الوزن ↑ ونزوله ↓
-          changeArrow(r.weight, i > 0 ? readings[i - 1].weight : null),
+          // السهم مقارنةً بالقراءة السابقة زمنيًا — طلوع الوزن ↑ ونزوله ↓،
+          // ولونه بحسب هدف المتدرب (بناء العضل يرحّب بالزيادة)
+          changeArrow(r.weight, i > 0 ? readings[i - 1].weight : null, { goodWhenUp: goodWhenUpForGoal(currentGoal()) }),
           r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
           r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—',
@@ -839,7 +844,7 @@ async function viewInbody(root) {
               onclick: () => openFlagModal(renderList, r.traineeId, 'problem', { inbodyId: r.id, date: r.date }),
             }, '⚠️ مشكلة'))] : [])])),
       el('h3', { class: 'card__title', style: 'margin-top:18px' }, 'مقارنة أول قراءة بآخر قراءة'),
-      inbodyComparisonTable(readings));
+      inbodyComparisonTable(readings, currentGoal()));
   }
 
   await renderList();
@@ -1148,7 +1153,7 @@ async function viewTraineeRoster(root) {
       tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
         ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
           'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
-          'قيمة الاشتراك', 'المدفوع', 'المتبقي عليه', 'إجمالي ما دفعه'],
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه'],
         // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
         data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
         (r) => {
@@ -1164,6 +1169,8 @@ async function viewTraineeRoster(root) {
             s ? statusTag(s.status) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
             s ? fmtMoney(s.price) : '—', fmtMoney(r.paidCurrent),
             el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
+            // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
+            el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
             fmtMoney(r.paidTotal)];
         },
         {

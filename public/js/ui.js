@@ -1,11 +1,44 @@
 /* أدوات الواجهة: بناء DOM، جداول، نوافذ، رسوم بيانية */
 
+/* ------------------------------------------------------------
+   حارس الإرسال المزدوج
+   كل معالجات النماذج في النظام غير متزامنة: تنتظر ردّ الخادم بينما
+   يبقى زر الحفظ فعّالًا. فنقرة مزدوجة (أو ضغطة Enter مكررة، أو نقرة
+   ثانية على اتصال بطيء) كانت تُرسل الطلب مرتين — فتُسجَّل الحصة
+   مرتين، وتُضاف الدفعة مرتين، ويُنشأ اشتراكان بدل واحد عند التجديد.
+   هنا نُغلق النموذج ما دام طلبه جاريًا، ونُعيد فتحه عند انتهائه.
+   يمرّ من هنا **كل** نموذج تلقائيًا (بلا تعديل في كل صفحة على حدة).
+   ------------------------------------------------------------ */
+function guardSubmit(handler) {
+  let busy = false;
+  return async function guarded(e) {
+    if (busy) { e.preventDefault(); return undefined; }
+    busy = true;
+    const form = e.currentTarget;
+    const locked = form
+      ? [...form.querySelectorAll('button:not([type=button]),input[type=submit]')].filter((b) => !b.disabled)
+      : [];
+    locked.forEach((b) => { b.disabled = true; });
+    if (form) form.classList.add('is-busy');
+    try {
+      return await handler.call(this, e);
+    } finally {
+      busy = false;
+      if (form) form.classList.remove('is-busy');
+      // النافذة قد تكون أُغلقت بنجاح الحفظ — لا نُعيد تفعيل زرٍ خرج من الصفحة
+      locked.forEach((b) => { if (b.isConnected) b.disabled = false; });
+    }
+  };
+}
+
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (k === 'class') node.className = v;
     else if (k === 'html') node.innerHTML = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (k.startsWith('on') && typeof v === 'function') {
+      node.addEventListener(k.slice(2), tag === 'form' && k === 'onsubmit' ? guardSubmit(v) : v);
+    }
     else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v === true ? '' : v);
   }
   for (const c of children.flat()) {
@@ -155,6 +188,12 @@ function searchSelect(options, attrs = {}) {
       const found = options.find(([val]) => String(val) === String(v));
       inp.value = found ? found[1] : '';
     },
+  });
+  /* الغلاف يتصرّف كحقل: تعطيله يُعطّل مربع الكتابة داخله. بدونه كان
+     وضع «للاطّلاع فقط» يترك المنتقي قابلًا للكتابة رغم تعطيل بقية الحقول. */
+  Object.defineProperty(wrap, 'disabled', {
+    get() { return inp.disabled; },
+    set(v) { inp.disabled = !!v; },
   });
   if (attrs.onchange) inp.addEventListener('change', () => attrs.onchange({ target: wrap }));
   return wrap;
@@ -363,13 +402,20 @@ function flagTag(f) {
 
 /* سهم التغيّر بين قراءتين متتاليتين (بترتيب التاريخ) — الاتجاه يعكس
    الحركة الفعلية دائمًا: طلوع = ↑ ونزول = ↓، واللون حسب المرغوب للمؤشر */
+/* اتجاه الوزن يُقرأ حرفيًا (طلوع ↑ ونزول ↓)، أما اللونُ فحكمٌ يتبع هدف
+   المتدرب لا الوزن وحده: من هدفه بناء العضل زيادةُ وزنه تقدّمٌ لا تراجع،
+   ومن هدفه التثبيت لا يُحكم على تغيّره أصلًا. كان اللون يُحمّر كل زيادة
+   للجميع فيقرأ المدرب نتيجةً صحيحة على أنها مشكلة. */
+const goodWhenUpForGoal = (goal) => (goal === 'muscle' ? true : goal === 'maintain' ? null : false);
+
 function changeArrow(curr, prev, { goodWhenUp = false } = {}) {
   if (curr == null || prev == null) return el('span', { class: 'tag tag--neutral' }, '—');
   const d = +(Number(curr) - Number(prev)).toFixed(1);
   if (d === 0) return el('span', { class: 'tag tag--neutral' }, '＝');
   const up = d > 0;
-  const good = goodWhenUp ? up : !up;
-  return el('span', { class: 'tag ' + (good ? 'tag--accent' : 'tag--danger'), title: 'مقارنة بالقراءة السابقة' },
+  const tone = goodWhenUp === null ? 'tag--neutral'
+    : (goodWhenUp ? up : !up) ? 'tag--accent' : 'tag--danger';
+  return el('span', { class: 'tag ' + tone, title: 'مقارنة بالقراءة السابقة' },
     (up ? '↑ +' : '↓ −') + Math.abs(d));
 }
 
