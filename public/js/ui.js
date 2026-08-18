@@ -363,7 +363,22 @@ function progressRing(used, total, caption) {
 
 /* ---------- مساعدات عامة ---------- */
 const ROLE_LABELS = { admin: 'الإدارة', trainer: 'مدرب', accountant: 'محاسب', trainee: 'متدرب', nutritionist: 'أخصائية تغذية' };
-const GOAL_LABELS = { loss: 'نزول وزن', muscle: 'زيادة عضل', maintain: 'تثبيت وزن' };
+/* أهداف المشتركين — نفس تصنيف الخادم (server/goals.js).
+   weightUp: هل زيادة الوزن تقدّمٌ لهذا الهدف؟ null = لا حكم على الوزن. */
+const GOAL_KINDS = {
+  loss:     { label: 'نزول وزن',        weightUp: false },
+  fat:      { label: 'نزول دهون',       weightUp: null },
+  muscle:   { label: 'بناء كتلة عضلية', weightUp: true },
+  football: { label: 'لاعب فطبول',      weightUp: null },
+  athlete:  { label: 'لاعب رياضي',      weightUp: null },
+  therapy:  { label: 'علاجي',           weightUp: null },
+  maintain: { label: 'تثبيت وزن',       weightUp: null },
+};
+const GOAL_LABELS = Object.fromEntries(Object.entries(GOAL_KINDS).map(([k, v]) => [k, v.label]));
+/* مكتبة التغذية مبنية على ثلاثة مسارات، والأهداف السبعة تنزل عليها:
+   «لاعب فطبول» يقرأ وجبات مسار العضل. فمنتقيات الوجبات تعرض المسارات
+   الثلاثة وحدها — وإلا أُنشئت وجبة على هدفٍ لا يصله أحد. */
+const MEAL_GOALS = { loss: 'نزول وزن', muscle: 'بناء عضل', maintain: 'تثبيت' };
 const MEAL_TYPES = { breakfast: 'فطور', lunch: 'غداء', dinner: 'عشاء', snack: 'سناك' };
 const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
@@ -430,7 +445,7 @@ function flagTag(f) {
    المتدرب لا الوزن وحده: من هدفه بناء العضل زيادةُ وزنه تقدّمٌ لا تراجع،
    ومن هدفه التثبيت لا يُحكم على تغيّره أصلًا. كان اللون يُحمّر كل زيادة
    للجميع فيقرأ المدرب نتيجةً صحيحة على أنها مشكلة. */
-const goodWhenUpForGoal = (goal) => (goal === 'muscle' ? true : goal === 'maintain' ? null : false);
+const goodWhenUpForGoal = (goal) => (GOAL_KINDS[goal] ? GOAL_KINDS[goal].weightUp : false);
 
 function changeArrow(curr, prev, { goodWhenUp = false } = {}) {
   if (curr == null || prev == null) return el('span', { class: 'tag tag--neutral' }, '—');

@@ -1033,6 +1033,9 @@ async function viewTraineePage(root, traineeId) {
   /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب) */
   container.append(traineePackagesCard(data, traineeId, refreshPage));
 
+  /* الهدف التدريبي لهذا المشترك — لا برنامج عام يُربط بالجميع */
+  container.append(traineeGoalCard(data, traineeId, refreshPage));
+
   /* تقييم الحصص: المتدرب يقيّم حصصه — والنتيجة سرّية تصل للإدارة */
   if (API.user.role === 'trainee' && API.user.id === traineeId) {
     container.append(traineeRatingsCard(data, refreshPage));
@@ -1237,6 +1240,169 @@ async function viewTraineePage(root, traineeId) {
         ? el('div', { class: 'meals-grid' }, ...data.mealPlans.map((p) => mealCard(p.meal, { slotLabel: MEAL_TYPES[p.slot] })))
         : el('div', { class: 'empty' }, 'لم يُربط برنامج غذائي بعد — تصفح مكتبة التغذية حسب هدفك.')));
   }
+}
+
+/* ============================================================
+   الهدف التدريبي للمشترك
+   «كل شخص الو هدف مختلف» — فالهدف خطةٌ مربوطة بحسابه: أسلوبها وغايتها
+   وعدد حصصها وغياباتها المسموحة والتزام خطة أكلها والتغيّرات المستهدفة.
+   وتقدّمُها يُقرأ من الحصص المسجَّلة لا من إدخال يدوي.
+   ============================================================ */
+function goalKindOptions() {
+  return Object.entries(GOAL_LABELS);
+}
+
+function traineeGoalCard(data, traineeId, onDone) {
+  const goals = data.goals || [];
+  const active = goals.find((g) => (g.status || 'active') === 'active');
+  const past = goals.filter((g) => g !== active);
+  const canEdit = ['admin', 'trainer', 'nutritionist'].includes(API.user.role);
+  const card = el('div', { class: 'card' });
+
+  const head = el('h3', { class: 'card__title' }, 'الهدف التدريبي');
+  if (canEdit) {
+    head.append(active
+      ? el('div', { style: 'display:flex;gap:6px' },
+        el('button', { class: 'btn btn--outline btn--sm', onclick: () => openGoalModal(onDone, traineeId, active) }, 'تعديل'),
+        el('button', { class: 'btn btn--accent btn--sm', onclick: () => openGoalCloseModal(onDone, active) }, 'إغلاق الهدف'))
+      : el('button', { class: 'btn btn--accent btn--sm', onclick: () => openGoalModal(onDone, traineeId, null) }, '+ وضع هدف'));
+  }
+  card.append(head);
+
+  if (!active) {
+    card.append(el('div', { class: 'alert alert--warning', style: 'margin:0' },
+      canEdit
+        ? '⚠️ لا هدف تدريبي فعّال لهذا المشترك — بلا هدف لا خطة تُقاس ولا يُعرف إن كان يتقدّم أم يراوح مكانه.'
+        : 'لم يُوضع لك هدف تدريبي بعد — تواصل مع مدربك.'));
+  } else {
+    const p = active.progress || {};
+    const row = (label, value) => (value || value === 0
+      ? el('div', {}, el('div', { style: 'font-size:12px;color:var(--app-muted)' }, label),
+        el('div', { style: 'font-weight:700' }, String(value)))
+      : null);
+    card.append(
+      el('div', { class: 'macros', style: 'margin-bottom:10px' },
+        el('span', { class: 'tag tag--petrol' }, active.kindLabel || GOAL_LABELS[active.kind] || 'هدف'),
+        el('span', { class: 'macro' }, el('b', {}, active.style || '—')),
+        active.trainerName ? el('span', { class: 'macro' }, 'وضعه ', el('b', {}, active.trainerName)) : el('span'),
+        active.startDate ? el('span', { class: 'macro' }, `${active.startDate}${active.endDate ? ' ← ' + active.endDate : ''}`) : el('span')),
+      active.purpose ? el('p', { style: 'margin:0 0 12px;color:var(--app-muted);font-size:14px' }, active.purpose) : el('span'),
+      el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:12px' },
+        ...[
+          row('المدة', active.months ? active.months + ' أشهر' : null),
+          row('الحصص المخطَّطة', active.sessionsPlanned),
+          row('الغيابات المسموحة', active.allowedAbsences),
+          row('التعويض خلال', active.makeupMonths ? active.makeupMonths + ' شهر' : null),
+          row('التزام خطة الأكل', active.mealCommitPct ? active.mealCommitPct + '%' : null),
+        ].filter(Boolean)));
+
+    if (active.sessionsPlanned) {
+      card.append(
+        el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:4px' },
+          `الحصص المنفَّذة ضمن الهدف: ${p.sessionsDone} من ${active.sessionsPlanned}`),
+        progressBar(p.sessionsPct));
+    }
+    if (active.allowedAbsences != null) {
+      card.append(el('div', { style: 'margin-top:8px;font-size:13px' },
+        'الغيابات: ',
+        el('b', { style: p.overAbsence ? 'color:var(--status-danger)' : '' }, `${p.absences} من ${active.allowedAbsences}`),
+        p.overAbsence ? el('span', { class: 'tag tag--danger', style: 'margin-inline-start:6px' }, 'تجاوز المسموح') : ''));
+    }
+    if (active.targetChanges) {
+      card.append(el('div', { class: 'alert alert--info', style: 'margin:12px 0 0' },
+        el('b', {}, 'التغيّرات المستهدفة: '), active.targetChanges));
+    }
+    if (active.notes) {
+      card.append(el('div', { style: 'margin-top:10px;font-size:13px;color:var(--app-muted)' }, active.notes));
+    }
+  }
+
+  if (past.length) {
+    card.append(el('h4', { style: 'margin:16px 0 6px;font-size:13px;color:var(--app-muted)' }, 'أهداف سابقة'),
+      dataTable(['النوع', 'الأسلوب', 'من', 'إلى', 'الحالة', 'ما تحقق'],
+        past.map((g) => [g.kindLabel || '—', g.style || '—', g.startDate || '—', g.endDate || '—',
+          el('span', { class: 'tag ' + (g.status === 'done' ? 'tag--accent' : 'tag--neutral') },
+            g.status === 'done' ? 'مكتمل' : 'ملغى'),
+          g.outcome || '—'])));
+  }
+  return card;
+}
+
+function openGoalModal(onDone, traineeId, existing) {
+  const kindSel = select(goalKindOptions(), { value: existing ? existing.kind : 'loss' });
+  const styleIn = input({ value: existing ? existing.style || '' : '', placeholder: 'مثال: قوة — تقسيمة دفع/سحب/أرجل' });
+  const purposeIn = textarea({ value: existing ? existing.purpose || '' : '', placeholder: 'الهدف من هذا الأسلوب…' });
+  const monthsIn = input({ type: 'number', step: '0.5', min: 0.5, value: existing ? existing.months ?? '' : 3 });
+  const sessionsIn = input({ type: 'number', min: 1, value: existing ? existing.sessionsPlanned ?? '' : 36 });
+  const absIn = input({ type: 'number', min: 0, value: existing ? existing.allowedAbsences ?? '' : 4 });
+  const makeupIn = input({ type: 'number', step: '0.5', min: 0, value: existing ? existing.makeupMonths ?? '' : 1 });
+  const mealIn = input({ type: 'number', min: 0, max: 100, value: existing ? existing.mealCommitPct ?? '' : 90 });
+  const changesIn = textarea({ value: existing ? existing.targetChanges || '' : '', placeholder: 'مثال: −6 كغ وزن، −3% دهون، محيط الخصر −5 سم' });
+  const startIn = input({ type: 'date', value: existing ? existing.startDate || todayISO() : todayISO() });
+  const notesIn = textarea({ value: existing ? existing.notes || '' : '', placeholder: 'ملاحظات (اختياري)' });
+
+  const close = modal(existing ? 'تعديل الهدف التدريبي' : 'وضع هدف تدريبي', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (!styleIn.value.trim()) { toast('الأسلوب التدريبي مطلوب.', true); return; }
+        const body = {
+          traineeId, kind: kindSel.value, style: styleIn.value.trim(), purpose: purposeIn.value.trim(),
+          months: monthsIn.value || null, sessionsPlanned: sessionsIn.value || null,
+          allowedAbsences: absIn.value === '' ? null : absIn.value,
+          makeupMonths: makeupIn.value || null, mealCommitPct: mealIn.value || null,
+          targetChanges: changesIn.value.trim(), startDate: startIn.value, notes: notesIn.value.trim(),
+        };
+        try {
+          if (existing) await API.put('/api/trainee-goals/' + existing.id, body);
+          else await API.post('/api/trainee-goals', body);
+          toast(existing ? 'حُفظ الهدف.' : 'وُضع الهدف — ووصل إشعار للمشترك.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, field('نوع الهدف', kindSel)),
+      el('div', { class: 'span-2' }, field('الأسلوب التدريبي *', styleIn)),
+      el('div', { class: 'span-2' }, field('الهدف من الأسلوب', purposeIn)),
+      field('المدة (أشهر)', monthsIn),
+      field('عدد الحصص خلال المدة', sessionsIn),
+      field('الغيابات المسموحة', absIn),
+      field('التعويض خلال (أشهر)', makeupIn),
+      field('التزام خطة الأكل %', mealIn),
+      field('تاريخ البدء', startIn),
+      el('div', { class: 'span-2' }, field('التغيّرات المستهدفة خلال المدة', changesIn)),
+      el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'تاريخ الانتهاء يُحسب من المدة تلقائيًا. ونوع الهدف يصير هدفَ حساب المشترك — '
+        + 'فتتبعه قراءةُ التقدّم في القياسات ومكتبةُ التغذية.'),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' },
+        existing ? 'حفظ الهدف' : 'وضع الهدف'))),
+  ]);
+}
+
+/* إغلاق الهدف: مكتملٌ بما تحقق، أو ملغى — والسجل يبقى في ملفه */
+function openGoalCloseModal(onDone, goal) {
+  const statusSel = select([['done', 'مكتمل — تحقق الهدف'], ['cancelled', 'ملغى']]);
+  const outcomeIn = textarea({ placeholder: 'ما الذي تحقق فعلًا؟ (يظهر في سجل أهدافه)' });
+  const close = modal('إغلاق الهدف التدريبي', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/trainee-goals/' + goal.id, { status: statusSel.value, outcome: outcomeIn.value.trim() });
+          toast('أُغلق الهدف — ويمكن وضع هدف جديد الآن.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, field('الحالة', statusSel)),
+      el('div', { class: 'span-2' }, field('ما تحقق', outcomeIn)),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'إغلاق الهدف يفتح البابَ لوضع هدف جديد — ولا يُحذف هذا من سجله.'),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'إغلاق الهدف'))),
+  ]);
 }
 
 /* ============================================================

@@ -9,6 +9,51 @@ const METRIC_OPTIONS = [
   ['newSubs', 'اشتراكات جديدة/تجديد'], ['activeTrainees', 'المتدربون الفعالون'],
 ];
 
+/* ============================================================
+   تغطية الأهداف التدريبية
+   «ببين عندي مين من المشتركين ما انعملو هدف تدريبي» — والرقم المهم ليس
+   عدد الأهداف بل من بقي بلا هدف، فهو العمل الذي لم يُنجَز بعد.
+   ============================================================ */
+async function goalCoverageCard(month) {
+  let cov;
+  try { cov = await API.get('/api/trainee-goals/coverage?month=' + month); }
+  catch (e) { return el('span'); }
+  const t = cov.totals;
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, `الأهداف التدريبية — تغطية المشتركين (${month})`),
+    el('div', { class: 'kpis', style: 'margin-bottom:10px' },
+      kpiTile(t.activeTrainees, 'مشترك فعّال', 'users'),
+      kpiTile(t.withGoal, 'له هدف تدريبي', 'target', t.missing ? undefined : 'accent'),
+      kpiTile(t.missing, 'بلا هدف', 'alert', t.missing ? 'danger' : undefined),
+      kpiTile(t.goalsThisMonth, 'أهداف وُضعت هذا الشهر', 'compass')));
+  if (t.coveragePct !== null) card.append(progressBar(t.coveragePct));
+
+  if (cov.missing.length) {
+    card.append(
+      el('div', { style: 'margin:12px 0 6px;font-size:13px;color:var(--app-muted)' },
+        'هؤلاء يشتركون فعليًا ولا خطة مقاسة لهم — الهدف يُوضع من ملف كلٍّ منهم:'),
+      pagedTable(['المشترك', 'الفرع', 'هدفه المعلن', 'آخر من درّبه', ''],
+        cov.missing,
+        (m) => [
+          el('a', { href: '#/trainee/' + m.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, m.name),
+          m.branchName, m.goalLabel || '—', m.lastTrainerName || '—',
+          el('a', { class: 'btn btn--accent btn--sm', href: '#/trainee/' + m.traineeId }, 'وضع الهدف ←')],
+        { pageSize: 8, searchText: (m) => `${m.name} ${m.branchName}`, searchPlaceholder: 'ابحث بالاسم أو الفرع…' }));
+  } else {
+    card.append(el('div', { class: 'alert alert--info', style: 'margin:12px 0 0' },
+      '✅ كل المشتركين الفعّالين لهم أهداف تدريبية.'));
+  }
+
+  if (cov.byTrainer.length) {
+    card.append(el('h4', { style: 'margin:16px 0 6px;font-size:13px;color:var(--app-muted)' }, 'أهداف وضعها كل مدرب هذا الشهر'),
+      dataTable(['المدرب', 'عدد الأهداف'],
+        cov.byTrainer.map((x) => [x.name,
+          el('b', { class: 'num', style: x.goalsThisMonth ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
+            String(x.goalsThisMonth))])));
+  }
+  return card;
+}
+
 /* تحصيل اليوم مفصَّلًا بالعملة — فروعٌ بعملتين لا يُجمع تحصيلها في رقم */
 function dailyByCurrency(data) {
   const out = {};
@@ -230,7 +275,7 @@ async function viewKpi(root) {
     }
     container.append(bar);
 
-    if (board) renderKpiBoard(container, board);
+    if (board) await renderKpiBoard(container, board);
 
     container.append(el('div', { class: 'alert alert--info' },
       'KPI = (المحقق ÷ الهدف). مؤشر كل موظف يُحسب تلقائيًا من إنجاز مهامه + تحقيق أهدافه، ويظهر في التقارير الشهرية.'));
@@ -274,7 +319,7 @@ async function viewKpi(root) {
    لوحة KPI بأربع زوايا: المدرب · الفرع · المحاسب · المبيعات
    كل رقم مشتقّ من بيانات النظام — لا إدخال يدوي.
    ============================================================ */
-function renderKpiBoard(container, b) {
+async function renderKpiBoard(container, b) {
   const num = (v) => el('span', { class: 'num' }, String(v ?? 0));
 
   /* --- المدرب --- */
@@ -285,7 +330,8 @@ function renderKpiBoard(container, b) {
       + 'والغياب مخصوم من رصيد المتدرب لكنه لا يُحتسب حصةً منفَّذة للمدرب.'),
     el('div', { style: 'overflow-x:auto' },
       dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
-        'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل', 'أهداف المتدربين', 'برامج أكل', 'برامج تدريب', 'المهام'],
+        'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل',
+        'أهداف وضعها', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج أكل', 'برامج تدريب', 'المهام'],
         b.trainers.map((t) => [t.name, t.branch,
           num(t.officeHours), num(t.trainingHours), num(t.sessions),
           el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
@@ -295,10 +341,24 @@ function renderKpiBoard(container, b) {
           num(t.freezes), num(t.renewals),
           el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results)),
           el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems)),
-          `نزول ${t.traineeGoals.loss} · عضل ${t.traineeGoals.muscle} · تثبيت ${t.traineeGoals.maintain}`,
+          /* «كم هدفًا تدريبيًا وضعه» — من جدول الأهداف، ومقابله من بقي
+             من متدربيه بلا هدف (يظهر باسمه عند المرور عليه). */
+          el('b', { class: 'num', style: t.goalsCreated ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
+            String(t.goalsCreated || 0)),
+          (t.traineesWithoutGoal || []).length
+            ? el('span', {
+              class: 'tag tag--danger',
+              title: t.traineesWithoutGoal.join('، '),
+            }, String(t.traineesWithoutGoal.length))
+            : el('span', { class: 'tag tag--accent' }, '0'),
+          Object.entries(t.traineeGoalMix || {})
+            .map(([k, n]) => `${GOAL_LABELS[k] || k} ${n}`).join(' · ') || '—',
           num(t.mealPlans), num(t.programs),
           t.tasksTotal ? `${t.tasksDone}/${t.tasksTotal}` : '—']),
         'لا مدربين.'))));
+
+  /* تغطية الأهداف التدريبية — من بقي من المشتركين بلا هدف */
+  container.append(await goalCoverageCard(b.month));
 
   /* --- الفرع --- */
   container.append(el('div', { class: 'card' },
@@ -651,7 +711,7 @@ async function renderTrainerOps(container) {
       },
     },
       field('الحضور (من الساعة)', checkIn), field('الانصراف (إلى الساعة)', checkOut),
-      field('أهداف تدريبية أنشأتها', goals), field('ستوريات نشرتها', stories),
+      field('أهداف تدريبية أنشأتها (يدويًا)', goals), field('ستوريات نشرتها', stories),
       field('ريلز/فيديوهات صوّرتها', reels), field('ملاحظات', notes),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ السجل'))));
   await loadDay();
