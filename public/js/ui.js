@@ -189,6 +189,12 @@ function searchSelect(options, attrs = {}) {
       inp.value = found ? found[1] : '';
     },
   });
+  /* الغلاف يتصرّف كحقل: تعطيله يُعطّل مربع الكتابة داخله. بدونه كان
+     وضع «للاطّلاع فقط» يترك المنتقي قابلًا للكتابة رغم تعطيل بقية الحقول. */
+  Object.defineProperty(wrap, 'disabled', {
+    get() { return inp.disabled; },
+    set(v) { inp.disabled = !!v; },
+  });
   if (attrs.onchange) inp.addEventListener('change', () => attrs.onchange({ target: wrap }));
   return wrap;
 }
@@ -396,13 +402,20 @@ function flagTag(f) {
 
 /* سهم التغيّر بين قراءتين متتاليتين (بترتيب التاريخ) — الاتجاه يعكس
    الحركة الفعلية دائمًا: طلوع = ↑ ونزول = ↓، واللون حسب المرغوب للمؤشر */
+/* اتجاه الوزن يُقرأ حرفيًا (طلوع ↑ ونزول ↓)، أما اللونُ فحكمٌ يتبع هدف
+   المتدرب لا الوزن وحده: من هدفه بناء العضل زيادةُ وزنه تقدّمٌ لا تراجع،
+   ومن هدفه التثبيت لا يُحكم على تغيّره أصلًا. كان اللون يُحمّر كل زيادة
+   للجميع فيقرأ المدرب نتيجةً صحيحة على أنها مشكلة. */
+const goodWhenUpForGoal = (goal) => (goal === 'muscle' ? true : goal === 'maintain' ? null : false);
+
 function changeArrow(curr, prev, { goodWhenUp = false } = {}) {
   if (curr == null || prev == null) return el('span', { class: 'tag tag--neutral' }, '—');
   const d = +(Number(curr) - Number(prev)).toFixed(1);
   if (d === 0) return el('span', { class: 'tag tag--neutral' }, '＝');
   const up = d > 0;
-  const good = goodWhenUp ? up : !up;
-  return el('span', { class: 'tag ' + (good ? 'tag--accent' : 'tag--danger'), title: 'مقارنة بالقراءة السابقة' },
+  const tone = goodWhenUp === null ? 'tag--neutral'
+    : (goodWhenUp ? up : !up) ? 'tag--accent' : 'tag--danger';
+  return el('span', { class: 'tag ' + tone, title: 'مقارنة بالقراءة السابقة' },
     (up ? '↑ +' : '↓ −') + Math.abs(d));
 }
 

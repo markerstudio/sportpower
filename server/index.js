@@ -984,7 +984,12 @@ app.post('/api/subscriptions/:id/action', auth, requireRole('admin', 'accountant
 /* كل الفلاتر تُنفَّذ في القاعدة — والحد/الإزاحة اختياريان لواجهات المستقبل */
 app.get('/api/sessions', auth, h(async (req, res) => {
   const where = {};
-  if (req.user.role === 'trainer') where.trainerId = req.user.id;
+  /* all=1: المدرب يرى حصص فرعه كلها (بأي مدرب) — كان جدول الفرع يعرض
+     مواعيد الزملاء بلا حصصهم المنفَّذة، فيبدو نصف البرنامج فارغًا. */
+  if (req.user.role === 'trainer') {
+    if (req.query.all && req.user.branchId) where.branchId = req.user.branchId;
+    else where.trainerId = req.user.id;
+  }
   if (req.user.role === 'trainee') where.traineeId = req.user.id;
   if (req.query.month) where.date = { gte: req.query.month + '-01', lte: req.query.month + '-31' };
   if (req.query.from || req.query.to) {
@@ -992,7 +997,9 @@ app.get('/api/sessions', auth, h(async (req, res) => {
     if (req.query.from) where.date.gte = req.query.from;
     if (req.query.to) where.date.lte = req.query.to;
   }
-  if (req.query.trainer && req.user.role === 'admin') where.trainerId = Number(req.query.trainer);
+  // المحاسب يفلتر بالمدرب كالإدارة — كان اختياره يُصفّي المواعيد ولا يُصفّي الحصص
+  if (req.query.trainer && ['admin', 'accountant'].includes(req.user.role)) where.trainerId = Number(req.query.trainer);
+  if (req.query.trainer && req.user.role === 'trainer' && req.query.all) where.trainerId = Number(req.query.trainer);
   if (req.query.branch) where.branchId = Number(req.query.branch);
   if (req.query.trainee) where.traineeId = Number(req.query.trainee);
   if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
