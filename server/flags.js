@@ -20,16 +20,18 @@ const STAFF = ['admin', 'accountant', 'trainer', 'nutritionist'];
 const canSeeFlags = (role) => STAFF.includes(role);
 
 /* ملخّص الفرع: كم نتيجة وكم شخصًا عنده مشكلة — يُستعمل في صفحة القراءات */
-async function flagsSummary(branch) {
+/* branch = فرعٌ مطلوب بعينه · scope = فروع صاحب الجلسة (null = الكل) */
+async function flagsSummary(branch, scope) {
+  const inScope = (id) => !scope || scope.includes(Number(id));
   const [flags, branches, users] = await Promise.all([
     Store.all('traineeFlags'),
     Store.all('branches'),
     Store.all('users'),
   ]);
-  const scoped = branch ? flags.filter((f) => f.branchId === Number(branch)) : flags;
+  const scoped = (branch ? flags.filter((f) => f.branchId === Number(branch)) : flags).filter((f) => inScope(f.branchId));
   const open = scoped.filter((f) => f.status !== 'closed');
   const byBranch = branches
-    .filter((b) => !branch || b.id === Number(branch))
+    .filter((b) => (!branch || b.id === Number(branch)) && inScope(b.id))
     .map((b) => {
       const mine = flags.filter((f) => f.branchId === b.id);
       const mineOpen = mine.filter((f) => f.status !== 'closed');
@@ -61,7 +63,8 @@ async function flagsSummary(branch) {
   };
 }
 
-module.exports = function registerFlags(app, { auth, requireRole, h, notify }) {
+module.exports = function registerFlags(app, { auth, requireRole, h, notify,
+  scopedBranchIds, scopeFilter, branchAllowed, denyOutOfScope }) {
   /* قائمة الرصد — بالفرع أو بالمتدرب أو بالنوع */
   app.get('/api/trainee-flags', auth, requireRole(...STAFF), h(async (req, res) => {
     const { traineeFlags, users, branches } = await Store.load('traineeFlags', 'users', 'branches');
@@ -69,7 +72,7 @@ module.exports = function registerFlags(app, { auth, requireRole, h, notify }) {
     const branchOf = (id) => (branches.find((b) => b.id === id) || {}).name || '—';
     let list = traineeFlags;
     if (req.query.trainee) list = list.filter((f) => f.traineeId === Number(req.query.trainee));
-    if (req.query.branch) list = list.filter((f) => f.branchId === Number(req.query.branch));
+    list = list.filter(scopeFilter(req));
     if (KINDS.includes(req.query.kind)) list = list.filter((f) => f.kind === req.query.kind);
     if (req.query.status) list = list.filter((f) => (f.status || 'open') === req.query.status);
     res.json(list
@@ -79,12 +82,14 @@ module.exports = function registerFlags(app, { auth, requireRole, h, notify }) {
 
   /* ملخّص النتائج والمشاكل بالفرع — يظهر أعلى صفحة القراءات */
   app.get('/api/trainee-flags/summary', auth, requireRole(...STAFF), h(async (req, res) => {
-    res.json(await flagsSummary(req.query.branch || null));
+    const mine = scopedBranchIds(req);
+    res.json(await flagsSummary(mine && mine.length === 1 ? mine[0] : null, mine));
   }));
 
   app.post('/api/trainee-flags', auth, requireRole(...STAFF), h(async (req, res) => {
     const trainee = await Store.get('users', Number(req.body.traineeId));
     if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
+    if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
     const kind = KINDS.includes(req.body.kind) ? req.body.kind : null;
     if (!kind) return res.status(400).json({ error: 'النوع: نتيجة (result) أو مشكلة (problem).' });
     const title = clean(req.body.title, 160);

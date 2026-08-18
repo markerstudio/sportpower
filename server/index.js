@@ -110,7 +110,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, branchIds: Array.isArray(u.branchIds) ? u.branchIds : [], trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
 
 /* من أين وصلنا المتدرب — يُختار عند التسجيل ويظهر في تقرير المبيعات */
 const SOURCE_TYPES = ['social', 'trainee', 'friend', 'new', 'returned', 'trainer'];
@@ -128,6 +128,60 @@ const normalizeSource = (body) => {
     sourceName: String(body.sourceName || '').trim().slice(0, 120) || null,
   };
 };
+
+/* ============================================================
+   نطاق الفروع — «محاسبة عمّان لا ترى بقية الفروع»
+   المحاسب وحده مقيَّد: المدربون بالتناوب على كل المتدربين بحكم النظام،
+   والإدارة ترى الشركة كاملة. ومحاسبٌ بلا فروع مُسنَدة يبقى بلا تقييد كما
+   كان — فالتقييد يبدأ حين تُسنِد الإدارة فروعه، ولا ينقلب على حساب قائم
+   فيُقفل في وجهه فجأة.
+   التقييد يُفرض هنا على الخادم لا في الواجهة: ما يُخفى في الشاشة وحدها
+   يبقى قابلًا للطلب مباشرةً.
+   ============================================================ */
+const SCOPED_ROLES = ['accountant'];
+
+function branchScope(user) {
+  if (!SCOPED_ROLES.includes(user.role)) return null;
+  const ids = [...new Set([
+    ...(Array.isArray(user.branchIds) ? user.branchIds : []),
+    ...(user.branchId ? [user.branchId] : []),
+  ].map(Number).filter(Number.isFinite))];
+  return ids.length ? ids : null;
+}
+
+/* الفرع المطلوب في الاستعلام مقاطَعًا بفروع صاحب الجلسة.
+   null = بلا تقييد · [] = طلب فرعًا خارج نطاقه فلا نتيجة له */
+function scopedBranchIds(req) {
+  const allowed = branchScope(req.user);
+  const asked = req.query.branch ? Number(req.query.branch) : null;
+  if (asked) return allowed && !allowed.includes(asked) ? [] : [asked];
+  return allowed;
+}
+
+/* شرط استعلام جاهز للقاعدة — يُدمج مع بقية الشروط */
+function branchWhere(req, field = 'branchId') {
+  const ids = scopedBranchIds(req);
+  if (!ids) return {};
+  if (!ids.length) return { [field]: -1 };
+  return { [field]: ids.length === 1 ? ids[0] : { in: ids } };
+}
+
+/* تصفية في الذاكرة للقوائم المبنية أصلًا (نفس دلالات branchWhere) */
+function scopeFilter(req, field = 'branchId') {
+  const ids = scopedBranchIds(req);
+  if (!ids) return () => true;
+  return (x) => ids.includes(Number(x && x[field]));
+}
+
+/* حارس الكتابة: لا يُنشئ المحاسب ولا يعدّل سجلًا خارج فروعه */
+function branchAllowed(user, branchId) {
+  const allowed = branchScope(user);
+  return !allowed || (branchId != null && allowed.includes(Number(branchId)));
+}
+const OUT_OF_SCOPE = 'هذا الفرع خارج نطاق صلاحيتك — راجع الإدارة.';
+function denyOutOfScope(res) {
+  return res.status(403).json({ error: OUT_OF_SCOPE });
+}
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
 const loginAttempts = new Map(); // key → { count, resetAt }
@@ -147,6 +201,31 @@ const CURRENCIES = ['ILS', 'JOD', 'USD'];
 async function getSettings() {
   const rows = await Store.all('settings');
   return rows[0] || { currency: 'ILS' };
+}
+
+/* ============================================================
+   عملة الفرع — «عملة الفرع إذا تغيرت تتغير للفرع وحده»
+   عمّان بالدينار وفروع الضفة بالشيكل. وعملة النظام تبقى الافتراضية
+   لفرعٍ لم تُحدَّد له، فلا ينقلب أي رقم قائم بمجرد إضافة الميزة.
+   ومبالغُ عملتين لا تُجمع في رقم واحد: ١٢٠٠ شيكل + ٣٠٠ دينار ليست
+   ١٥٠٠ من شيء. فكل مجموع يتجاوز فرعًا واحدًا يُعاد مُفصَّلًا بالعملة.
+   ============================================================ */
+async function currencyMap() {
+  const [settings, branches] = await Promise.all([getSettings(), Store.all('branches')]);
+  const fallback = CURRENCIES.includes(settings.currency) ? settings.currency : 'ILS';
+  const map = {};
+  branches.forEach((b) => { map[b.id] = CURRENCIES.includes(b.currency) ? b.currency : fallback; });
+  return { map, fallback, of: (id) => map[id] || fallback };
+}
+
+/* { ILS: 1200, JOD: 300 } — مجموعٌ لكل عملة على حدة */
+function sumByCurrency(rows, cur, amountOf = (r) => r.amount, branchOf = (r) => r.branchId) {
+  const out = {};
+  for (const r of rows) {
+    const c = cur.of(branchOf(r));
+    out[c] = Math.round(((out[c] || 0) + Number(amountOf(r) || 0)) * 100) / 100;
+  }
+  return out;
 }
 
 app.get('/api/config', h(async (req, res) => {
@@ -579,7 +658,13 @@ function saveImage(imageBase64, prefix) {
 /* ============================================================
    الفروع والمستخدمون
    ============================================================ */
-app.get('/api/branches', auth, h(async (req, res) => res.json(await Store.all('branches'))));
+app.get('/api/branches', auth, h(async (req, res) => {
+  /* قائمة الفروع تغذّي كل منتقيات الفرع في الواجهة — فقصرُها على فروع
+     المحاسب يُضيّق كل شاشاته تلقائيًا بلا منتقٍ يعرض ما لا يملكه. */
+  const all = await Store.all('branches');
+  const allowed = branchScope(req.user);
+  res.json(allowed ? all.filter((b) => allowed.includes(b.id)) : all);
+}));
 
 app.post('/api/branches', auth, requireRole('admin'), h(async (req, res) => {
   const { name, address, phone } = req.body;
@@ -587,6 +672,7 @@ app.post('/api/branches', auth, requireRole('admin'), h(async (req, res) => {
   res.json(await Store.insert('branches', {
     name, address: address || '', phone: phone || '',
     freezeLimit: Number(req.body.freezeLimit) > 0 ? Number(req.body.freezeLimit) : null,
+    currency: CURRENCIES.includes(req.body.currency) ? req.body.currency : null,
   }));
 }));
 
@@ -595,6 +681,13 @@ app.put('/api/branches/:id', auth, requireRole('admin'), h(async (req, res) => {
   if (!branch) return res.status(404).json({ error: 'الفرع غير موجود.' });
   const patch = {};
   ['name', 'address', 'phone'].forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
+  // عملة الفرع — الفارغ يعني عملة النظام الافتراضية
+  if (req.body.currency !== undefined) {
+    if (req.body.currency && !CURRENCIES.includes(req.body.currency)) {
+      return res.status(400).json({ error: 'عملة غير مدعومة — المتاح: شيكل ILS، دينار JOD، دولار USD.' });
+    }
+    patch.currency = req.body.currency || null;
+  }
   // سقف التجميد المسموح للفرع — فارغ يعني بلا سقف
   if (req.body.freezeLimit !== undefined) {
     patch.freezeLimit = req.body.freezeLimit === '' || req.body.freezeLimit === null
@@ -618,7 +711,10 @@ app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutri
   let list = (await Store.all('users')).map(publicUser);
   if (req.query.role) list = list.filter((u) => u.role === req.query.role);
   if (req.query.branch) list = list.filter((u) => u.branchId === Number(req.query.branch));
-  // المدربون بالتناوب: كل مدرب يرى كل المتدربين
+  /* المدربون بالتناوب: كل مدرب يرى كل المتدربين. أما المحاسب المقيَّد
+     فيرى أهل فروعه — ومعهم الإدارة، فهي بلا فرع ويحتاج أسماءها. */
+  const allowed = branchScope(req.user);
+  if (allowed) list = list.filter((u) => allowed.includes(Number(u.branchId)) || u.role === 'admin');
   res.json(list);
 }));
 
@@ -656,6 +752,21 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
     if (req.body[k] !== undefined) patch[k] = req.body[k];
   });
   if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
+  /* فروع المحاسب: «محاسبة بيت لحم وبيت ساحور» فرعان لشخص واحد، وعمّان
+     لغيره. القائمة الفارغة تعني بلا تقييد — كما كان النظام قبل الفروع. */
+  if (req.body.branchIds !== undefined) {
+    const ids = [...new Set((Array.isArray(req.body.branchIds) ? req.body.branchIds : [])
+      .map(Number).filter(Number.isFinite))];
+    if (ids.length) {
+      const known = new Set((await Store.all('branches')).map((b) => b.id));
+      if (ids.some((id) => !known.has(id))) return res.status(400).json({ error: 'أحد الفروع المختارة غير موجود.' });
+    }
+    patch.branchIds = ids;
+    // تقييد صلاحية الوصول يُنهي جلساته ليُطبَّق فورًا لا بعد ١٢ ساعة
+    if (JSON.stringify(ids) !== JSON.stringify(user.branchIds || [])) {
+      await Store.deleteWhere('tokens', { userId: user.id });
+    }
+  }
 
   /* تصحيح اسم المستخدم: حسابات سُجّلت باسم مؤقت («client») أو برقم خاطئ
      تحتاج تعديلًا كأي حقل آخر — بشرط بقائه فريدًا ونظيفًا. */
@@ -735,6 +846,7 @@ app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'),
   if (req.user.role !== 'admin' && user.role !== 'trainee') {
     return res.status(403).json({ error: 'إصدار بيانات الدخول لحسابات الموظفين صلاحية إدارة — المحاسب يُصدرها للمتدربين فقط.' });
   }
+  if (!branchAllowed(req.user, user.branchId)) return denyOutOfScope(res);
   const password = 'sp-' + crypto.randomBytes(6).toString('hex');
   const expiresAt = tempPasswordDeadline();
   const updated = await Store.update('users', user.id, {
@@ -755,6 +867,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   const { name, phone, birthDate, residence, branchId, goal, subscription, payment, appointment, sourceTrainerId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم المتدرب مطلوب.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'رقم الجوال مطلوب (يُستخدم لاسم المستخدم وواتساب).' });
+  if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
   if (!subscription || !subscription.totalSessions || !subscription.price || !subscription.startDate || !subscription.endDate) {
     return res.status(400).json({ error: 'بيانات الاشتراك (الحصص والقيمة والتواريخ) مطلوبة.' });
   }
@@ -890,9 +1003,8 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
    الاشتراكات
    ============================================================ */
 app.get('/api/subscriptions', auth, h(async (req, res) => {
-  const where = {};
+  const where = { ...branchWhere(req) };
   if (req.user.role === 'trainee') where.traineeId = req.user.id;
-  if (req.query.branch) where.branchId = Number(req.query.branch);
   if (req.query.search) {
     const ids = await traineeIdsMatching(req.query.search);
     where.traineeId = where.traineeId !== undefined ? (ids.includes(where.traineeId) ? where.traineeId : -1) : { in: ids };
@@ -917,6 +1029,7 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
   const { traineeId, totalSessions, price, startDate, endDate, packageId } = req.body;
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
+  if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
   if (!totalSessions || !price || !startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
   const pkg = packageId ? await Store.get('packages', Number(packageId)) : null;
   if (startDate > endDate) return res.status(400).json({ error: 'تاريخ البدء بعد تاريخ الانتهاء.' });
@@ -959,6 +1072,7 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
 app.post('/api/subscriptions/:id/action', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const sub = await Store.get('subscriptions', req.params.id);
   if (!sub) return res.status(404).json({ error: 'الاشتراك غير موجود.' });
+  if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
   const { action } = req.body || {};
   const reason = String(req.body.reason || '').slice(0, 200);
   const map = { freeze: 'frozen', unfreeze: 'active', cancel: 'cancelled' };
@@ -1000,7 +1114,7 @@ app.get('/api/sessions', auth, h(async (req, res) => {
   // المحاسب يفلتر بالمدرب كالإدارة — كان اختياره يُصفّي المواعيد ولا يُصفّي الحصص
   if (req.query.trainer && ['admin', 'accountant'].includes(req.user.role)) where.trainerId = Number(req.query.trainer);
   if (req.query.trainer && req.user.role === 'trainer' && req.query.all) where.trainerId = Number(req.query.trainer);
-  if (req.query.branch) where.branchId = Number(req.query.branch);
+  Object.assign(where, branchWhere(req));
   if (req.query.trainee) where.traineeId = Number(req.query.trainee);
   if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
   const opts = pageOpts(req, req.query.limit ? { order: [['date', 'desc'], ['time', 'desc']] } : {});
@@ -1275,20 +1389,17 @@ app.delete('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (
    المدفوعات — للمحاسب والإدارة
    ============================================================ */
 app.get('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
-  const { payments, subscriptions } = await Store.load('payments', 'subscriptions');
-  let list = payments;
-  if (req.query.month) list = list.filter((p) => monthOf(p.date) === req.query.month);
-  if (req.query.branch) {
-    const subIds = subscriptions.filter((s) => s.branchId === Number(req.query.branch)).map((s) => s.id);
-    list = list.filter((p) => subIds.includes(p.subscriptionId));
-  }
-  res.json(list);
+  // الفرع محفوظ على الدفعة نفسها — لا حاجة لمطابقتها باشتراكات الفرع
+  const where = { ...branchWhere(req) };
+  if (req.query.month) where.date = { gte: req.query.month + '-01', lte: req.query.month + '-31' };
+  res.json(await Store.find('payments', where));
 }));
 
 app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const { subscriptionId, amount, date, method, note } = req.body;
   const sub = await Store.get('subscriptions', Number(subscriptionId));
   if (!sub) return res.status(400).json({ error: 'الاشتراك غير موجود.' });
+  if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
   if (!amount || Number(amount) <= 0 || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان.' });
   const value = Math.round(Number(amount) * 100) / 100;
   const payMethod = method || 'كاش';
@@ -1335,19 +1446,20 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
    هذا المسار يعطي قائمة الديون كاملة (فعّالة ومنتهية) بمصدر واحد.
    ============================================================ */
 app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const [subscriptions, users, branches, paidBySub] = await Promise.all([
+  const [subscriptions, users, branches, paidBySub, cur] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.all('branches'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
+    currencyMap(),
   ]);
-  const branch = req.query.branch ? Number(req.query.branch) : null;
+  const inScope = scopeFilter(req);
   const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
   const phoneOf = (id) => (users.find((u) => u.id === id) || {}).phone || '';
   const branchOf = (id) => (branches.find((b) => b.id === id) || {}).name || '—';
 
   const rows = subscriptions
-    .filter((s) => countsTowardDebt(s) && (!branch || s.branchId === branch))
+    .filter((s) => countsTowardDebt(s) && inScope(s))
     .map((s) => {
       const paid = paidBySub[s.id] || 0;
       const status = subStatus(s);
@@ -1355,7 +1467,8 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
         subscriptionId: s.id, traineeId: s.traineeId, traineeName: nameOf(s.traineeId),
         phone: phoneOf(s.traineeId), branchId: s.branchId, branchName: branchOf(s.branchId),
         packageName: s.packageName || `${s.totalSessions} حصة`,
-        price: s.price, paid, remaining: outstandingOf(s, paid),
+        currency: cur.of(s.branchId),
+        price: s.price, paid, remaining: outstandingOf(s, paid), currency: cur.of(s.branchId),
         startDate: s.startDate, endDate: s.endDate, status,
         // دين قديم = اشتراك انتهت مدته أو رصيده وما زال عليه متبقٍ
         old: status === 'expired',
@@ -1369,8 +1482,9 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
     totals: {
       count: rows.length,
       people: new Set(rows.map((r) => r.traineeId)).size,
-      amount: Math.round(rows.reduce((s, r) => s + r.remaining, 0) * 100) / 100,
-      oldAmount: Math.round(rows.filter((r) => r.old).reduce((s, r) => s + r.remaining, 0) * 100) / 100,
+      // مفصَّلًا بالعملة — فروع بعملتين لا يُجمع دَينها في رقم واحد
+      amount: sumByCurrency(rows, cur, (r) => r.remaining),
+      oldAmount: sumByCurrency(rows.filter((r) => r.old), cur, (r) => r.remaining),
     },
   });
 }));
@@ -1378,6 +1492,7 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
 app.delete('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const payment = await Store.get('payments', req.params.id);
   if (!payment) return res.status(404).json({ error: 'الدفعة غير موجودة.' });
+  if (!branchAllowed(req.user, payment.branchId)) return denyOutOfScope(res);
   await Store.remove('payments', payment.id);
   res.json({ ok: true });
 }));
@@ -1386,6 +1501,7 @@ app.delete('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(asyn
 app.put('/api/subscriptions/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const sub = await Store.get('subscriptions', req.params.id);
   if (!sub) return res.status(404).json({ error: 'الاشتراك غير موجود.' });
+  if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
   const patch = {};
   if (req.body.totalSessions !== undefined) {
     const v = Number(req.body.totalSessions);
@@ -1413,6 +1529,7 @@ app.put('/api/subscriptions/:id', auth, requireRole('admin', 'accountant'), h(as
 app.delete('/api/subscriptions/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const sub = await Store.get('subscriptions', req.params.id);
   if (!sub) return res.status(404).json({ error: 'الاشتراك غير موجود.' });
+  if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
   const result = await Store.transaction(async (tx) => {
     const payments = await tx.count('payments', { subscriptionId: sub.id });
     const sessions = await tx.updateWhere('sessions', { subscriptionId: sub.id }, { subscriptionId: null });
@@ -1427,6 +1544,7 @@ app.delete('/api/subscriptions/:id', auth, requireRole('admin', 'accountant'), h
 app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const payment = await Store.get('payments', req.params.id);
   if (!payment) return res.status(404).json({ error: 'الدفعة غير موجودة.' });
+  if (!branchAllowed(req.user, payment.branchId)) return denyOutOfScope(res);
   const patch = {};
   ['amount', 'date', 'method', 'note'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = k === 'amount' ? Number(req.body[k]) : req.body[k];
@@ -1464,6 +1582,8 @@ app.get('/api/appointments', auth, h(async (req, res) => {
     }
   }
   if (req.user.role === 'trainee') list = list.filter((a) => a.traineeId === req.user.id);
+  // المحاسب المقيَّد يرى مواعيد فروعه — ومنتقي الفرع يعمل للجميع
+  if (['admin', 'accountant'].includes(req.user.role)) list = list.filter(scopeFilter(req));
   if (req.query.from) list = list.filter((a) => a.date >= req.query.from);
   if (req.query.to) list = list.filter((a) => a.date <= req.query.to);
   if (req.query.trainer) list = list.filter((a) => a.trainerId === Number(req.query.trainer));
@@ -1500,6 +1620,7 @@ app.post('/api/appointments', auth, requireRole('admin', 'accountant', 'trainer'
 
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
+  if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
   const appt = await Store.insert('appointments', {
     trainerId: trainer.id, traineeId: trainee.id,
     branchId: trainee.branchId, date, time, duration: Number(duration) || 60,
@@ -1835,13 +1956,14 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
   const period = { gte: month + '-01', lte: month + '-31' };
   const paidScope = { ...scope, subscriptionId: { isNull: false } };
 
-  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub] = await Promise.all([
+  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub, cur] = await Promise.all([
     Store.find('sessions', { ...scope, date: period }),
     Store.count('sessions', { ...scope, date: todayStr(), kind: { ne: 'absence' } }),
     Store.all('subscriptions'),
     Store.all('users'),
     Store.find('payments', { ...paidScope, date: period }),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
+    currencyMap(),
   ]);
   const monthSessions = allMonthSessions.filter(delivered);
   const monthAbsences = allMonthSessions.filter((s) => !delivered(s));
@@ -1849,7 +1971,7 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
   const subs = subscriptions.filter(inBranch).map((s) => ({ ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions }));
   const activeTrainees = new Set(subs.filter((s) => s.status === 'active').map((s) => s.traineeId)).size;
 
-  const collected = monthPayments.reduce((s, p) => s + p.amount, 0);
+  const collected = sumByCurrency(monthPayments, cur);
 
   const trainers = users.filter((u) => u.role === 'trainer' && inBranch(u)).map((t) => {
     const ts = monthSessions.filter((s) => s.trainerId === t.id);
@@ -1874,9 +1996,10 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
       activeTrainees,
       expiring: subs.filter((s) => s.expiring).length,
       expired: subs.filter((s) => s.status === 'expired').length,
+      // المبالغ مفصَّلة بالعملة: فرع عمّان بالدينار لا يُجمع على الشيكل
       collectedMonth: collected,
       // نفس تعريف صفحة الديون بالضبط — لا رقمين لنفس السؤال
-      outstanding: outstandingTotal(subs, paidBySub),
+      outstanding: sumByCurrency(subs.filter(countsTowardDebt), cur, (x) => outstandingOf(x, paidBySub[x.id])),
     },
     trainers, daily,
     expiringList: subs.filter((s) => s.expiring || s.status === 'expired').map((s) => ({
@@ -1925,20 +2048,22 @@ app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, re
 app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const month = req.query.month || thisMonthStr();
   const branch = req.query.branch ? Number(req.query.branch) : null;
-  const scope = branch ? { branchId: branch } : {};
+  const scope = branchWhere(req);
+  const inScope = scopeFilter(req);
   const period = { gte: month + '-01', lte: month + '-31' };
   /* المدفوع لكل اشتراك يُجمَّع في القاعدة بعملية واحدة — كان يُحسب سابقًا
      بحلقة داخل حلقة (كل اشتراك × كل الدفعات). */
-  const [subscriptions, users, paidBySub, monthPayments, byDate] = await Promise.all([
+  const [subscriptions, users, paidBySub, monthPayments, byDate, cur] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
     Store.find('payments', { ...scope, date: period }),
     Store.groupSum('payments', 'amount', 'date', scope),
+    currencyMap(),
   ]);
 
   const subs = subscriptions
-    .filter((s) => !branch || s.branchId === branch)
+    .filter(inScope)
     .map((s) => {
       const paid = paidBySub[s.id] || 0;
       const trainee = users.find((u) => u.id === s.traineeId) || {};
@@ -1960,9 +2085,9 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
   res.json({
     month, branch,
     kpis: {
-      collectedMonth: monthPayments.reduce((s, p) => s + p.amount, 0),
+      collectedMonth: sumByCurrency(monthPayments, cur),
       paymentsCount: monthPayments.length,
-      outstanding: Math.round(subs.filter((x) => !x.cancelled).reduce((s, x) => s + x.remaining, 0) * 100) / 100,
+      outstanding: sumByCurrency(subs.filter((x) => !x.cancelled), cur, (x) => x.remaining),
       expired: subs.filter((s) => s.status === 'expired').length,
       renewed: subs.filter((s) => s.renewed).length,
     },
@@ -1986,6 +2111,8 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const allowed = ['admin', 'accountant', 'nutritionist', 'trainer'].includes(req.user.role)
     || (req.user.role === 'trainee' && req.user.id === id);
   if (!allowed) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
+  // المحاسب المقيَّد لا يفتح ملف متدرب من فرع ليس له
+  if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
 
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية يريان الباقة والحصص — بلا أي سعر
   const showPrices = clients.canSeePrices(req.user.role);
@@ -2088,6 +2215,10 @@ function prevMonthOf(month) {
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
+/* نطاق التقرير صار قائمةَ فروع لا فرعًا واحدًا: محاسبةٌ واحدة تتولى بيت
+   لحم وبيت ساحور معًا، فتقريرها يشملهما ويستثني عمّان. و null = كل الفروع. */
+const inBranchScope = (scope, id) => !scope || scope.includes(Number(id));
+
 async function buildMonthlyReport(month, branch) {
   /* التقرير يقارن الشهر بسابقه — فنحضر نافذة الشهرين فقط من الجداول الكبيرة */
   const prevM = prevMonthOf(month);
@@ -2103,7 +2234,7 @@ async function buildMonthlyReport(month, branch) {
     Store.find('trainerLogs', { date: window }),
     Store.find('traineeFlags', { date: { gte: month + '-01', lte: month + '-31' } }),
   ]);
-  const inBranch = (x) => !branch || x.branchId === branch;
+  const inBranch = (x) => inBranchScope(branch, x.branchId);
   const monthAll = sessions.filter((s) => monthOf(s.date) === month && inBranch(s));
   const monthSessions = monthAll.filter(delivered);
   const nowIso = new Date().toISOString().slice(0, 16);
@@ -2158,7 +2289,7 @@ async function buildMonthlyReport(month, branch) {
     };
   };
 
-  const scoped = branches.filter((b) => !branch || b.id === branch);
+  const scoped = branches.filter((b) => inBranchScope(branch, b.id));
   const prev = prevMonthOf(month);
   const branchRows = scoped.map((b) => {
     const cur = buildBranchRow(b, month);
@@ -2178,7 +2309,7 @@ async function buildMonthlyReport(month, branch) {
   const flagsSection = {
     results: scopedFlags.filter((f) => f.kind === 'result').map(flagRow),
     problems: scopedFlags.filter((f) => f.kind === 'problem').map(flagRow),
-    byBranch: branches.filter((b) => !branch || b.id === branch).map((b) => ({
+    byBranch: branches.filter((b) => inBranchScope(branch, b.id)).map((b) => ({
       branch: b.name,
       results: scopedFlags.filter((f) => f.kind === 'result' && f.branchId === b.id).length,
       problems: scopedFlags.filter((f) => f.kind === 'problem' && f.branchId === b.id).length,
@@ -2196,8 +2327,8 @@ async function buildMonthlyReport(month, branch) {
 
 app.get('/api/reports/monthly', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const month = req.query.month || thisMonthStr();
-  const branch = req.query.branch ? Number(req.query.branch) : null;
-  res.json(await buildMonthlyReport(month, branch));
+  const branches = scopedBranchIds(req);
+  res.json(await buildMonthlyReport(month, branches));
 }));
 
 /* ============================================================
@@ -2210,6 +2341,7 @@ const SUB_STATUS_AR = { active: 'فعّال', frozen: 'مجمّد', expired: 'م
 const TRAINEE_REPORT_OPTIONAL = ['phone', 'birthDate', 'residence', 'username', 'joinedAt', 'lastSession'];
 
 async function buildTraineeRoster({ branch, status }) {
+  const inBranchList = (id) => !branch || branch.includes(Number(id));
   const { users, branches, subscriptions, payments, sessions } = await Store.load(
     'users', 'branches', 'subscriptions', 'payments', 'sessions');
   const branchName = (id) => (branches.find((b) => b.id === id) || {}).name || '—';
@@ -2254,7 +2386,7 @@ async function buildTraineeRoster({ branch, status }) {
     };
   });
 
-  if (branch) rows = rows.filter((r) => r.branchId === branch);
+  if (branch) rows = rows.filter((r) => inBranchList(r.branchId));
   if (status === 'active') rows = rows.filter((r) => r.subscription && r.subscription.status === 'active');
   if (status === 'inactive') rows = rows.filter((r) => !r.subscription || r.subscription.status !== 'active');
   rows.sort((a, b) => a.branch.localeCompare(b.branch, 'ar') || a.name.localeCompare(b.name, 'ar'));
@@ -2286,14 +2418,11 @@ async function buildTraineeRoster({ branch, status }) {
 }
 
 app.get('/api/reports/trainees', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  res.json(await buildTraineeRoster({
-    branch: req.query.branch ? Number(req.query.branch) : null,
-    status: req.query.status || '',
-  }));
+  res.json(await buildTraineeRoster({ branch: scopedBranchIds(req), status: req.query.status || '' }));
 }));
 
 app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const branch = req.query.branch ? Number(req.query.branch) : null;
+  const branch = scopedBranchIds(req);
   const data = await buildTraineeRoster({ branch, status: req.query.status || '' });
   // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
   const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -2347,7 +2476,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
 /* تصدير CSV (يفتح في Excel — مع BOM لدعم العربية) */
 app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const month = req.query.month || thisMonthStr();
-  const branch = req.query.branch ? Number(req.query.branch) : null;
+  const branch = scopedBranchIds(req);
   const r = await buildMonthlyReport(month, branch);
   const lines = [];
   lines.push(`تقرير شهر ${month}`);
@@ -2363,7 +2492,7 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
     const hs = await growth.buildHealthScores(month, subStatus);
     lines.push('');
     lines.push('الفرع,Branch Health Score,التصنيف');
-    hs.branches.filter((b) => !branch || b.branchId === branch)
+    hs.branches.filter((b) => inBranchScope(branch, b.branchId))
       .forEach((b) => lines.push(`${b.branch},${b.score ?? '-'},${b.label}`));
     if (!branch && hs.company.score !== null) lines.push(`الشركة كاملة,${hs.company.score},${hs.company.label}`);
   } catch (e) { /* التقرير يكتمل بدونه */ }
@@ -2415,20 +2544,23 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   res.send(csv);
 }));
 
+/* أدوات نطاق الفروع تُمرَّر للوحدات كلها — فالتقييد واحد في كل النظام */
+const scope = { branchScope, scopedBranchIds, branchWhere, scopeFilter, branchAllowed, denyOutOfScope };
+
 /* وحدة التشغيل: متابعة يومية، مهام، أهداف وKPI، مجمّدون */
-require('./ops')(app, { auth, requireRole, h, notify, subStatus });
+require('./ops')(app, { auth, requireRole, h, notify, subStatus, ...scope });
 
 /* وحدة النمو: مصاريف، تقرير نمو، مبيعات، برامج تدريبية، ولاء وإحالات */
-growth(app, { auth, requireRole, h, notify, subStatus });
+growth(app, { auth, requireRole, h, notify, subStatus, ...scope });
 
 /* وحدة العملاء: الباقات، العقد الإلكتروني، تقييم الحصص */
-clients(app, { auth, requireRole, h, notify });
+clients(app, { auth, requireRole, h, notify, ...scope });
 
 /* نتائج المشتركين ومشاكلهم — رصد داخلي سرّي عن المتدرب */
-require('./flags')(app, { auth, requireRole, h, notify });
+require('./flags')(app, { auth, requireRole, h, notify, ...scope });
 
 /* مركز القرارات: تحويل كل مشكلة يكتشفها النظام إلى إجراء قابل للتنفيذ */
-require('./actions')(app, { auth, requireRole, h, notify, subStatus });
+require('./actions')(app, { auth, requireRole, h, notify, subStatus, ...scope });
 
 /* ============================================================ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير موجود.' }));

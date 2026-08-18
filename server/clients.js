@@ -59,7 +59,8 @@ const CATEGORY_LABELS = {
 const catOf = (p) => (PACKAGE_CATEGORIES.includes(p.category) ? p.category : 'personal');
 const withCategory = (p) => ({ ...p, category: catOf(p), categoryLabel: CATEGORY_LABELS[catOf(p)] });
 
-module.exports = function registerClients(app, { auth, requireRole, h, notify }) {
+module.exports = function registerClients(app, { auth, requireRole, h, notify,
+  scopedBranchIds, branchAllowed, denyOutOfScope }) {
   /* ============================================================
      الباقات (Packages)
      ============================================================ */
@@ -70,6 +71,9 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
       const b = Number(req.query.branch);
       list = list.filter((p) => !p.branchId || p.branchId === b);
     }
+    // الباقة بلا فرع باقةُ الشركة كلها فتظهر للجميع؛ وباقة الفرع لأهله
+    const mine = scopedBranchIds(req);
+    if (mine) list = list.filter((p) => !p.branchId || mine.includes(Number(p.branchId)));
     if (req.query.active === '1' || !canSeePrices(req.user.role)) list = list.filter((p) => p.active !== false);
     if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
     list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory);
@@ -81,6 +85,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم الباقة مطلوب.' });
     if (!sessions || Number(sessions) <= 0) return res.status(400).json({ error: 'عدد الحصص مطلوب.' });
     if (price === undefined || Number(price) < 0) return res.status(400).json({ error: 'سعر الباقة مطلوب.' });
+    // باقة بلا فرع تخصّ الشركة كلها — إنشاؤها صلاحية إدارة
+    if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
     res.json(withCategory(await Store.insert('packages', {
       name: clean(name, 120), sessions: Number(sessions), price: Number(price),
       durationDays: Number(durationDays) || 30, branchId: Number(branchId) || null,
@@ -94,6 +100,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
   app.put('/api/packages/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const pkg = await Store.get('packages', req.params.id);
     if (!pkg) return res.status(404).json({ error: 'الباقة غير موجودة.' });
+    if (!branchAllowed(req.user, pkg.branchId)) return denyOutOfScope(res);
     const patch = {};
     if (req.body.name !== undefined) patch.name = clean(req.body.name, 120);
     if (req.body.description !== undefined) patch.description = clean(req.body.description, 500);
@@ -125,6 +132,9 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     const { contracts, branches } = await Store.load('contracts', 'branches');
     let list = contracts;
     if (req.query.status) list = list.filter((c) => c.status === req.query.status);
+    // العقد بلا فرع عقدُ الشركة — يبقى للإدارة
+    const mine = scopedBranchIds(req);
+    if (mine) list = list.filter((c) => mine.includes(Number(c.branchId)));
     res.json(list.map((c) => contractView(c, branches)).sort((a, b) => b.id - a.id));
   }));
 
@@ -132,6 +142,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify })
     const branches = await Store.all('branches');
     const branchId = Number(req.body.branchId) || null;
     if (branchId && !branches.some((b) => b.id === branchId)) return res.status(400).json({ error: 'الفرع غير موجود.' });
+    if (!branchAllowed(req.user, branchId)) return denyOutOfScope(res);
     const days = Math.min(Math.max(Number(req.body.validDays) || 14, 1), 180);
     const contract = await Store.insert('contracts', {
       token: crypto.randomBytes(9).toString('hex'),
