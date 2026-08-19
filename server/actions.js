@@ -105,7 +105,30 @@ async function notifyOnce(userId, text, type) {
 /* النطاق قائمةُ فروع (نطاق المحاسب قد يضمّ فرعين) أو null = كل الفروع */
 const inScopeList = (scope, id) => !scope || scope.includes(Number(id));
 
-async function buildActions({ branch, subStatus }) {
+/* ============================================================
+   مركز قرارات المدرب
+   المحرّك نفسه، بنطاق المدرب وواجهته: يرى ما يخصّ متدربيه ويستطيع
+   تنفيذه. ويُستثنى منه صنفان:
+     • المال (الدفعات والتحصيل والديون) — ليس عمله، والأسعار تُخفى عنه
+       أصلًا في بقية النظام.
+     • السرّي والإداري (تقييمات المتدربين له، نِسَب الفرع، يوم بلا إدخال)
+       — تقييمُ حصته عنه سرٌّ بحكم التصميم، وأرقامُ الفرع قرارُ إدارة.
+   ============================================================ */
+const TRAINER_ACTION_TYPES = [
+  'absence', 'followup', 'weekly-gap', 'pace', 'weighing',
+  'measurements', 'progress', 'goal', 'renewal', 'birthday', 'trainer-log',
+];
+
+/* هل تخصّ هذه البطاقةُ هذا المدرب؟ ما كان عن متدربيه، أو عنه هو. */
+function belongsToTrainer(action, trainerId, myTraineeIds) {
+  if (!TRAINER_ACTION_TYPES.includes(action.type)) return false;
+  const owner = action.owner || {};
+  if (owner.type === 'trainer') return owner.id === trainerId;
+  if (owner.type === 'trainee') return myTraineeIds.has(owner.id);
+  return false; // بطاقات الفرع والشركة — قرارُ إدارة
+}
+
+async function buildActions({ branch, subStatus, forTrainer }) {
   const today = todayStr();
   const month = thisMonthStr();
 
@@ -162,6 +185,16 @@ async function buildActions({ branch, subStatus }) {
 
   const actions = [];
   const add = (a) => actions.push(a);
+
+  /* متدربو هذا المدرب: من درّبهم خلال نافذة التحليل، ومن وضع لهم هدفًا —
+     فالهدف علاقةٌ قائمة حتى لو لم تقع بينهما حصة هذا الشهر. */
+  const myTraineeIds = forTrainer
+    ? new Set([
+      ...data.sessions.filter((s) => s.trainerId === forTrainer).map((s) => s.traineeId),
+      ...data.appointments.filter((a) => a.trainerId === forTrainer && a.traineeId).map((a) => a.traineeId),
+      ...data.traineeGoals.filter((g) => g.trainerId === forTrainer).map((g) => g.traineeId),
+    ])
+    : null;
 
   /* روابط تنفيذ جاهزة */
   const waAction = (phone, message, label) => (phone
@@ -275,8 +308,14 @@ async function buildActions({ branch, subStatus }) {
       reason: expired
         ? `انتهى الاشتراك بتاريخ ${sub.endDate} ولم يُجدَّد بعد — كل يوم تأخير يقلّل فرصة العودة.`
         : `متبقي ${sessionsLabel(remaining)} من أصل ${sub.totalSessions}${daysLeft >= 0 ? ` والاشتراك ينتهي بعد ${daysLabel(daysLeft)} (${sub.endDate})` : ''} — هذا وقت عرض التجديد.`,
-      suggestion: 'إنشاء مهمة تجديد: اعرض عليه الباقة المناسبة وثبّت التجديد قبل انقطاعه.',
-      ownerLabel: `المسؤول: المحاسب / الاستقبال — ${branchName(sub.branchId)}`,
+      /* المدرب يرى التجديد من زاويته: أسبوعٌ قبل الانتهاء ليجهّز الخطة
+         التدريبية للمرحلة التالية — لا ليُحصّل المال. */
+      suggestion: forTrainer
+        ? 'جهّز الخطة التدريبية للمرحلة القادمة الآن — راجع قياساته وأغلق هدفه الحالي بما تحقق، وضع هدف التجديد.'
+        : 'إنشاء مهمة تجديد: اعرض عليه الباقة المناسبة وثبّت التجديد قبل انقطاعه.',
+      ownerLabel: forTrainer
+        ? `المسؤول: أنت — جهّز خطته قبل التجديد (${branchName(sub.branchId)})`
+        : `المسؤول: المحاسب / الاستقبال — ${branchName(sub.branchId)}`,
       owner: { type: 'trainee', id: sub.traineeId, name: trainee.name, phone: trainee.phone },
       branchName: branchName(sub.branchId),
       metrics: [
@@ -294,6 +333,24 @@ async function buildActions({ branch, subStatus }) {
       ].filter(Boolean),
     });
   });
+
+  /* «للمدرب بيظهر قبل أسبوع انو قرب اشتراكه ينتهي عشان يجهّز فعليًا
+     الخطة التدريبية» — إشعارٌ يصله مرة واحدة لكل اشتراك، فلا ينتظر أن
+     يفتح مركز القرارات ليعرف. */
+  if (forTrainer) {
+    for (const sub of data.subscriptions) {
+      if (!myTraineeIds.has(sub.traineeId)) continue;
+      if (subStatus(sub) !== 'active') continue;
+      const left = daysBetween(today, sub.endDate);
+      const remaining = sub.totalSessions - sub.usedSessions;
+      if (!((left >= 0 && left <= 7) || remaining <= 2)) continue;
+      const t = userById(sub.traineeId);
+      if (!t.id || t.active === false) continue;
+      await notifyOnce(forTrainer,
+        `🎯 اشتراك ${t.name} يوشك على الانتهاء (${remaining} حصة متبقية · ينتهي ${sub.endDate}) — `
+        + 'جهّز خطته التدريبية للمرحلة القادمة قبل التجديد.', 'subscription');
+    }
+  }
 
   /* ============================================================
      انضباط الحصص الأسبوعي — الأسبوع المنقضي كاملًا
@@ -922,7 +979,10 @@ async function buildActions({ branch, subStatus }) {
   });
 
   const priorityOrder = { urgent: 0, important: 1, improve: 2 };
-  const enriched = actions.map((a) => {
+  const scoped = forTrainer
+    ? actions.filter((a) => belongsToTrainer(a, forTrainer, myTraineeIds))
+    : actions;
+  const enriched = scoped.map((a) => {
     const log = logByKey[a.key];
     const snoozed = log && log.status === 'snoozed' && (log.snoozeUntil || '') > today;
     return {
@@ -945,7 +1005,7 @@ async function buildActions({ branch, subStatus }) {
     total: enriched.length,
   };
 
-  return { date: today, month, branch: branch || null, thresholds: TH, summary, actions: enriched };
+  return { date: today, month, branch: branch || null, forTrainer: forTrainer || null, thresholds: TH, summary, actions: enriched };
 }
 
 /* ============================================================
@@ -953,14 +1013,18 @@ async function buildActions({ branch, subStatus }) {
    ============================================================ */
 module.exports = function registerActions(app, { auth, requireRole, h, notify, subStatus,
   scopedBranchIds, branchAllowed, denyOutOfScope }) {
-  app.get('/api/action-center', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    const result = await buildActions({ branch: scopedBranchIds(req), subStatus });
+  app.get('/api/action-center', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+    // المدرب لا يختار فرعًا ولا يرى غير متدربيه — نطاقه شخصه لا الفرع
+    const forTrainer = req.user.role === 'trainer' ? req.user.id : null;
+    const result = await buildActions({
+      branch: forTrainer ? null : scopedBranchIds(req), subStatus, forTrainer,
+    });
     if (req.query.status === 'open') result.actions = result.actions.filter((a) => a.status === 'open');
     res.json(result);
   }));
 
   /* تسجيل تنفيذ إجراء: نُفّذ / أُجّل / أُعيد فتحه */
-  app.post('/api/action-center/resolve', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  app.post('/api/action-center/resolve', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     const key = String(req.body.key || '').slice(0, 120);
     const status = req.body.status;
     if (!key) return res.status(400).json({ error: 'مُعرّف الإجراء مطلوب.' });
@@ -1007,10 +1071,14 @@ module.exports = function registerActions(app, { auth, requireRole, h, notify, s
   }));
 
   /* سجل الإجراءات المنفَّذة — من نفّذ، ومتى، وبأي ملاحظة */
-  app.get('/api/action-center/log', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  app.get('/api/action-center/log', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     const { actionLog, users } = await Store.load('actionLog', 'users');
     const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '—';
-    res.json(actionLog
+    // المدرب يرى ما نفّذه هو — سجل بقية الفريق قرارُ إدارة
+    const mine = req.user.role === 'trainer'
+      ? actionLog.filter((l) => l.byId === req.user.id || l.trainerId === req.user.id)
+      : actionLog;
+    res.json(mine
       .map((l) => ({ ...l, byName: nameOf(l.byId) }))
       .sort((a, b) => b.id - a.id)
       .slice(0, 120));
