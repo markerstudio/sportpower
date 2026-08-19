@@ -1191,10 +1191,50 @@ async function viewTraineePage(root, traineeId) {
 
   /* سجل الحصص مفصولًا باشتراكاته: فاصل بين حصص كل اشتراك حتى يتضح
      أي الحصص تخص الاشتراك الأول وأيها الثاني وهكذا (بطلب العميل) */
-  const sessionsCard = el('div', { class: 'card' }, el('h3', { class: 'card__title' }, 'سجل الحصص — مفصولًا حسب الاشتراك'));
-  if (!data.sessions.length) {
-    sessionsCard.append(el('div', { class: 'empty' }, 'لا حصص مسجلة بعد.'));
-  } else {
+  const sessionsCard = el('div', { class: 'card' });
+  /* «الساعات الي سجلها المتدرب تظهر ع صفحته ويقدر يغير التاريخ ليشوف
+     الي قبل والي بعد» — منتقي فترة فوق السجل، وفارغٌ يعني كل الحصص. */
+  const sessFrom = input({ type: 'date', style: 'width:150px' });
+  const sessTo = input({ type: 'date', style: 'width:150px' });
+  const sessBody = el('div');
+  const monthShift = (n) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const setRange = (from, to) => { sessFrom.value = from || ''; sessTo.value = to || ''; drawSessions(); };
+  sessionsCard.append(
+    el('h3', { class: 'card__title' }, 'سجل الحصص — مفصولًا حسب الاشتراك'),
+    el('div', { style: 'display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px' },
+      field('من تاريخ', sessFrom), field('إلى تاريخ', sessTo),
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => setRange(monthShift(-1), todayISO()) }, 'آخر شهر'),
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => setRange(monthShift(-3), todayISO()) }, 'آخر ٣ أشهر'),
+      el('button', { class: 'btn btn--ghost btn--sm', onclick: () => setRange('', '') }, 'كل الحصص')),
+    sessBody);
+  sessFrom.addEventListener('change', () => drawSessions());
+  sessTo.addEventListener('change', () => drawSessions());
+
+  function drawSessions() {
+    sessBody.innerHTML = '';
+    const from = sessFrom.value, to = sessTo.value;
+    const sessions = data.sessions.filter((s) => (!from || s.date >= from) && (!to || s.date <= to));
+    if (from || to) {
+      sessBody.append(el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px' },
+        `${sessions.length} حصة ضمن الفترة المختارة من أصل ${data.sessions.length}.`));
+    }
+    drawSessionGroups(sessBody, sessions);
+  }
+
+  /* الحصص مجمّعة باشتراكاتها — الفاصل يوضّح أي الحصص للاشتراك الأول
+     وأيها للثاني، ويبقى صحيحًا داخل الفترة المختارة. */
+  function drawSessionGroups(target, sessionList) {
+    if (!sessionList.length) {
+      target.append(el('div', { class: 'empty' },
+        data.sessions.length ? 'لا حصص في هذه الفترة.' : 'لا حصص مسجلة بعد.'));
+      return;
+    }
+    const sessionsCard = target;
+    {
     // ترقيم الاشتراكات زمنيًا: الأقدم = الاشتراك ١
     const subsChrono = data.subscriptions.slice()
       .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id);
@@ -1202,7 +1242,7 @@ async function viewTraineePage(root, traineeId) {
     const AR_NUMS = ['١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', '١٠'];
     const groups = [];
     const byId = new Map();
-    data.sessions.forEach((s) => { // مرتبة تنازليًا — الأحدث أولًا
+    sessionList.forEach((s) => { // مرتبة تنازليًا — الأحدث أولًا
       const key = s.subscriptionId || 0;
       if (!byId.has(key)) { byId.set(key, []); groups.push(key); }
       byId.get(key).push(s);
@@ -1229,6 +1269,8 @@ async function viewTraineePage(root, traineeId) {
         dataTable(sessionHeaders, list.map(sessionRow)));
     });
   }
+  }
+  drawSessions();
   container.append(sessionsCard);
 
   // البرنامج الغذائي

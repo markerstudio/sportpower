@@ -14,7 +14,7 @@ const ACTION_TYPE_LABELS = {
   absence: 'غياب متكرر', renewal: 'تجديد اشتراك', followup: 'متابعة بعد الغياب',
   rating: 'تقييم متدرب', measurements: 'قياسات ناقصة', progress: 'تعثّر النتائج',
   retention: 'نسبة التجديد', 'absence-rate': 'نسبة الغياب', revenue: 'التحصيل',
-  attendance: 'معدل الحضور',
+  attendance: 'معدل الحضور', goal: 'بلا هدف تدريبي',
   'weekly-gap': 'نقص حصص الأسبوع', pace: 'إيقاع أسرع من الباقة',
   weighing: 'الميزان الأسبوعي', payment: 'متابعة دفعة',
   'trainer-log': 'إدخال المدرب', 'no-input': 'يوم بلا إدخال',
@@ -39,6 +39,8 @@ const THRESHOLD_FIELDS = [
 
 async function viewActionCenter(root) {
   const state = { branch: '', showHandled: false, priority: '' };
+  /* المدرب نطاقه متدربوه لا فرعٌ يختاره — فلا منتقي فرع ولا عتبات */
+  const isTrainer = API.user.role === 'trainer';
   const container = el('div', { class: 'content' });
   root.append(container);
 
@@ -47,14 +49,16 @@ async function viewActionCenter(root) {
     container.append(spinnerCard('جارٍ تحليل بيانات النظام واستخراج الإجراءات المطلوبة…'));
     const [data, branches, log] = await Promise.all([
       API.get('/api/action-center' + (state.branch ? '?branch=' + state.branch : '')),
-      API.get('/api/branches'),
+      isTrainer ? Promise.resolve([]) : API.get('/api/branches'),
       API.get('/api/action-center/log').catch(() => []),
     ]);
-    // مفتاح الدولة لروابط الواتساب
-    try {
-      const st = await API.get('/api/settings');
-      OPS_SETTINGS.waCountryCode = st.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
-    } catch (e) { /* الافتراضي */ }
+    // مفتاح الدولة لروابط الواتساب — إعدادات النظام صلاحية إدارة
+    if (!isTrainer) {
+      try {
+        const st = await API.get('/api/settings');
+        OPS_SETTINGS.waCountryCode = st.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
+      } catch (e) { /* الافتراضي */ }
+    }
     container.innerHTML = '';
 
     /* --- شريط الفلاتر --- */
@@ -65,7 +69,7 @@ async function viewActionCenter(root) {
       value: state.priority, onchange: (e) => { state.priority = e.target.value; render(); },
     });
     container.append(el('div', { class: 'card filters' },
-      field('الفرع', branchSel), field('الأولوية', prioritySel),
+      isTrainer ? el('span') : field('الفرع', branchSel), field('الأولوية', prioritySel),
       el('button', {
         class: 'btn ' + (state.showHandled ? 'btn--accent' : 'btn--outline'),
         onclick: () => { state.showHandled = !state.showHandled; render(); },
@@ -74,8 +78,12 @@ async function viewActionCenter(root) {
 
     /* --- الشرح: لماذا هذه الصفحة --- */
     container.append(el('div', { class: 'alert alert--info' },
-      'هذه ليست لوحة أرقام — النظام يفحص بيانات اليوم ويحوّل كل مشكلة يكتشفها إلى إجراء جاهز للتنفيذ: '
-      + 'لكل بطاقة سبب ظهورها، أولويتها، الشخص أو الفرع المسؤول، وأزرار تنفيذ مباشرة.'));
+      isTrainer
+        ? 'هذه قراراتك أنت: النظام يفحص متدربيك ويحوّل كل ما يحتاج تدخّلك إلى إجراء جاهز — '
+          + 'غياب يحتاج تواصلًا، أسبوع ناقص الحصص، من لم يتوزّن، من بلا هدف تدريبي، '
+          + 'ومن قرب اشتراكه ينتهي فجهّز خطته. (الأرقام المالية وتقييمات المتدربين لا تظهر هنا.)'
+        : 'هذه ليست لوحة أرقام — النظام يفحص بيانات اليوم ويحوّل كل مشكلة يكتشفها إلى إجراء جاهز للتنفيذ: '
+          + 'لكل بطاقة سبب ظهورها، أولويتها، الشخص أو الفرع المسؤول، وأزرار تنفيذ مباشرة.'));
 
     /* --- عدّادات الأولويات --- */
     const s = data.summary;
@@ -91,7 +99,9 @@ async function viewActionCenter(root) {
 
     if (!visible.length) {
       container.append(el('div', { class: 'card' },
-        el('div', { class: 'empty' }, '🎉 لا إجراءات مطلوبة الآن — كل المؤشرات ضمن الحدود المتفق عليها.')));
+        el('div', { class: 'empty' }, isTrainer
+        ? '🎉 لا إجراءات على متدربيك الآن — كل شيء ضمن الخطة.'
+        : '🎉 لا إجراءات مطلوبة الآن — كل المؤشرات ضمن الحدود المتفق عليها.')));
     }
 
     ['urgent', 'important', 'improve'].forEach((priority) => {
@@ -111,7 +121,7 @@ async function viewActionCenter(root) {
 
     /* --- سجل التنفيذ --- */
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, 'سجل تنفيذ الإجراءات — من نفّذ ومتى'),
+      el('h3', { class: 'card__title' }, isTrainer ? 'سجل ما نفّذتَه' : 'سجل تنفيذ الإجراءات — من نفّذ ومتى'),
       pagedTable(['التاريخ', 'الإجراء', 'الحالة', 'الملاحظة', 'المنفِّذ'],
         log,
         (l) => [l.date,
@@ -144,6 +154,9 @@ function actionCard(a, onDone) {
       return el('a', { class: 'btn btn--outline btn--sm', href: 'tel:' + String(act.phone).replace(/\s/g, '') }, '📞 ' + act.label);
     }
     if (act.kind === 'link') {
+      /* لا يُعرض زرٌّ يقود إلى صفحة لا يفتحها هذا الدور — بطاقةُ التجديد
+         عند المدرب تقوده لملف المتدرب لا لصفحة الباقات. */
+      if (!canOpenRoute(act.href, API.user.role)) return null;
       return el('a', { class: 'btn btn--outline btn--sm', href: act.href }, act.label + ' ←');
     }
     if (act.kind === 'task' && API.user.role === 'admin') {

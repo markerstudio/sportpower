@@ -25,6 +25,7 @@ const NAV = {
     ['#/settings', 'الإعدادات والتحكم', 'gear'],
   ],
   trainer: [
+    ['#/actions', 'مركز قراراتي', 'compass'],
     ['#/trainer', 'لوحتي', 'grid'],
     ['#/calendar', 'مواعيدي', 'calendar'],
     ['#/trainees', 'المتدربون', 'users'],
@@ -57,6 +58,42 @@ const NAV = {
   ],
 };
 
+/* من يفتح أي صفحة — مصدرٌ واحد يستعمله الموجّه وأزرارُ مركز القرارات،
+   فلا يُعرض للمدرب زرٌّ يقوده إلى «ليست لديك صلاحية». */
+const ROUTE_ROLES = {
+  '#/admin': ['admin'],
+  '#/trainer': ['trainer'],
+  '#/accountant': ['accountant', 'admin'],
+  '#/me': ['trainee'],
+  '#/calendar': ['admin', 'accountant', 'trainer', 'trainee'],
+  '#/subscriptions': ['admin', 'accountant'],
+  '#/branches': ['admin'],
+  '#/inbody': ['admin', 'trainer', 'trainee'],
+  '#/meals': null, // للجميع
+  '#/reports': ['admin', 'accountant'],
+  '#/roster': ['admin', 'accountant'],
+  '#/trainees': ['trainer', 'nutritionist', 'accountant'],
+  '#/settings': ['admin'],
+  '#/daily': ['admin', 'accountant'],
+  '#/kpi': ['admin', 'accountant'],
+  '#/frozen': ['admin', 'accountant'],
+  '#/sales': ['admin', 'accountant'],
+  '#/loyalty': ['admin', 'accountant'],
+  '#/points': ['trainee'],
+  '#/actions': ['admin', 'accountant', 'trainer'],
+  '#/packages': ['admin', 'accountant'],
+  '#/ratings': ['admin'],
+};
+
+/* ملف المتدرب مفتوح لكل الموظفين وللمتدرب على نفسه */
+function canOpenRoute(hash, role) {
+  const h = String(hash || '').split('?')[0];
+  if (/^#\/trainee\/\d+$/.test(h)) return ['admin', 'accountant', 'trainer', 'nutritionist', 'trainee'].includes(role);
+  if (!(h in ROUTE_ROLES)) return false;
+  const allowed = ROUTE_ROLES[h];
+  return !allowed || allowed.includes(role);
+}
+
 const TITLES = {
   '#/admin': 'لوحة تحكم الإدارة', '#/trainer': 'لوحة المدرب', '#/accountant': 'اللوحة المالية',
   '#/me': 'صفحتي', '#/calendar': 'التقويم والمواعيد', '#/subscriptions': 'إدارة الاشتراكات والحصص',
@@ -67,6 +104,7 @@ const TITLES = {
   '#/daily': 'المتابعة اليومية', '#/kpi': 'الأهداف وKPI', '#/frozen': 'متابعة المجمدين',
   '#/sales': 'متابعة المبيعات', '#/loyalty': 'الولاء والإحالات', '#/points': 'نقاطي ومكافآتي',
   '#/actions': 'مركز القرارات — القرارات اليومية',
+  '#/goals': 'أهداف المشتركين',
   '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
 };
 
@@ -246,30 +284,33 @@ async function route() {
     return;
   }
 
-  const routes = {
-    '#/admin': guard(['admin'], viewAdminDash),
-    '#/trainer': guard(['trainer'], viewTrainerDash),
-    '#/accountant': guard(['accountant', 'admin'], viewAccountantDash),
-    '#/me': guard(['trainee'], (r) => viewTraineePage(r, API.user.id)),
-    '#/calendar': guard(['admin', 'accountant', 'trainer', 'trainee'], viewCalendar),
-    '#/subscriptions': guard(['admin', 'accountant'], viewSubscriptions),
-    '#/branches': guard(['admin'], viewBranches),
-    '#/inbody': guard(['admin', 'trainer', 'trainee'], viewInbody),
+  const VIEWS = {
+    '#/admin': viewAdminDash,
+    '#/trainer': viewTrainerDash,
+    '#/accountant': viewAccountantDash,
+    '#/me': (r) => viewTraineePage(r, API.user.id),
+    '#/calendar': viewCalendar,
+    '#/subscriptions': viewSubscriptions,
+    '#/branches': viewBranches,
+    '#/inbody': viewInbody,
     '#/meals': viewMeals,
-    '#/reports': guard(['admin', 'accountant'], viewReports),
-    '#/roster': guard(['admin', 'accountant'], viewTraineeRoster),
-    '#/trainees': guard(['trainer', 'nutritionist', 'accountant'], viewMyTrainees),
-    '#/settings': guard(['admin'], viewSettings),
-    '#/daily': guard(['admin', 'accountant'], viewDaily),
-    '#/kpi': guard(['admin', 'accountant'], viewKpi),
-    '#/frozen': guard(['admin', 'accountant'], viewFrozen),
-    '#/sales': guard(['admin', 'accountant'], viewSales),
-    '#/loyalty': guard(['admin', 'accountant'], viewLoyalty),
-    '#/points': guard(['trainee'], viewMyPoints),
-    '#/actions': guard(['admin', 'accountant'], viewActionCenter),
-    '#/packages': guard(['admin', 'accountant'], viewPackages),
-    '#/ratings': guard(['admin'], viewRatings),
+    '#/reports': viewReports,
+    '#/roster': viewTraineeRoster,
+    '#/trainees': viewMyTrainees,
+    '#/settings': viewSettings,
+    '#/daily': viewDaily,
+    '#/kpi': viewKpi,
+    '#/frozen': viewFrozen,
+    '#/sales': viewSales,
+    '#/loyalty': viewLoyalty,
+    '#/points': viewMyPoints,
+    '#/actions': viewActionCenter,
+    '#/packages': viewPackages,
+    '#/ratings': viewRatings,
   };
+  const routes = Object.fromEntries(Object.entries(VIEWS)
+    // null في ROUTE_ROLES = مفتوحة لكل الأدوار
+    .map(([h, fn]) => [h, guard(ROUTE_ROLES[h] || Object.keys(NAV), fn)]));
 
   const view = routes[hash];
   if (!view) { location.hash = homeRoute(API.user.role); return; }
