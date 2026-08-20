@@ -293,6 +293,42 @@ function convertContract(c, onDone) {
 }
 
 /* ============================================================
+   باقاتي — صفحة مستقلة للمتدرب
+   «الباقات بتظهر بملف المتدرب اول الصفحه، بدي تظهر بالقائمة يكون منفصل»:
+   البطاقة نفسها تُرفع من ملفه إلى بندٍ في قائمته، فيبقى ملفه لحصصه
+   وقياساته. وتبقى البطاقة داخل الملف للإدارة والمحاسب والمدرب لأنهم
+   يجدّدون منها.
+   ============================================================ */
+async function viewMyPackages(root) {
+  const container = el('div', { class: 'content' });
+  root.append(container);
+  container.append(spinnerCard());
+  let data;
+  try { data = await API.get('/api/trainee/' + API.user.id + '/overview'); }
+  catch (ex) { container.innerHTML = ''; container.append(el('div', { class: 'alert alert--danger' }, ex.message)); return; }
+  container.innerHTML = '';
+
+  container.append(traineePackagesCard(data, API.user.id, () => { container.innerHTML = ''; viewMyPackages(root); }));
+
+  /* سجل اشتراكاته — ليقرأ باقاته السابقة في مكانها لا في ملفه */
+  const past = (data.subscriptions || []).slice().sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+  if (past.length) {
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'سجل اشتراكاتي'),
+      dataTable(['الباقة', 'من', 'إلى', 'الحصص', 'المستخدمة', 'المتبقية', 'الحالة'],
+        past.map((s) => [s.packageName || `${s.totalSessions} حصة`, s.startDate, s.endDate,
+          el('span', { class: 'num' }, String(s.totalSessions)),
+          el('span', { class: 'num' }, String(s.usedSessions)),
+          el('span', { class: 'num' }, String(s.remaining)),
+          statusTag(s.status, s.expiring)]),
+        'لا اشتراكات سابقة.')));
+  }
+
+  container.append(el('div', { class: 'alert alert--info' },
+    'التجديد والترقية يتمّان من الاستقبال أو المحاسب — اختر الباقة التي تناسبك وأخبرهم بها.'));
+}
+
+/* ============================================================
    بطاقة الباقات على ملف المشترك
    ============================================================ */
 function traineePackagesCard(data, traineeId, onDone) {

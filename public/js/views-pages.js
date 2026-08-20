@@ -870,13 +870,13 @@ async function viewInbody(root) {
         el('span', {}, el('i', { style: 'background:var(--accent)' }), 'الوزن (كغ)'),
         el('span', {}, el('i', { style: 'background:var(--blue-500)' }), 'نسبة الدهون %')),
       lineChart(readings.map((r) => r.date.slice(5)), readings.map((r) => r.weight), readings.map((r) => r.bodyFatPct)),
-      dataTable(['التاريخ', 'الوزن', 'التغيّر ⇅', 'الدهون %', 'العضلات', 'دهون الجسم', 'الماء', 'BMI', 'النقاط', 'الصورة',
+      dataTable(['التاريخ', 'الوزن', 'التغيّر ⇅', 'الدهون %', 'العضلات', 'دهون الجسم', 'الدهون الحشوية', 'الماء', 'BMI', 'النقاط', 'الصورة',
         ...(isStaff ? ['رصد (سرّي)'] : [])],
         readings.map((r, i) => [r.date, r.weight,
           // السهم مقارنةً بالقراءة السابقة زمنيًا — طلوع الوزن ↑ ونزوله ↓،
           // ولونه بحسب هدف المتدرب (بناء العضل يرحّب بالزيادة)
           changeArrow(r.weight, i > 0 ? readings[i - 1].weight : null, { goodWhenUp: goodWhenUpForGoal(currentGoal()) }),
-          r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
+          r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—', r.visceralFat ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
           r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—',
           // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟
@@ -910,6 +910,7 @@ function openInbodyModal(onDone, traineeId, trainees) {
     water: input({ type: 'number', step: '0.1', placeholder: 'لتر' }),
     bmi: input({ type: 'number', step: '0.1' }),
     score: input({ type: 'number' }),
+    visceralFat: input({ type: 'number', step: '1', min: 1, max: 30, placeholder: 'مستوى ١–٣٠' }),
     waist: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
     chest: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
     arm: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
@@ -936,7 +937,7 @@ function openInbodyModal(onDone, traineeId, trainees) {
           const filledNames = [];
           const LABELS = {
             weight: 'الوزن', bodyFatPct: 'الدهون %', muscleMass: 'العضلات', fatMass: 'دهون الجسم',
-            water: 'الماء', bmi: 'BMI', score: 'النقاط', waist: 'الخصر', chest: 'الصدر',
+            water: 'الماء', bmi: 'BMI', score: 'النقاط', visceralFat: 'الدهون الحشوية', waist: 'الخصر', chest: 'الصدر',
             arm: 'اليد', hips: 'الحوض', leg: 'الرجل',
           };
           Object.entries(res.fields || {}).forEach(([k, v]) => {
@@ -976,7 +977,8 @@ function openInbodyModal(onDone, traineeId, trainees) {
       field('الوزن *', fields.weight), field('نسبة الدهون %', fields.bodyFatPct),
       field('كتلة العضلات', fields.muscleMass), field('دهون الجسم', fields.fatMass),
       field('الماء', fields.water), field('BMI', fields.bmi),
-      field('النقاط', fields.score), field('ملاحظات', notesIn),
+      field('النقاط', fields.score), field('الدهون الحشوية (مستوى)', fields.visceralFat),
+      el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
       el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم)'),
       el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
         field('الخصر', fields.waist), field('الصدر', fields.chest), field('اليد', fields.arm),
@@ -1134,7 +1136,7 @@ const ROSTER_COLUMNS = [
 ];
 
 async function viewTraineeRoster(root) {
-  const state = { branch: '', status: '', cols: new Set(['phone', 'residence']) };
+  const state = { branch: '', status: '', month: '', onlyPaid: false, cols: new Set(['phone', 'residence']) };
   const container = el('div', { class: 'content' });
   root.append(container);
   const branches = await API.get('/api/branches').catch(() => []);
@@ -1142,7 +1144,10 @@ async function viewTraineeRoster(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const q = `?branch=${state.branch}&status=${state.status}`;
+    /* الشهر يدخل في `q` نفسها فينتقل إلى تصدير CSV تلقائيًا */
+    const q = `?branch=${state.branch}&status=${state.status}`
+      + (state.month ? `&month=${state.month}` : '')
+      + (state.month && state.onlyPaid ? '&onlyPaidThisMonth=1' : '');
     const data = await API.get('/api/reports/trainees' + q);
     container.innerHTML = '';
 
@@ -1152,6 +1157,15 @@ async function viewTraineeRoster(root) {
     const statusSel = select([['', 'الكل'], ['active', 'باشتراك فعّال فقط'], ['inactive', 'بلا اشتراك فعّال']], {
       value: state.status, onchange: (e) => { state.status = e.target.value; render(); },
     });
+    /* شهر الدفعات: يضيف عمود «المدفوع في الشهر» بدل إعطاء كل الدفعات.
+       تركُه فارغًا يعيد التقرير كما كان — مدى الحياة. */
+    const monthIn = input({
+      type: 'month', value: state.month,
+      onchange: (e) => { state.month = e.target.value; render(); },
+    });
+    const onlyPaidChk = input({ type: 'checkbox' });
+    onlyPaidChk.checked = state.onlyPaid;
+    onlyPaidChk.addEventListener('change', () => { state.onlyPaid = onlyPaidChk.checked; render(); });
     const colsBox = el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap;align-items:center' },
       el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'أعمدة إضافية:'),
       ...ROSTER_COLUMNS.map(([key, label]) => {
@@ -1167,6 +1181,11 @@ async function viewTraineeRoster(root) {
     container.append(el('div', { class: 'card' },
       el('div', { class: 'filters' },
         field('الفرع', branchSel), field('الحالة', statusSel),
+        field('شهر الدفعات', monthIn),
+        state.month
+          ? el('label', { style: 'display:flex;gap:5px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
+            onlyPaidChk, 'من دفع في هذا الشهر فقط')
+          : el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'اترك الشهر فارغًا لكل الدفعات'),
         el('div', { style: 'flex:1' }),
         el('button', {
           class: 'btn btn--accent',
@@ -1187,10 +1206,18 @@ async function viewTraineeRoster(root) {
       kpiTile(fmtMoney(t.dueTotal), 'إجمالي المتبقي عليهم', 'card', t.dueTotal > 0 ? 'warn' : undefined),
       kpiTile(`${t.withResidence}/${t.trainees}`, 'مسجّل لهم مكان السكن', 'building',
         t.withResidence < t.trainees ? 'warn' : undefined)));
+    if (state.month) {
+      container.append(el('div', { class: 'kpis' },
+        kpiTile(fmtMoney(t.paidInMonth), `المحصّل في ${state.month}`, 'wallet', 'green'),
+        kpiTile(`${t.payersInMonth}/${t.trainees}`, `دفعوا في ${state.month}`, 'check',
+          t.payersInMonth < t.trainees ? 'warn' : undefined)));
+    }
 
     const tableWrap = el('div');
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, 'المتدربون بالأسماء — الاشتراك والدفعات'),
+      el('h3', { class: 'card__title' },
+        'المتدربون بالأسماء — الاشتراك والدفعات',
+        state.month ? el('span', { class: 'tag tag--petrol' }, `دفعات ${state.month}`) : ''),
       tableWrap));
 
     function drawTable() {
@@ -1199,7 +1226,8 @@ async function viewTraineeRoster(root) {
       tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
         ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
           'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
-          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه'],
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه',
+          ...(state.month ? [`المدفوع في ${state.month}`] : [])],
         // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
         data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
         (r) => {
@@ -1217,7 +1245,12 @@ async function viewTraineeRoster(root) {
             el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
             // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
             el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
-            fmtMoney(r.paidTotal)];
+            fmtMoney(r.paidTotal),
+            ...(state.month ? [el('span', {
+              class: r.paymentsInMonth ? '' : 'tag tag--neutral',
+              title: r.paymentsInMonth ? `${r.paymentsInMonth} دفعة` : 'لم يدفع في هذا الشهر',
+              style: r.paymentsInMonth ? 'font-weight:700' : '',
+            }, r.paymentsInMonth ? fmtMoney(r.paidInMonth) : '—')] : [])];
         },
         {
           pageSize: 20, emptyText: 'لا متدربين مطابقين.',

@@ -1129,8 +1129,8 @@ app.get('/api/sessions', auth, h(async (req, res) => {
 
 app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, res) => {
   const { traineeId, date, time, duration, style, notes, weight, bodyFatPct, muscleMass, fatMass,
-    waist, chest, arm, hips, leg, appointmentId } = req.body;
-  const measurements = { weight, bodyFatPct, muscleMass, fatMass, waist, chest, arm, hips, leg };
+    visceralFat, waist, chest, arm, hips, leg, appointmentId } = req.body;
+  const measurements = { weight, bodyFatPct, muscleMass, fatMass, visceralFat, waist, chest, arm, hips, leg };
   /* أنواع الحصة: عادية · تعويضية · غياب.
      الغياب يُخصم من الرصيد (سياسة النادي) ولا يُحتسب حضورًا ولا ساعةَ تدريب.
      والتعويضية **تحلّ محلّ غياب سبق خصمه**: الحصة اقتُطعت يوم الغياب، فلا
@@ -1269,7 +1269,8 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
 
 /* قياسات الحصة (وزن/دهون %/كتلة دهون كغ/عضل + شريط القياس) تُحفظ تلقائيًا
    قراءةً في سجل InBody */
-const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
+const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'visceralFat',
+  'waist', 'chest', 'arm', 'hips', 'leg'];
 async function recordSessionMeasurements(traineeId, date, m, byId) {
   const vals = {};
   let any = false;
@@ -1699,7 +1700,8 @@ app.get('/api/inbody', auth, h(async (req, res) => {
 }));
 
 app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
-  const { traineeId, date, weight, bodyFatPct, muscleMass, fatMass, water, bmi, score, waist, chest, arm, hips, leg, notes, imageBase64 } = req.body;
+  const { traineeId, date, weight, bodyFatPct, muscleMass, fatMass, water, bmi, score, visceralFat,
+    waist, chest, arm, hips, leg, notes, imageBase64 } = req.body;
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!date || !weight) return res.status(400).json({ error: 'التاريخ والوزن مطلوبان على الأقل.' });
@@ -1707,6 +1709,7 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
     traineeId: trainee.id, date,
     weight: Number(weight), bodyFatPct: numOrNull(bodyFatPct), muscleMass: numOrNull(muscleMass),
     fatMass: numOrNull(fatMass), water: numOrNull(water), bmi: numOrNull(bmi), score: numOrNull(score),
+    visceralFat: numOrNull(visceralFat),
     waist: numOrNull(waist), chest: numOrNull(chest), arm: numOrNull(arm), hips: numOrNull(hips), leg: numOrNull(leg),
     notes: notes || '', image: saveImage(imageBase64, `inbody-${trainee.id}`),
     createdBy: req.user.id,
@@ -1722,7 +1725,8 @@ app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, 
   const patch = {};
   if (req.body.date !== undefined) patch.date = req.body.date;
   if (req.body.notes !== undefined) patch.notes = req.body.notes;
-  ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'water', 'bmi', 'score', 'waist', 'chest', 'arm', 'hips', 'leg'].forEach((k) => {
+  ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'water', 'bmi', 'score', 'visceralFat',
+    'waist', 'chest', 'arm', 'hips', 'leg'].forEach((k) => {
     if (req.body[k] !== undefined) patch[k] = numOrNull(req.body[k]);
   });
   if (patch.weight === null) return res.status(400).json({ error: 'الوزن مطلوب على الأقل.' });
@@ -1793,6 +1797,9 @@ const OCR_FIELDS = [
   ['water', ['total body water', 'tbw', 'body water', 'الماء'], [5, 100]],
   ['bmi', ['bmi', 'body mass index', 'مؤشر كتلة الجسم'], [8, 80]],
   ['score', ['inbody score', 'total score', 'score', 'النقاط'], [1, 100]],
+  /* «vfa» (مساحة) لا يُقرأ هنا: مداه بالسنتيمترات المربعة يتجاوز ٣٠ فيُرفض
+     كقراءة شاردة — والمقصود مستوى الدهون الحشوية كما تطبعه الورقة. */
+  ['visceralFat', ['visceral fat level', 'vfl', 'visceral fat', 'الدهون الحشوية'], [1, 30]],
   ['waist', ['waist', 'whr', 'الخصر'], [30, 250]],
   ['chest', ['chest', 'الصدر'], [40, 250]],
   ['arm', ['arm circumference', 'arm', 'اليد', 'الذراع'], [10, 100]],
@@ -2358,7 +2365,12 @@ const SUB_STATUS_AR = { active: 'فعّال', frozen: 'مجمّد', expired: 'م
 
 const TRAINEE_REPORT_OPTIONAL = ['phone', 'birthDate', 'residence', 'username', 'joinedAt', 'lastSession'];
 
-async function buildTraineeRoster({ branch, status }) {
+/* «تقرير المتدرب بالاسماء اقد اختار الدفعات بالشهر — لانو بعطيني كل الدفعات»:
+   يُشتقّ عمودٌ للمدفوع في شهرٍ بعينه. ولا تُصفّى قائمةُ الدفعات نفسها بالشهر
+   لأن «المتبقي عليه» يُحسب من تاريخ دفعاته كاملًا — فتصفيتها تُظهر الجميع
+   مدينين. القائمة تبقى كاملة، والشهر عمودٌ إلى جانبها. */
+async function buildTraineeRoster({ branch, status, month, onlyPaidThisMonth }) {
+  const inMonth = (d) => month && String(d || '').slice(0, 7) === month;
   const inBranchList = (id) => !branch || branch.includes(Number(id));
   const { users, branches, subscriptions, payments, sessions } = await Store.load(
     'users', 'branches', 'subscriptions', 'payments', 'sessions');
@@ -2401,12 +2413,18 @@ async function buildTraineeRoster({ branch, status }) {
           .reduce((x, p) => x + p.amount, 0)), 0),
       paidTotal: myPays.reduce((s, p) => s + p.amount, 0),
       lastPayment: myPays.reduce((m, p) => (p.date > m ? p.date : m), ''),
+      paidInMonth: month ? Math.round(myPays.filter((p) => inMonth(p.date))
+        .reduce((s, p) => s + p.amount, 0) * 100) / 100 : null,
+      paymentsInMonth: month ? myPays.filter((p) => inMonth(p.date)).length : null,
     };
   });
 
   if (branch) rows = rows.filter((r) => inBranchList(r.branchId));
   if (status === 'active') rows = rows.filter((r) => r.subscription && r.subscription.status === 'active');
   if (status === 'inactive') rows = rows.filter((r) => !r.subscription || r.subscription.status !== 'active');
+  /* تصفيةٌ اختيارية: من دفع في هذا الشهر فقط. منفصلة عن العمود عمدًا —
+     فلو كانت افتراضية لاختفى المدينون، وهم أهمّ من في التقرير. */
+  if (month && onlyPaidThisMonth) rows = rows.filter((r) => r.paymentsInMonth > 0);
   rows.sort((a, b) => a.branch.localeCompare(b.branch, 'ar') || a.name.localeCompare(b.name, 'ar'));
 
   /* من أي المناطق يأتي المشتركون فعلًا — المنطقة الفارغة تُعرض صراحةً
@@ -2431,17 +2449,29 @@ async function buildTraineeRoster({ branch, status }) {
       paidTotal: Math.round(rows.reduce((s, r) => s + r.paidTotal, 0) * 100) / 100,
       dueTotal: Math.round(rows.reduce((s, r) => s + r.dueAll, 0) * 100) / 100,
       withResidence: rows.filter((r) => r.residence).length,
+      month: month || null,
+      paidInMonth: month ? Math.round(rows.reduce((s, r) => s + (r.paidInMonth || 0), 0) * 100) / 100 : null,
+      payersInMonth: month ? rows.filter((r) => r.paymentsInMonth > 0).length : null,
     },
   };
 }
 
+/* الشهر بصيغة YYYY-MM — وما عداه يُهمل فلا يُصفّى التقرير بقيمةٍ فاسدة */
+const monthParam = (v) => (/^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+
 app.get('/api/reports/trainees', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  res.json(await buildTraineeRoster({ branch: scopedBranchIds(req), status: req.query.status || '' }));
+  res.json(await buildTraineeRoster({
+    branch: scopedBranchIds(req), status: req.query.status || '',
+    month: monthParam(req.query.month), onlyPaidThisMonth: req.query.onlyPaidThisMonth === '1',
+  }));
 }));
 
 app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const branch = scopedBranchIds(req);
-  const data = await buildTraineeRoster({ branch, status: req.query.status || '' });
+  const month = monthParam(req.query.month);
+  const data = await buildTraineeRoster({
+    branch, status: req.query.status || '', month, onlyPaidThisMonth: req.query.onlyPaidThisMonth === '1',
+  });
   // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
   const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
   const on = (k) => wanted.includes(k);
@@ -2456,6 +2486,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   head.push('الباقة', 'عدد الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'حالة الاشتراك',
     'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي على الاشتراك الحالي', 'إجمالي المتبقي عليه',
     'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
+  if (month) head.push(`المدفوع في ${month}`, `عدد دفعات ${month}`);
   if (on('lastSession')) head.push('آخر حصة');
 
   const lines = [`تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`, ''];
@@ -2471,6 +2502,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
     out.push(cell(s && s.packageName), s ? s.totalSessions : '', s ? s.usedSessions : '', s ? s.remaining : '',
       s ? s.startDate : '', s ? s.endDate : '', s ? SUB_STATUS_AR[s.status] || s.status : 'بلا اشتراك',
       s ? s.price : '', r.paidCurrent, r.dueCurrent, r.dueAll, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
+    if (month) out.push(r.paidInMonth ?? 0, r.paymentsInMonth ?? 0);
     if (on('lastSession')) out.push(cell(r.lastSession));
     lines.push(out.join(','));
   });
@@ -2480,6 +2512,10 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   lines.push(`منهم باشتراك فعّال,${data.totals.active}`);
   lines.push(`إجمالي المحصّل منهم,${data.totals.paidTotal}`);
   lines.push(`إجمالي المتبقي عليهم,${data.totals.dueTotal}`);
+  if (month) {
+    lines.push(`المحصّل في ${month},${data.totals.paidInMonth}`);
+    lines.push(`عدد من دفعوا في ${month},${data.totals.payersInMonth}`);
+  }
 
   lines.push('', 'المنطقة (مكان السكن),عدد المتدربين,منهم فعّالون,التوزّع على الفروع');
   data.areas.forEach((a) => lines.push(

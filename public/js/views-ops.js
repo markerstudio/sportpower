@@ -86,6 +86,7 @@ async function viewDaily(root) {
       ? await API.get('/api/tasks?month=' + state.date.slice(0, 7)) : [];
     container.innerHTML = '';
 
+    const isAdmin = API.user.role === 'admin';
     const dateIn = input({ type: 'date', value: state.date, onchange: (e) => { state.date = e.target.value; render(); } });
     const bar = el('div', { class: 'card filters' }, field('اليوم', dateIn));
     // فرعٌ واحد لا يحتاج منتقيًا — المحاسب المقيَّد بفرعٍ يرى فرعه وحده
@@ -173,14 +174,22 @@ async function viewDaily(root) {
     // سجل المدربين اليومي
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'المتابعة اليومية للمدربين'),
+      /* «اضافة الساعات المكتبيه» — المدرب يُدخلها من لوحته، وقد ينساها أو
+         يكون خارج النظام، فتُدخلها الإدارة عنه من هنا على اليوم المعروض. */
+      isAdmin ? el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px' },
+        'زر «تعديل» يُدخل حضور المدرب وانصرافه وساعاته المكتبية عنه — وساعات العمل تُحسب من الفرق بينهما.') : '',
       el('div', { class: 'table-wrap' }, dataTable(
-        ['المدرب', 'حضور', 'انصراف', 'ساعات عمل', 'ساعات تدريب', 'حصص', 'متدربون فريدون', 'أهداف تدريبية', 'ستوري', 'ريلز', 'مهام اليوم'],
+        ['المدرب', 'حضور', 'انصراف', 'ساعات عمل', 'ساعات تدريب', 'حصص', 'متدربون فريدون', 'أهداف تدريبية', 'ستوري', 'ريلز', 'مهام اليوم', ''],
         data.trainerRows.map((r) => [r.name, r.checkIn || '—', r.checkOut || '—',
           r.workHours != null ? r.workHours + ' س' : '—',
           el('span', { class: 'num' }, String(r.trainingHours)), el('span', { class: 'num' }, String(r.sessions)),
           el('span', { class: 'num' }, String(r.uniqueTrainees)),
           String(r.goalsCreated), String(r.stories), String(r.reels),
-          r.tasksTotal ? el('span', { class: 'tag ' + (r.tasksDone === r.tasksTotal ? 'tag--accent' : 'tag--warning') }, `${r.tasksDone}/${r.tasksTotal}`) : '—']))),
+          r.tasksTotal ? el('span', { class: 'tag ' + (r.tasksDone === r.tasksTotal ? 'tag--accent' : 'tag--warning') }, `${r.tasksDone}/${r.tasksTotal}`) : '—',
+          isAdmin ? el('button', {
+            class: 'btn btn--outline btn--sm',
+            onclick: () => openTrainerLogModal(render, r, data.date),
+          }, r.checkIn || r.checkOut ? 'تعديل' : 'إدخال') : el('span')]))),
     ));
 
     // مهام المدربين لهذا الشهر
@@ -316,6 +325,45 @@ async function viewKpi(root) {
 }
 
 /* ============================================================
+   سجل المدرب اليومي — إدخال الإدارة عن المدرب
+   المسار نفسه الذي يستعمله المدرب (POST /api/trainer-logs)، والخادم
+   يقبل «trainerId» من الإدارة أصلًا — الناقص كان الواجهة وحدها.
+   الحقول تُعبَّأ من الصف المعروض لأن الحفظ يستبدل سجل اليوم كاملًا.
+   ============================================================ */
+function openTrainerLogModal(onDone, row, date) {
+  const checkIn = input({ type: 'time', value: row.checkIn || '' });
+  const checkOut = input({ type: 'time', value: row.checkOut || '' });
+  const goals = input({ type: 'number', min: 0, value: row.goalsCreated ?? 0 });
+  const stories = input({ type: 'number', min: 0, value: row.stories ?? 0 });
+  const reels = input({ type: 'number', min: 0, value: row.reels ?? 0 });
+  const notes = input({ value: row.notes || '', placeholder: 'ملاحظات اليوم (اختياري)' });
+
+  const close = modal(`سجل ${row.name} — ${date}`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          const saved = await API.post('/api/trainer-logs', {
+            trainerId: row.trainerId, date,
+            checkIn: checkIn.value, checkOut: checkOut.value,
+            goalsCreated: goals.value, stories: stories.value, reels: reels.value, notes: notes.value,
+          });
+          toast(`حُفظ سجل ${row.name}` + (saved.workHours != null ? ` — ساعات العمل: ${saved.workHours} س.` : '.'));
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      field('الحضور (من الساعة)', checkIn), field('الانصراف (إلى الساعة)', checkOut),
+      field('أهداف تدريبية أنشأها', goals), field('ستوريات', stories),
+      field('ريلز/فيديوهات', reels), field('ملاحظات', notes),
+      el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+        'الحصص وساعات التدريب والمتدربون الفريدون تُحتسب تلقائيًا من الحصص المسجلة — لا تُدخل هنا.'),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ السجل'))),
+  ]);
+}
+
+/* ============================================================
    لوحة KPI بأربع زوايا: المدرب · الفرع · المحاسب · المبيعات
    كل رقم مشتقّ من بيانات النظام — لا إدخال يدوي.
    ============================================================ */
@@ -329,22 +377,29 @@ async function renderKpiBoard(container, b) {
       'الساعة المميزة: أربعة متدربين في الساعة نفسها = ساعة تدريب واحدة على المدرب. '
       + 'والغياب مخصوم من رصيد المتدرب لكنه لا يُحتسب حصةً منفَّذة للمدرب.'),
     el('div', { style: 'overflow-x:auto' },
-      dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
-        'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل',
-        'أهداف وضعها', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج أكل', 'برامج تدريب', 'المهام'],
+      /* الأعمدة الثلاثة عشر الأولى بترتيب قائمة العميل حرفيًا، ثم أعمدة
+         النظام الإضافية بعدها — فيقرأ الجدولَ من كتب القائمة كما كتبها. */
+      dataTable(['المدرب', 'الفرع',
+        'عدد الساعات المكتبية', 'عدد ساعات التدريب', 'التحصيل', 'الستوريات الشهرية',
+        'زبون جديد', 'التجميد', 'كم شخص درّب', 'النتائج', 'المشاكل', 'الريلز',
+        'عدد التجديد', 'أهداف المتدربين', 'برامج أكل',
+        'حصص', 'غياب', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج تدريب', 'المهام'],
         b.trainers.map((t) => [t.name, t.branch,
-          num(t.officeHours), num(t.trainingHours), num(t.sessions),
-          el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
-          num(t.trainedPeople), fmtMoney(t.collected),
-          num(t.stories), num(t.reels),
+          num(t.officeHours), num(t.trainingHours), fmtMoney(t.collected), num(t.stories),
+          /* «زبون جديد»: زبائن هذا الشهر · إجماليّ من ضمّهم — والتجديد عمود
+             مستقل بعده، فالفرق بين الجديد والتجديد ظاهر في الجدول. */
           el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.newClients} · ${t.newClientsTotal}`),
-          num(t.freezes), num(t.renewals),
+          num(t.freezes), num(t.trainedPeople),
           el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results)),
           el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems)),
+          num(t.reels), num(t.renewals),
           /* «كم هدفًا تدريبيًا وضعه» — من جدول الأهداف، ومقابله من بقي
              من متدربيه بلا هدف (يظهر باسمه عند المرور عليه). */
           el('b', { class: 'num', style: t.goalsCreated ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
             String(t.goalsCreated || 0)),
+          num(t.mealPlans),
+          num(t.sessions),
+          el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
           (t.traineesWithoutGoal || []).length
             ? el('span', {
               class: 'tag tag--danger',
@@ -353,7 +408,7 @@ async function renderKpiBoard(container, b) {
             : el('span', { class: 'tag tag--accent' }, '0'),
           Object.entries(t.traineeGoalMix || {})
             .map(([k, n]) => `${GOAL_LABELS[k] || k} ${n}`).join(' · ') || '—',
-          num(t.mealPlans), num(t.programs),
+          num(t.programs),
           t.tasksTotal ? `${t.tasksDone}/${t.tasksTotal}` : '—']),
         'لا مدربين.'))));
 

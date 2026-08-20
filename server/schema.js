@@ -182,6 +182,9 @@ const SCHEMA = {
       water: col('num'),
       bmi: col('num'),
       score: col('num'),
+      /* الدهون الحشوية: «مستوى» ورقة InBody (١–٣٠) لا مساحة السنتيمترات —
+         هو ما تطبعه الأجهزة الشائعة، ونزولُه تحسّن. */
+      visceralFat: col('num'),
       /* قياسات شريط القياس (سم) — بطلب العميل */
       waist: col('num'),
       chest: col('num'),

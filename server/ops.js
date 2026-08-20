@@ -601,6 +601,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         trainingHours: hoursOf(ds), sessions: ds.length,
         uniqueTrainees: new Set(ds.map((s) => s.traineeId)).size,
         goalsCreated: log.goalsCreated || 0, stories: log.stories || 0, reels: log.reels || 0,
+        /* الملاحظات تُعاد مع الصف لأن حفظ الإدارة يستبدل السجل كاملًا —
+           فلو لم يُعبَّأ بها النموذج لمُحيت ملاحظةُ المدرب عند أول تعديل. */
+        notes: log.notes || '',
         tasksDone: dayTasks.filter((x) => x.status === 'done').length, tasksTotal: dayTasks.length,
       };
     });

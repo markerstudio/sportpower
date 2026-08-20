@@ -49,6 +49,7 @@ const NAV = {
   ],
   trainee: [
     ['#/me', 'صفحتي', 'user'],
+    ['#/my-packages', 'باقاتي', 'tag'],
     ['#/points', 'نقاطي ومكافآتي', 'star'],
     ['#/meals', 'مكتبة التغذية', 'leaf'],
   ],
@@ -80,6 +81,7 @@ const ROUTE_ROLES = {
   '#/sales': ['admin', 'accountant'],
   '#/loyalty': ['admin', 'accountant'],
   '#/points': ['trainee'],
+  '#/my-packages': ['trainee'],
   '#/actions': ['admin', 'accountant', 'trainer'],
   '#/packages': ['admin', 'accountant'],
   '#/ratings': ['admin'],
@@ -106,6 +108,7 @@ const TITLES = {
   '#/actions': 'مركز القرارات — القرارات اليومية',
   '#/goals': 'أهداف المشتركين',
   '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
+  '#/my-packages': 'باقاتي — اشتراكي والباقات المتاحة',
 };
 
 /* جيل الرسم: نقرتان سريعتان على القائمة كانتا تُشغّلان رسمتين معًا،
@@ -304,6 +307,7 @@ async function route() {
     '#/sales': viewSales,
     '#/loyalty': viewLoyalty,
     '#/points': viewMyPoints,
+    '#/my-packages': viewMyPackages,
     '#/actions': viewActionCenter,
     '#/packages': viewPackages,
     '#/ratings': viewRatings,

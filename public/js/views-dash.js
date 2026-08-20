@@ -500,6 +500,9 @@ async function openLogSessionModal(onDone, prefill = {}) {
   // كتلة الدهون بالكيلوغرام — بطلب العميل، إلى جانب النسبة المئوية
   const fatMassIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const muscleIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
+  /* «اضافة الدهون الحشويه على الانبدي وعند تسجيل الساعه» — تُدخل هنا
+     كما تُدخل في ورقة InBody، وتُحفظ قراءةً في سجله مثل بقية القياسات. */
+  const visceralIn = input({ type: 'number', step: '1', min: 1, max: 30, placeholder: 'مستوى ١–٣٠' });
   const tape = {};
   for (const k of ['waist', 'chest', 'arm', 'hips', 'leg']) tape[k] = input({ type: 'number', step: '0.5', placeholder: 'سم' });
   const notesIn = textarea({ placeholder: 'ملاحظات المدرب…' });
@@ -517,6 +520,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
     field('نسبة الدهون %', fatIn),
     field('كتلة الدهون (كغ)', fatMassIn),
     field('كتلة العضلات (كغ)', muscleIn),
+    field('الدهون الحشوية (مستوى)', visceralIn),
     el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
     el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
       field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
@@ -554,6 +558,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
             bodyFatPct: absent ? null : (fatIn.value || null),
             fatMass: absent ? null : (fatMassIn.value || null),
             muscleMass: absent ? null : (muscleIn.value || null),
+            visceralFat: absent ? null : (visceralIn.value || null),
             waist: absent ? null : (tape.waist.value || null), chest: absent ? null : (tape.chest.value || null),
             arm: absent ? null : (tape.arm.value || null), hips: absent ? null : (tape.hips.value || null),
             leg: absent ? null : (tape.leg.value || null),
@@ -1030,8 +1035,11 @@ async function viewTraineePage(root, traineeId) {
   /* النتائج والمشاكل — رصد داخلي سرّي (الخادم يُرسل null لحساب المتدرب) */
   if (data.flags) container.append(traineeFlagsCard(data, traineeId, refreshPage));
 
-  /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب) */
-  container.append(traineePackagesCard(data, traineeId, refreshPage));
+  /* الاشتراك والباقات — على ملف المشترك (بلا أسعار للمدرب).
+     المتدرب يقرؤها في صفحة «باقاتي» المستقلة، فلا تتصدّر ملفه هنا. */
+  if (!(API.user.role === 'trainee' && API.user.id === traineeId)) {
+    container.append(traineePackagesCard(data, traineeId, refreshPage));
+  }
 
   /* الهدف التدريبي لهذا المشترك — لا برنامج عام يُربط بالجميع */
   container.append(traineeGoalCard(data, traineeId, refreshPage));
@@ -1404,16 +1412,21 @@ function openGoalModal(onDone, traineeId, existing) {
         } catch (ex) { toast(ex.message, true); }
       },
     },
-      el('div', { class: 'span-2' }, field('نوع الهدف', kindSel)),
+      /* ترتيب الحقول يتبع جملة العميل كما كتبها: الأسلوب التدريبي ثم الهدف منه،
+         ثم عدد الحصص خلال المدة، ثم الغيابات وتعويضها، ثم التزام الأكل،
+         ثم التغيّرات المستهدفة. وما بعدها حقولٌ مساعدة تحت فاصل. */
       el('div', { class: 'span-2' }, field('الأسلوب التدريبي *', styleIn)),
       el('div', { class: 'span-2' }, field('الهدف من الأسلوب', purposeIn)),
-      field('المدة (أشهر)', monthsIn),
       field('عدد الحصص خلال المدة', sessionsIn),
+      field('المدة (أشهر)', monthsIn),
       field('الغيابات المسموحة', absIn),
       field('التعويض خلال (أشهر)', makeupIn),
       field('التزام خطة الأكل %', mealIn),
       field('تاريخ البدء', startIn),
       el('div', { class: 'span-2' }, field('التغيّرات المستهدفة خلال المدة', changesIn)),
+      el('div', { class: 'span-2', style: 'border-top:1px solid var(--app-border);padding-top:10px;font-size:12px;color:var(--app-muted)' },
+        'تصنيف الهدف وملاحظاته'),
+      el('div', { class: 'span-2' }, field('نوع الهدف', kindSel)),
       el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
       el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
         'تاريخ الانتهاء يُحسب من المدة تلقائيًا. ونوع الهدف يصير هدفَ حساب المشترك — '
@@ -1691,6 +1704,7 @@ function openInbodyEditModal(onDone, r) {
       numField('water', 'الماء (لتر)', r.water),
       numField('bmi', 'BMI', r.bmi),
       numField('score', 'النقاط', r.score),
+      numField('visceralFat', 'الدهون الحشوية (مستوى)', r.visceralFat),
       numField('waist', 'الخصر (سم)', r.waist),
       numField('chest', 'الصدر (سم)', r.chest),
       numField('arm', 'اليد (سم)', r.arm),
@@ -1706,7 +1720,8 @@ function inbodyComparisonTable(readings, goal) {
   const weightUpIsGood = goodWhenUpForGoal(goal);
   const rows = [
     ['الوزن (كغ)', 'weight'], ['نسبة الدهون %', 'bodyFatPct'], ['كتلة العضلات (كغ)', 'muscleMass'],
-    ['دهون الجسم (كغ)', 'fatMass'], ['الماء (لتر)', 'water'], ['BMI', 'bmi'], ['النقاط', 'score'],
+    ['دهون الجسم (كغ)', 'fatMass'], ['الدهون الحشوية (مستوى)', 'visceralFat'],
+    ['الماء (لتر)', 'water'], ['BMI', 'bmi'], ['النقاط', 'score'],
     ['الخصر (سم)', 'waist'], ['الصدر (سم)', 'chest'], ['اليد (سم)', 'arm'],
     ['الحوض (سم)', 'hips'], ['الرجل (سم)', 'leg'],
   ].filter(([, k]) => last[k] != null || first[k] != null);
