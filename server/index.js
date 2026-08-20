@@ -12,6 +12,7 @@ const growth = require('./growth');
 const clients = require('./clients');
 const flags = require('./flags');
 const goals = require('./goals');
+const merge = require('./merge');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -628,6 +629,8 @@ async function traineeIdsMatching(search) {
   if (!q) return null;
   const users = await Store.find('users', { role: 'trainee' });
   return users
+    // الحساب المدموج لا يظهر في البحث — سجلاته انتقلت إلى الباقي
+    .filter((u) => !u.mergedInto)
     .filter((u) => `${u.name || ''} ${u.phone || ''} ${u.username || ''}`.includes(q))
     .map((u) => u.id);
 }
@@ -709,7 +712,9 @@ app.delete('/api/branches/:id', auth, requireRole('admin'), h(async (req, res) =
 }));
 
 app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutritionist'), h(async (req, res) => {
-  let list = (await Store.all('users')).map(publicUser);
+  /* الحسابات المدموجة لا تُعرض: صفُّها شاهدٌ يبقى في القاعدة (حذفه يمحو
+     اشتراكاتٍ ودفعاتٍ بالتتابع) لكنه ليس شخصًا يُختار من قائمة. */
+  let list = (await Store.all('users')).filter((u) => !u.mergedInto).map(publicUser);
   if (req.query.role) list = list.filter((u) => u.role === req.query.role);
   if (req.query.branch) list = list.filter((u) => u.branchId === Number(req.query.branch));
   /* المدربون بالتناوب: كل مدرب يرى كل المتدربين. أما المحاسب المقيَّد
@@ -896,6 +901,20 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       duplicate: true, traineeId: twin.id,
     });
   }
+  /* المنع مستقبلًا: جوالٌ مسجَّل لمتدربٍ آخر — بأي عمر لا خلال دقيقتين —
+     يُوقف التسجيل ويسمّي صاحب الحساب. ويُتجاوز بـ«allowDuplicatePhone»
+     لأن العائلة الواحدة قد تتشارك جوالًا، والمنع القاطع يكسر حالةً مشروعة. */
+  if (digits.length >= 9 && req.body.allowDuplicatePhone !== true) {
+    const sameNumber = users.find((u) => u.role === 'trainee' && !u.mergedInto && u.active !== false
+      && merge.phoneKey(u.phone) === merge.phoneKey(phone));
+    if (sameNumber) {
+      return res.status(409).json({
+        error: `هذا الجوال مسجَّل باسم ${sameNumber.name}. إن كان الشخص نفسه فافتح ملفه، وإن كان غيره فأكّد المتابعة.`,
+        duplicatePhone: true, traineeId: sameNumber.id, name: sameNumber.name,
+      });
+    }
+  }
+
   let username = digits || 'client';
   while (users.some((u) => u.username === username)) {
     username = (digits || 'client') + '-' + crypto.randomBytes(2).toString('hex');
@@ -2273,7 +2292,7 @@ async function buildMonthlyReport(month, branch) {
     const officeHours = trainerLogs
       .filter((l) => l.trainerId === t.id && monthOf(l.date) === month)
       .reduce((s, l) => s + (Number(l.workHours) || 0), 0);
-    const referred = users.filter((u) => u.role === 'trainee' && u.sourceTrainerId === t.id);
+    const referred = users.filter((u) => u.role === 'trainee' && !u.mergedInto && u.sourceTrainerId === t.id);
     // نتائج ومشاكل متدربيه الذين درّبهم هذا الشهر (سرّية عن المتدرب)
     const myTraineeIds = new Set(ts.map((s) => s.traineeId));
     const myFlags = flags.filter((f) => myTraineeIds.has(f.traineeId));
@@ -2385,7 +2404,8 @@ async function buildTraineeRoster({ branch, status, month, onlyPaidThisMonth }) 
     if (!lastSessionOf[s.traineeId] || s.date > lastSessionOf[s.traineeId]) lastSessionOf[s.traineeId] = s.date;
   });
 
-  let rows = users.filter((u) => u.role === 'trainee').map((u) => {
+  // المعطَّل يبقى في التقرير (تاريخه جزءٌ منه)، أما المدموج فسجلاته انتقلت
+  let rows = users.filter((u) => u.role === 'trainee' && !u.mergedInto).map((u) => {
     const mine = (subsByTrainee[u.id] || []).map((s) => ({ ...s, status: subStatus(s) }));
     // الاشتراك المعروض: الفعّال أولًا، وإلا الأحدث انتهاءً
     const current = mine.filter((s) => s.status === 'active').sort((a, b) => a.endDate.localeCompare(b.endDate))[0]
@@ -2615,6 +2635,9 @@ require('./flags')(app, { auth, requireRole, h, notify, ...scope });
 
 /* أهداف المشتركين: هدفٌ لكل مشترك بخطته، بدل برنامج واحد يُربط بالجميع */
 require('./trainee-goals')(app, { auth, requireRole, h, notify, ...scope });
+
+/* الحسابات المكرَّرة: كشفٌ ودمجٌ يدوي بمراجعة الإدارة */
+require('./merge')(app, { Store, auth, requireRole, h, todayStr });
 
 /* مركز القرارات: تحويل كل مشكلة يكتشفها النظام إلى إجراء قابل للتنفيذ */
 require('./actions')(app, { auth, requireRole, h, notify, subStatus, ...scope });

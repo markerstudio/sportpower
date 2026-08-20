@@ -305,6 +305,26 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
 /* ============================================================
    Onboarding — تسجيل زبون جديد بخطوة واحدة
    ============================================================ */
+/* جوالٌ مسجَّل لمتدربٍ آخر: النظام لا يقرر بدل الموظف — يسمّي صاحب
+   الحساب ويترك له الخيارين. فالعائلة الواحدة قد تتشارك جوالًا، والمنع
+   القاطع يكسر حالةً مشروعة، والسماح الصامت هو ما صنع الحسابات المكررة. */
+function askDuplicatePhone(info, onContinue) {
+  const close = modal('هذا الجوال مسجَّل مسبقًا', [
+    el('div', { class: 'alert alert--warning' },
+      `الرقم مسجَّل باسم «${info.name}». إن كان الشخص نفسه فافتح ملفه وجدّد له اشتراكه بدل إنشاء حساب ثانٍ.`),
+    el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px' },
+      el('a', {
+        class: 'btn btn--accent', href: '#/trainee/' + info.traineeId,
+        onclick: () => close(),
+      }, 'افتح ملفه ←'),
+      el('button', {
+        class: 'btn btn--outline',
+        onclick: () => { close(); onContinue(); },
+      }, 'شخص آخر — تابع التسجيل'),
+      el('button', { class: 'btn btn--ghost', onclick: () => close() }, 'إلغاء')),
+  ]);
+}
+
 async function openOnboardModal(onDone, prefill = {}) {
   const [branches, trainers, packages] = await Promise.all([
     API.get('/api/branches'),
@@ -384,34 +404,45 @@ async function openOnboardModal(onDone, prefill = {}) {
 
   function showForm() {
     body.innerHTML = '';
+    /* التسجيل في دالةٍ مستقلة ليُعاد بتجاوزٍ صريح عند تكرار الجوال */
+    async function submit(allowDuplicatePhone, btn) {
+      if (btn) btn.disabled = true;
+      try {
+        const res = await API.post('/api/onboard', {
+          allowDuplicatePhone: allowDuplicatePhone || undefined,
+          name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
+          residence: residenceIn.value.trim() || null,
+          branchId: Number(branchSel.value), goal: goalSel.value,
+          referralCode: referralIn.value || null, leadId: prefill.leadId || null,
+          contractId: prefill.contractId || null, apptId: prefill.apptId || null,
+          sourceTrainerId: sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null,
+          sourceType: sourceTypeSel.value,
+          sourceRefId: ['trainee', 'friend'].includes(sourceTypeSel.value) && sourcePersonSel.value
+            ? Number(sourcePersonSel.value)
+            : (sourceTypeSel.value === 'trainer' && sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null),
+          sourceName: sourceNameIn.value || null,
+          subscription: {
+            totalSessions: Number(totalSel.value), price: Number(priceIn.value),
+            packageId: pkgSel.value || null, startDate: startIn.value, endDate: endIn.value,
+          },
+          payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value, date: payDateIn.value } : null,
+          appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
+        });
+        showSuccess(res);
+      } catch (ex) {
+        if (btn) btn.disabled = false;
+        /* جوالٌ مسجَّل لمتدرب آخر: قرارٌ لا خطأ — إما هو نفسه فيُفتح ملفه،
+           أو شخصٌ آخر يتشارك الجوال (عائلة) فيُتابع التسجيل بتجاوزٍ صريح. */
+        if (ex.data && ex.data.duplicatePhone) { askDuplicatePhone(ex.data, () => submit(true, btn)); return; }
+        toast(ex.message, true);
+      }
+    }
+
     body.append(el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
-        const btn = e.target.querySelector('button[type=submit]');
-        btn.disabled = true;
-        try {
-          const res = await API.post('/api/onboard', {
-            name: nameIn.value, phone: phoneIn.value, birthDate: birthIn.value || null,
-            residence: residenceIn.value.trim() || null,
-            branchId: Number(branchSel.value), goal: goalSel.value,
-            referralCode: referralIn.value || null, leadId: prefill.leadId || null,
-            contractId: prefill.contractId || null, apptId: prefill.apptId || null,
-            sourceTrainerId: sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null,
-            sourceType: sourceTypeSel.value,
-            sourceRefId: ['trainee', 'friend'].includes(sourceTypeSel.value) && sourcePersonSel.value
-              ? Number(sourcePersonSel.value)
-              : (sourceTypeSel.value === 'trainer' && sourceTrainerSel.value ? Number(sourceTrainerSel.value) : null),
-            sourceName: sourceNameIn.value || null,
-            subscription: {
-              totalSessions: Number(totalSel.value), price: Number(priceIn.value),
-              packageId: pkgSel.value || null, startDate: startIn.value, endDate: endIn.value,
-            },
-            payment: payIn.value ? { amount: Number(payIn.value), method: methodSel.value, date: payDateIn.value } : null,
-            appointment: apptTrainerSel.value ? { trainerId: Number(apptTrainerSel.value), date: apptDate.value, time: apptTime.value } : null,
-          });
-          showSuccess(res);
-        } catch (ex) { toast(ex.message, true); btn.disabled = false; }
+        await submit(false, e.target.querySelector('button[type=submit]'));
       },
     },
       section('١ — بيانات المتدرب'),
@@ -1586,9 +1617,134 @@ async function viewSettings(root) {
         field('الدور', roleSel)),
       usersWrap));
     renderUsers();
+
+    /* --- 4) الحسابات المكرَّرة --- */
+    container.append(await duplicatesCard(render));
   }
 
   await render();
+}
+
+/* ============================================================
+   الحسابات المكرَّرة — كشفٌ ودمجٌ يدوي (الإدارة وحدها)
+   «لما ببحث عن اسم الشخص بالاشتراكات والدفعات بطلعلي اشتراكاته السابقة
+   وكانوا فعليًا في أكثر من حساب لنفس الشخص».
+   مكانُها الإعدادات لأنها إدارةُ مستخدمين، وهي صفحةُ إدارة أصلًا.
+   ============================================================ */
+async function duplicatesCard(onDone) {
+  let data;
+  try { data = await API.get('/api/duplicate-trainees'); }
+  catch (ex) { return el('span'); }
+  const t = data.totals;
+
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'حسابات مكرَّرة — لشخصٍ واحد أكثر من حساب'),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:10px' },
+      'الجوال المتطابق دليلٌ قويّ، وتشابهُ الاسم وحده لا يكفي (قد يكون أخوين). '
+      + 'الدمج ينقل الاشتراكات والدفعات والحصص والقياسات إلى الحساب الباقي، '
+      + 'ويُعطّل الآخر ولا يحذفه — فلا يضيع تاريخٌ مالي.'));
+
+  if (!data.groups.length) {
+    card.append(el('div', { class: 'alert alert--info' }, '✅ لا حسابات مكرَّرة — كل متدرب بحساب واحد.'));
+    return card;
+  }
+
+  card.append(el('div', { class: 'kpis', style: 'margin-bottom:10px' },
+    kpiTile(t.groups, 'مجموعة مكرَّرة', 'alert', 'warn'),
+    kpiTile(t.byPhone, 'بجوال متطابق', 'wa', t.byPhone ? 'danger' : undefined),
+    kpiTile(t.byName, 'بتشابه اسم فقط', 'users'),
+    kpiTile(t.accounts, 'حساب معنيّ', 'card')));
+
+  data.groups.forEach((g) => {
+    card.append(el('div', { style: 'border:1px solid var(--app-border);border-radius:10px;padding:10px;margin-bottom:10px' },
+      el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap' },
+        el('b', {}, g.accounts[0].name),
+        el('span', { class: 'tag ' + (g.match === 'phone' ? 'tag--danger' : 'tag--warning') }, g.label),
+        el('span', { style: 'flex:1' }),
+        el('button', {
+          class: 'btn btn--accent btn--sm', onclick: () => openMergeModal(onDone, g),
+        }, 'دمج الحسابين ←')),
+      el('div', { style: 'overflow-x:auto' },
+        dataTable(['الحساب', 'اسم المستخدم', 'الجوال', 'الفرع', 'الانضمام', 'اشتراكات', 'دفعات', 'المدفوع', 'حصص', 'آخر نشاط'],
+          g.accounts.map((a) => [
+            el('a', { href: '#/trainee/' + a.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, a.name),
+            a.username, a.phone || '—', a.branchName, a.joinedAt || '—',
+            el('span', { class: 'num' }, String(a.subscriptions)),
+            el('span', { class: 'num' }, String(a.payments)),
+            fmtMoney(a.paidTotal, a.branchId),
+            el('span', { class: 'num' }, String(a.sessions)),
+            a.lastActivity || '—'])))));
+  });
+  return card;
+}
+
+/* الاتجاه يختاره المدير صراحةً، والمعاينة إلزامية قبل التنفيذ */
+function openMergeModal(onDone, group) {
+  const opts = group.accounts.map((a) => [a.traineeId,
+    `${a.name} — ${a.branchName} · ${a.subscriptions} اشتراك · ${a.sessions} حصة · آخر نشاط ${a.lastActivity || '—'}`]);
+  const keepSel = select(opts);
+  const mergeSel = select(opts, { value: opts[1] ? opts[1][0] : opts[0][0] });
+  const previewBox = el('div', { class: 'span-2' });
+  const confirmIn = input({ placeholder: 'اكتب: دمج' });
+  const runBtn = el('button', { class: 'btn btn--accent btn--full', type: 'submit', disabled: true }, 'نفّذ الدمج');
+
+  async function preview() {
+    previewBox.innerHTML = '';
+    if (Number(keepSel.value) === Number(mergeSel.value)) {
+      previewBox.append(el('div', { class: 'alert alert--warning' }, 'اختر حسابين مختلفين.'));
+      runBtn.disabled = true;
+      return;
+    }
+    previewBox.append(el('div', { style: 'font-size:12px;color:var(--app-muted)' }, 'جارٍ حساب ما سينتقل…'));
+    try {
+      const p = await API.post('/api/trainees/merge', {
+        keepId: Number(keepSel.value), mergeId: Number(mergeSel.value), dryRun: true,
+      });
+      previewBox.innerHTML = '';
+      previewBox.append(
+        el('div', { class: 'alert alert--info' },
+          `سينتقل ${p.total} سجلًا من «${p.merge.name}» إلى «${p.keep.name}»، ثم يُعطَّل حساب «${p.merge.name}».`),
+        Object.keys(p.counts).length
+          ? dataTable(['الجدول', 'عدد السجلات'], Object.entries(p.counts).map(([k, n]) => [k, el('span', { class: 'num' }, String(n))]))
+          : el('div', { class: 'empty' }, 'لا سجلات على الحساب المدموج — التعطيل وحده.'),
+        ...p.warnings.map((w) => el('div', { class: 'alert alert--warning' }, w)),
+        el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
+          'بعد الدمج تتغيّر أرقام التقارير — كان الشخص يُعدّ مرتين، وسيُعدّ مرة.'));
+      runBtn.disabled = confirmIn.value.trim() !== 'دمج';
+    } catch (ex) {
+      previewBox.innerHTML = '';
+      previewBox.append(el('div', { class: 'alert alert--danger' }, ex.message));
+      runBtn.disabled = true;
+    }
+  }
+  keepSel.addEventListener('change', preview);
+  mergeSel.addEventListener('change', preview);
+  confirmIn.addEventListener('input', () => {
+    runBtn.disabled = confirmIn.value.trim() !== 'دمج' || Number(keepSel.value) === Number(mergeSel.value);
+  });
+
+  const close = modal('دمج حسابين مكرَّرين', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (confirmIn.value.trim() !== 'دمج') { toast('اكتب «دمج» للتأكيد.', true); return; }
+        try {
+          const r = await API.post('/api/trainees/merge', {
+            keepId: Number(keepSel.value), mergeId: Number(mergeSel.value),
+          });
+          toast(`تمّ الدمج — نُقل ${r.total} سجلًا إلى ${r.keep.name}.`);
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, field('الحساب الباقي (تنتقل إليه السجلات)', keepSel)),
+      el('div', { class: 'span-2' }, field('الحساب المدموج (يُعطَّل بعد النقل)', mergeSel)),
+      previewBox,
+      el('div', { class: 'span-2' }, field('للتأكيد اكتب «دمج»', confirmIn)),
+      el('div', { class: 'span-2' }, runBtn)),
+  ], { wide: true });
+  preview();
 }
 
 function openBranchEditModal(onDone, branch) {

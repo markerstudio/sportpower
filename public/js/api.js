@@ -33,7 +33,14 @@ const API = {
       throw new Error('انتهت الجلسة — يرجى تسجيل الدخول من جديد.');
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع.');
+    if (!res.ok) {
+      /* جسم الردّ يُحمَّل على الخطأ: بعض الردود تحمل قرارًا للواجهة لا
+         رسالةً فحسب (تكرار جوال يعرض ملف صاحبه مثلًا). */
+      const err = new Error(data.error || 'حدث خطأ غير متوقع.');
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
     return data;
   },
 
