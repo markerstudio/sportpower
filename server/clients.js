@@ -21,6 +21,38 @@ function stripPackagePrice(pkg) {
   return rest;
 }
 
+/* ============================================================
+   فروع الباقة
+   «الباقات في عمّان بتختلف عن فلسطين، وما بدي تظهر باقات عمّان لفلسطين
+   والعكس صحيح». والسعر واحدٌ في الباقة بينما العملة تتبع الفرع — فباقةٌ
+   تظهر في الفرعين معًا تعرض سعرًا بعملةٍ واحدة على فرعين بعملتين.
+   لذلك: قائمة فروع صريحة، والفرع المفرد القديم يبقى مقروءًا كما هو.
+   ============================================================ */
+const pkgBranches = (p) => {
+  const list = Array.isArray(p.branchIds) ? p.branchIds.map(Number).filter(Boolean) : [];
+  if (list.length) return list;
+  return p.branchId ? [Number(p.branchId)] : [];
+};
+/* الباقة بلا فروع محدَّدة تبقى «كل الفروع» — سجلاتٌ أُنشئت قبل هذه القاعدة */
+const pkgInBranch = (p, branchId) => {
+  const list = pkgBranches(p);
+  if (!list.length) return true;
+  return branchId != null && list.includes(Number(branchId));
+};
+const withBranches = (p) => ({ ...p, branchIds: pkgBranches(p) });
+
+/* قراءة قائمة الفروع من الطلب — تقبل الجديد والقديم معًا */
+function readBranchIds(body, branches) {
+  if (Array.isArray(body.branchIds)) {
+    return [...new Set(body.branchIds.map(Number).filter((id) => branches.some((b) => b.id === id)))];
+  }
+  if (body.branchId !== undefined) {
+    const one = Number(body.branchId) || null;
+    return one ? [one] : [];
+  }
+  return null; // لم يُرسل شيء — لا تُمسّ
+}
+
 /* قواعد بيانات أُنشئت قبل ميزة الباقات: تعبئة الباقات الافتراضية مرة واحدة */
 let packagesBackfilled = false;
 async function ensureDefaultPackages() {
@@ -28,9 +60,19 @@ async function ensureDefaultPackages() {
   packagesBackfilled = true;
   const rows = await Store.all('packages');
   if (rows.length) return;
+  /* الباقات الافتراضية بأسعارٍ بالشيكل — فتُسنَد إلى فروع العملة الافتراضية
+     وحدها. فرعُ عمّان بالدينار يبدأ بلا باقات لأن أسعاره تُكتب بعملته، وعرضُ
+     سعر شيكلٍ عليه بوصفه دينارًا أسوأ من قائمةٍ فارغة. */
+  const [branches, settings] = await Promise.all([Store.all('branches'), Store.all('settings')]);
+  const base = (settings[0] || {}).currency || 'ILS';
+  const home = branches.filter((b) => (b.currency || base) === base).map((b) => b.id);
   for (const p of seedData.DEFAULT_PACKAGES) {
     const { id, ...pkg } = p;
-    await Store.insert('packages', pkg);
+    await Store.insert('packages', {
+      ...pkg,
+      branchIds: home,
+      branchId: home.length === 1 ? home[0] : null,
+    });
   }
 }
 
@@ -69,14 +111,14 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     let list = await Store.all('packages');
     if (req.query.branch) {
       const b = Number(req.query.branch);
-      list = list.filter((p) => !p.branchId || p.branchId === b);
+      list = list.filter((p) => pkgInBranch(p, b));
     }
     // الباقة بلا فرع باقةُ الشركة كلها فتظهر للجميع؛ وباقة الفرع لأهله
     const mine = scopedBranchIds(req);
-    if (mine) list = list.filter((p) => !p.branchId || mine.includes(Number(p.branchId)));
+    if (mine) list = list.filter((p) => !pkgBranches(p).length || pkgBranches(p).some((id) => mine.includes(id)));
     if (req.query.active === '1' || !canSeePrices(req.user.role)) list = list.filter((p) => p.active !== false);
     if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
-    list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory);
+    list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory).map(withBranches);
     res.json(canSeePrices(req.user.role) ? list : list.map(stripPackagePrice));
   }));
 
@@ -85,16 +127,47 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم الباقة مطلوب.' });
     if (!sessions || Number(sessions) <= 0) return res.status(400).json({ error: 'عدد الحصص مطلوب.' });
     if (price === undefined || Number(price) < 0) return res.status(400).json({ error: 'سعر الباقة مطلوب.' });
-    // باقة بلا فرع تخصّ الشركة كلها — إنشاؤها صلاحية إدارة
-    if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
-    res.json(withCategory(await Store.insert('packages', {
+    const branches = await Store.all('branches');
+    const ids = readBranchIds(req.body || {}, branches) || [];
+    /* فرعٌ واحد في المنشأة؟ تُسنَد الباقة إليه تلقائيًا. أكثر من فرع؟
+       الاختيار مطلوب — فباقةٌ بلا فرع تظهر في عمّان وفلسطين معًا. */
+    if (!ids.length && branches.length > 1) {
+      return res.status(400).json({ error: 'اختر فرعًا واحدًا على الأقل — الباقة بلا فرع تظهر في كل الفروع.' });
+    }
+    const branchIds = ids.length ? ids : branches.map((b) => b.id);
+    // كل فرع مختار يجب أن يكون في نطاق صلاحية من ينشئ الباقة
+    if (branchIds.some((id) => !branchAllowed(req.user, id))) return denyOutOfScope(res);
+    res.json(withBranches(withCategory(await Store.insert('packages', {
       name: clean(name, 120), sessions: Number(sessions), price: Number(price),
-      durationDays: Number(durationDays) || 30, branchId: Number(branchId) || null,
+      durationDays: Number(durationDays) || 30,
+      // «branchId» يبقى محفوظًا لباقةٍ بفرعٍ واحد — تقرؤه الشيفرة القديمة
+      branchId: branchIds.length === 1 ? branchIds[0] : null,
+      branchIds,
       sessionsPerWeek: Number(sessionsPerWeek) || null,
       category: PACKAGE_CATEGORIES.includes(req.body.category) ? req.body.category : 'personal',
       description: clean(description, 500), features: clean(features, 1000),
       active: true, createdBy: req.user.id,
-    })));
+    }))));
+  }));
+
+  /* نسخُ باقة إلى فرعٍ آخر: باقات عمّان وفلسطين تتشابه في الحصص والمزايا
+     وتختلف في السعر والعملة — فالنسخ أسرع من إعادة الكتابة. */
+  app.post('/api/packages/:id/duplicate', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    const pkg = await Store.get('packages', req.params.id);
+    if (!pkg) return res.status(404).json({ error: 'الباقة غير موجودة.' });
+    const branches = await Store.all('branches');
+    const branchIds = readBranchIds(req.body || {}, branches) || [];
+    if (!branchIds.length) return res.status(400).json({ error: 'اختر فرع النسخة.' });
+    if (branchIds.some((id) => !branchAllowed(req.user, id))) return denyOutOfScope(res);
+    const { id, ...rest } = pkg;
+    res.json(withBranches(withCategory(await Store.insert('packages', {
+      ...rest,
+      name: clean(req.body.name || pkg.name, 120),
+      price: req.body.price !== undefined && req.body.price !== '' ? Number(req.body.price) : pkg.price,
+      branchId: branchIds.length === 1 ? branchIds[0] : null,
+      branchIds,
+      active: true, createdBy: req.user.id,
+    }))));
   }));
 
   app.put('/api/packages/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -108,10 +181,20 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     ['sessions', 'price', 'durationDays', 'sessionsPerWeek'].forEach((k) => {
       if (req.body[k] !== undefined && req.body[k] !== '') patch[k] = Number(req.body[k]);
     });
-    if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
+    const branches = await Store.all('branches');
+    const ids = readBranchIds(req.body || {}, branches);
+    if (ids !== null) {
+      if (!ids.length && branches.length > 1) {
+        return res.status(400).json({ error: 'اختر فرعًا واحدًا على الأقل — الباقة بلا فرع تظهر في كل الفروع.' });
+      }
+      const branchIds = ids.length ? ids : branches.map((b) => b.id);
+      if (branchIds.some((x) => !branchAllowed(req.user, x))) return denyOutOfScope(res);
+      patch.branchIds = branchIds;
+      patch.branchId = branchIds.length === 1 ? branchIds[0] : null;
+    }
     if (req.body.active !== undefined) patch.active = !!req.body.active;
     if (PACKAGE_CATEGORIES.includes(req.body.category)) patch.category = req.body.category;
-    res.json(withCategory(await Store.update('packages', pkg.id, patch)));
+    res.json(withBranches(withCategory(await Store.update('packages', pkg.id, patch))));
   }));
 
   app.delete('/api/packages/:id', auth, requireRole('admin'), h(async (req, res) => {
@@ -199,7 +282,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     const expired = contract.expiresAt && contract.expiresAt < todayStr();
     const status = expired && contract.status === 'open' ? 'expired' : contract.status;
     const list = packages
-      .filter((p) => p.active !== false && (!p.branchId || !contract.branchId || p.branchId === contract.branchId))
+      // عقدُ فرعٍ يعرض باقات ذلك الفرع وحدها — الزبون لا يرى سعر فرعٍ آخر
+      .filter((p) => p.active !== false && (!contract.branchId || pkgInBranch(p, contract.branchId)))
       .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
       .map(withCategory);
 
@@ -215,7 +299,10 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       prospectName: contract.prospectName || '',
       prospectPhone: contract.prospectPhone || '',
       expiresAt: contract.expiresAt,
-      currency: s.currency || 'ILS',
+      /* عملة الفرع لا عملة النظام: عقدُ عمّان يُقرأ بالدينار وعقدُ فلسطين
+         بالشيكل — والزبون يرى سعرًا بعملته لا بعملة فرعٍ آخر. */
+      currency: (contract.branchId && (branches.find((b) => b.id === contract.branchId) || {}).currency)
+        || s.currency || 'ILS',
       slogan: 'change your life',
       terms: s.contractTerms || seedData.DEFAULT_CONTRACT_TERMS,
       packages: list, // بكل الأسعار — الزبون يرى كل شيء قبل أن يشترك
@@ -347,3 +434,5 @@ module.exports.ensureDefaultPackages = ensureDefaultPackages;
 module.exports.PACKAGE_CATEGORIES = PACKAGE_CATEGORIES;
 module.exports.CATEGORY_LABELS = CATEGORY_LABELS;
 module.exports.withCategory = withCategory;
+module.exports.pkgInBranch = pkgInBranch;
+module.exports.pkgBranches = pkgBranches;

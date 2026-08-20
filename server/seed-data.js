@@ -34,16 +34,20 @@ const DEFAULT_REWARDS = [
 const BRANCHES = [
   { id: 1, name: 'فرع بيت ساحور', address: 'بيت ساحور، فلسطين', phone: '02-2770000' },
   { id: 2, name: 'فرع بيت لحم', address: 'بيت لحم، فلسطين', phone: '02-2740000' },
-  { id: 3, name: 'فرع عمّان', address: 'عمّان، الأردن', phone: '06-5850000' },
+  // عمّان بالدينار الأردني — أسعارُه وباقاتُه بعملته لا بعملة فروع الضفة
+  { id: 3, name: 'فرع عمّان', address: 'عمّان، الأردن', phone: '06-5850000', currency: 'JOD' },
 ];
 
 /* باقات الاشتراك — تظهر في العقد الإلكتروني وفي ملف المشترك (الأسعار للإدارة والمحاسب فقط) */
 const DEFAULT_PACKAGES = [
-  { id: 1, name: 'باقة البداية — 8 حصص', category: 'personal', sessions: 8, price: 900, durationDays: 30, branchId: null, sessionsPerWeek: 2, description: 'مناسبة لمن يبدأ رحلته: حصتان أسبوعيًا مع متابعة وزن.', features: 'خطة تدريب مبدئية\nقراءة InBody عند البداية\nمتابعة أسبوعية', active: true },
-  { id: 2, name: 'الباقة الأساسية — 12 حصة', category: 'personal', sessions: 12, price: 1200, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'الأكثر طلبًا: ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody\nمتابعة مستمرة', active: true },
-  { id: 3, name: 'الباقة المتقدمة — 16 حصة', category: 'personal', sessions: 16, price: 1500, durationDays: 30, branchId: null, sessionsPerWeek: 4, description: 'أربع حصص أسبوعيًا لمن يريد نتائج أسرع.', features: 'برنامج تدريبي متقدم\nبرنامج غذائي\nقراءات InBody شهرية\nحصة تعويضية مجانية', active: true },
-  { id: 4, name: 'باقة الالتزام — 24 حصة', category: 'saver', sessions: 24, price: 2100, durationDays: 60, branchId: null, sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز — أفضل قيمة مقابل السعر.', features: 'كل مزايا الباقة المتقدمة\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
-  { id: 5, name: 'مجموعات — 12 حصة', category: 'group', sessions: 12, price: 700, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'تدريب في مجموعة صغيرة: حماس أعلى وكلفة أقل.', features: 'مجموعة حتى 5 أشخاص\nبرنامج جماعي متدرّج\nقراءة InBody شهرية', active: true },
+  { id: 1, name: 'باقة البداية — 8 حصص', category: 'personal', sessions: 8, price: 900, durationDays: 30, branchId: null, branchIds: [1, 2], sessionsPerWeek: 2, description: 'مناسبة لمن يبدأ رحلته: حصتان أسبوعيًا مع متابعة وزن.', features: 'خطة تدريب مبدئية\nقراءة InBody عند البداية\nمتابعة أسبوعية', active: true },
+  { id: 2, name: 'الباقة الأساسية — 12 حصة', category: 'personal', sessions: 12, price: 1200, durationDays: 30, branchId: null, branchIds: [1, 2], sessionsPerWeek: 3, description: 'الأكثر طلبًا: ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody\nمتابعة مستمرة', active: true },
+  { id: 3, name: 'الباقة المتقدمة — 16 حصة', category: 'personal', sessions: 16, price: 1500, durationDays: 30, branchId: null, branchIds: [1, 2], sessionsPerWeek: 4, description: 'أربع حصص أسبوعيًا لمن يريد نتائج أسرع.', features: 'برنامج تدريبي متقدم\nبرنامج غذائي\nقراءات InBody شهرية\nحصة تعويضية مجانية', active: true },
+  { id: 4, name: 'باقة الالتزام — 24 حصة', category: 'saver', sessions: 24, price: 2100, durationDays: 60, branchId: null, branchIds: [1, 2], sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز — أفضل قيمة مقابل السعر.', features: 'كل مزايا الباقة المتقدمة\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
+  { id: 5, name: 'مجموعات — 12 حصة', category: 'group', sessions: 12, price: 700, durationDays: 30, branchId: null, branchIds: [1, 2], sessionsPerWeek: 3, description: 'تدريب في مجموعة صغيرة: حماس أعلى وكلفة أقل.', features: 'مجموعة حتى 5 أشخاص\nبرنامج جماعي متدرّج\nقراءة InBody شهرية', active: true },
+  /* باقات عمّان: نفس البنية بسعر الدينار — ولا تظهر لفروع فلسطين ولا العكس */
+  { id: 6, name: 'عمّان — الباقة الأساسية 12 حصة', category: 'personal', sessions: 12, price: 120, durationDays: 30, branchId: 3, branchIds: [3], sessionsPerWeek: 3, description: 'ثلاث حصص أسبوعيًا مع برنامج غذائي.', features: 'برنامج تدريبي مخصص\nبرنامج غذائي من الأخصائية\nقراءتا InBody', active: true },
+  { id: 7, name: 'عمّان — باقة الالتزام 24 حصة', category: 'saver', sessions: 24, price: 210, durationDays: 60, branchId: 3, branchIds: [3], sessionsPerWeek: 3, description: 'شهران كاملان بسعر مميز.', features: 'كل مزايا الباقة الأساسية\nخصم على التجديد\nنقاط ولاء مضاعفة', active: true },
 ];
 
 /* نصّ شروط العقد الإلكتروني — تعدله الإدارة من صفحة الباقات والعقود */

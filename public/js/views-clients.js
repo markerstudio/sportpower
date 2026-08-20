@@ -45,7 +45,19 @@ async function viewPackages(root) {
 
     container.append(el('div', { class: 'alert alert--info' },
       'الباقات تظهر للزبون داخل العقد الإلكتروني بكل أسعارها قبل أن يشترك، وتظهر على ملف كل مشترك للتجديد أو الترقية. '
-      + 'المدرب لا يرى الأسعار إطلاقًا.'));
+      + 'المدرب لا يرى الأسعار إطلاقًا. وكل باقة تظهر في فروعها وحدها.'));
+
+    /* باقات بلا فرع محدَّد: أُنشئت قبل فصل الفروع، فتظهر في عمّان وفلسطين
+       معًا بسعرٍ واحد. تُعرض هنا صراحةً لأن إخفاءها هو المشكلة نفسها. */
+    const unscoped = packages.filter((p) => !pkgBranchIds(p).length);
+    if (unscoped.length && branches.length > 1) {
+      container.append(el('div', { class: 'alert alert--warning' },
+        el('b', {}, `${unscoped.length} باقة تظهر في كل الفروع: `),
+        unscoped.map((p) => p.name).join('، '),
+        el('div', { style: 'margin-top:6px' },
+          'حدّد فروع كل باقة من زر «تعديل» — وإلا ظهرت باقات عمّان لفلسطين والعكس، '
+          + 'وسعرُها الواحد يُقرأ بعملتين مختلفتين.')));
+    }
 
     /* --- بطاقات الباقات مجمّعة بالنوع (كما تظهر في العقد) --- */
     const pkgCard = el('div', { class: 'card' },
@@ -121,26 +133,56 @@ async function viewPackages(root) {
   await render();
 }
 
+/* فروع الباقة كما يقرؤها الخادم: القائمة أولًا ثم الفرع المفرد */
+const pkgBranchIds = (p) => (Array.isArray(p.branchIds) && p.branchIds.length
+  ? p.branchIds.map(Number)
+  : (p.branchId ? [Number(p.branchId)] : []));
+
+/* هل تظهر هذه الباقة في هذا الفرع؟ نفس قاعدة الخادم حرفيًا:
+   قائمةٌ فارغة = كل الفروع (سجلاتٌ سابقة)، وإلا فالفرع يجب أن يكون فيها. */
+function packageInBranch(p, branchId) {
+  const ids = pkgBranchIds(p);
+  if (!ids.length) return true;
+  return branchId != null && !Number.isNaN(branchId) && ids.includes(Number(branchId));
+}
+
+/* عملة الباقة = عملة فروعها إن اتفقت؛ وإلا فلا عملةَ واحدة لها */
+function pkgCurrency(p) {
+  const ids = pkgBranchIds(p);
+  if (!ids.length) return null;
+  const set = new Set(ids.map((id) => branchCurrency(id)));
+  return set.size === 1 ? [...set][0] : null;
+}
+
 function packageCard(p, branches, onDone) {
   const features = (p.features || '').split('\n').filter(Boolean);
+  const ids = pkgBranchIds(p);
+  const cur = pkgCurrency(p);
+  const branchLabel = ids.length
+    ? ids.map((id) => (branches.find((b) => b.id === id) || {}).name || '#' + id).join(' · ')
+    : 'كل الفروع';
   return el('div', { class: 'card meal-card pkg-card' + (p.active === false ? ' pkg-card--off' : '') },
     el('div', { class: 'meal-card__head' },
       el('h4', {}, p.name),
       p.active === false ? el('span', { class: 'tag tag--neutral' }, 'موقوفة') : el('span', { class: 'tag tag--accent' }, 'متاحة')),
-    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price) : '—'),
+    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price, cur || undefined) : '—'),
     el('div', { class: 'macros' },
       el('span', { class: 'macro' }, el('b', {}, categoryLabel(p.category || 'personal'))),
       el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
       el('span', { class: 'macro' }, 'المدة ', el('b', {}, (p.durationDays || 30) + ' يوم')),
       p.sessionsPerWeek ? el('span', { class: 'macro' }, el('b', {}, String(p.sessionsPerWeek)), ' أسبوعيًا') : '',
-      el('span', { class: 'macro' }, p.branchId ? ((branches.find((b) => b.id === p.branchId) || {}).name || '—') : 'كل الفروع')),
+      el('span', { class: 'macro' + (ids.length ? '' : ' macro--warn') }, branchLabel)),
     p.description ? el('p', { class: 'meal-card__desc' }, p.description) : '',
     features.length ? el('ul', { class: 'pkg-card__features' }, ...features.map((f) => el('li', {}, f))) : '',
     p.price !== undefined && p.sessions
-      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions))}`)
+      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions), cur || undefined)}`)
       : '',
     el('div', { style: 'display:flex;gap:6px;margin-top:auto;flex-wrap:wrap' },
       el('button', { class: 'btn btn--outline btn--sm', onclick: () => openPackageModal(onDone, branches, p) }, 'تعديل'),
+      branches.length > 1 ? el('button', {
+        class: 'btn btn--ghost btn--sm', title: 'نسخة من هذه الباقة لفرع آخر بسعره وعملته',
+        onclick: () => openPackageCopyModal(onDone, branches, p),
+      }, 'نسخ لفرع آخر') : el('span'),
       el('button', {
         class: 'btn btn--ghost btn--sm',
         onclick: async () => {
@@ -164,38 +206,122 @@ function openPackageModal(onDone, branches, existing) {
   const priceIn = input({ type: 'number', min: 0, value: existing ? existing.price : 1200 });
   const durationIn = input({ type: 'number', min: 1, value: existing ? existing.durationDays || 30 : 30 });
   const perWeekIn = input({ type: 'number', min: 1, max: 7, value: existing ? existing.sessionsPerWeek || '' : 3 });
-  const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: existing ? existing.branchId || '' : '' });
   const categorySel = select(PACKAGE_CATEGORIES, { value: existing ? existing.category || 'personal' : 'personal' });
   const descIn = textarea({ value: existing ? existing.description : '', placeholder: 'وصف مختصر يظهر للزبون في العقد…' });
   const featuresIn = textarea({ value: existing ? existing.features : '', placeholder: 'ميزة في كل سطر:\nبرنامج تدريبي مخصص\nبرنامج غذائي\nقراءات InBody', style: 'min-height:110px' });
+
+  /* الفروع بمربعات اختيار لا بقائمة مفردة: بيت لحم وبيت ساحور باقةٌ واحدة،
+     وعمّان باقاتها وأسعارها وعملتها. والسعر حقلٌ واحد — فاختيارُ فروعٍ
+     بعملتين يعني سعرًا واحدًا يُقرأ بعملتين، وهو ما يُنبَّه عليه هنا. */
+  const preselected = existing ? pkgBranchIds(existing) : [];
+  const boxes = branches.map((b) => {
+    const chk = input({ type: 'checkbox' });
+    chk.checked = branches.length === 1 ? true : preselected.includes(b.id);
+    chk.addEventListener('change', syncBranches);
+    return { b, chk };
+  });
+  const priceLabel = el('label', { class: 'field__label' }, 'السعر *');
+  const currencyNote = el('div', { style: 'font-size:12px;margin-top:6px' });
+
+  function chosen() { return boxes.filter((x) => x.chk.checked).map((x) => x.b.id); }
+  function syncBranches() {
+    const ids = chosen();
+    const curs = [...new Set(ids.map((id) => branchCurrency(id)))];
+    priceLabel.textContent = `السعر (${curInfo(curs.length === 1 ? curs[0] : undefined).name}) *`;
+    if (!ids.length) {
+      currencyNote.className = 'alert alert--warning';
+      currencyNote.textContent = 'اختر فرعًا واحدًا على الأقل — الباقة بلا فرع تظهر في كل الفروع.';
+    } else if (curs.length > 1) {
+      currencyNote.className = 'alert alert--warning';
+      currencyNote.textContent = 'الفروع المختارة بعملتين مختلفتين، والسعر رقمٌ واحد — '
+        + 'أنشئ باقةً لكل عملة (زر «نسخ لفرع آخر» يفعلها بنقرة).';
+    } else {
+      currencyNote.className = '';
+      currencyNote.textContent = ids.length === branches.length
+        ? 'هذه الباقة ستظهر في كل الفروع.'
+        : `ستظهر في: ${ids.map((id) => (branches.find((b) => b.id === id) || {}).name).join(' · ')} — ولن تظهر في غيرها.`;
+    }
+  }
+  const branchBox = el('div', { class: 'span-2' },
+    el('label', { class: 'field__label' }, 'فروع الباقة *'),
+    el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap;padding:4px 0' },
+      ...boxes.map(({ b, chk }) => el('label', {
+        style: 'display:flex;gap:5px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap',
+      }, chk, `${b.name} (${curInfo(branchCurrency(b.id)).symbol})`))),
+    currencyNote);
+  syncBranches();
 
   const close = modal(existing ? `تعديل «${existing.name}»` : 'باقة اشتراك جديدة', [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        const branchIds = chosen();
+        if (!branchIds.length) { toast('اختر فرعًا واحدًا على الأقل للباقة.', true); return; }
         const body = {
           name: nameIn.value, sessions: sessionsIn.value, price: priceIn.value,
           durationDays: durationIn.value, sessionsPerWeek: perWeekIn.value || null,
-          branchId: branchSel.value || null, category: categorySel.value,
+          branchIds, category: categorySel.value,
           description: descIn.value, features: featuresIn.value,
         };
         try {
           if (existing) await API.put('/api/packages/' + existing.id, body);
           else await API.post('/api/packages', body);
-          toast('حُفظت الباقة — ستظهر في العقد وفي ملفات المشتركين.');
+          toast('حُفظت الباقة — ستظهر في فروعها وحدها.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       el('div', { class: 'span-2' }, field('اسم الباقة *', nameIn)),
-      field('عدد الحصص *', sessionsIn), field(`السعر (${curInfo().name}) *`, priceIn),
+      field('عدد الحصص *', sessionsIn),
+      el('div', { class: 'field' }, priceLabel, priceIn),
       field('مدة الصلاحية (يوم)', durationIn), field('حصص أسبوعيًا', perWeekIn),
-      field('نوع الباقة (يظهر في العقد)', categorySel), field('الفرع', branchSel),
+      el('div', { class: 'span-2' }, field('نوع الباقة (يظهر في العقد)', categorySel)),
+      branchBox,
       el('div', { class: 'span-2' }, field('وصف الباقة', descIn)),
       el('div', { class: 'span-2' }, field('ما تشمله الباقة (ميزة بكل سطر)', featuresIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الباقة'))),
   ], { wide: true });
+}
+
+/* نسخُ باقة لفرعٍ آخر: نفس الحصص والمزايا، بسعر ذلك الفرع وعملته.
+   هو الطريق العملي لباقات عمّان مقابل باقات فلسطين. */
+function openPackageCopyModal(onDone, branches, pkg) {
+  const mine = pkgBranchIds(pkg);
+  const targets = branches.filter((b) => !mine.includes(b.id));
+  const branchSel = select(targets.map((b) => [b.id, `${b.name} (${curInfo(branchCurrency(b.id)).symbol})`]));
+  const nameIn = input({ value: pkg.name });
+  const priceIn = input({ type: 'number', min: 0, value: pkg.price });
+  const priceLabel = el('label', { class: 'field__label' }, 'السعر *');
+  const syncCur = () => {
+    priceLabel.textContent = `السعر (${curInfo(branchCurrency(Number(branchSel.value))).name}) *`;
+  };
+  branchSel.addEventListener('change', syncCur);
+  syncCur();
+
+  const close = modal(`نسخ «${pkg.name}» لفرع آخر`, [
+    targets.length
+      ? el('form', {
+        class: 'form-grid',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          try {
+            await API.post('/api/packages/' + pkg.id + '/duplicate', {
+              branchIds: [Number(branchSel.value)], name: nameIn.value, price: priceIn.value,
+            });
+            toast('أُنشئت نسخة الباقة لهذا الفرع — عدّل ما يلزم من بطاقتها.');
+            close(); onDone && onDone();
+          } catch (ex) { toast(ex.message, true); }
+        },
+      },
+        el('div', { class: 'span-2' }, field('الفرع الجديد', branchSel)),
+        el('div', { class: 'span-2' }, field('اسم النسخة', nameIn)),
+        el('div', { class: 'field' }, priceLabel, priceIn),
+        el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+          'تُنسخ الحصص والمدة والمزايا والوصف كما هي — والسعر بعملة الفرع الجديد.'),
+        el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'أنشئ النسخة')))
+      : el('div', { class: 'alert alert--info' }, 'هذه الباقة موجودة في كل الفروع أصلًا.'),
+  ]);
 }
 
 /* --- عقد جديد: إنشاء الرابط ومشاركته --- */

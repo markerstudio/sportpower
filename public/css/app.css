@@ -426,6 +426,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 .macros { display: flex; gap: 6px; flex-wrap: wrap; }
 .macro { font-size: 11px; font-family: var(--font-display); font-weight: 700; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--app-hover); color: var(--app-ink-2); }
 .macro b { color: var(--app-ink); }
+/* باقة بلا فرع محدَّد: تظهر في كل الفروع — ومنها ما يختلف بالعملة */
+.macro--warn { background: var(--status-warning-bg, rgba(255,145,0,.14)); color: var(--status-warning, #B96A00); }
 .meal-card__desc { font-size: var(--text-xs); color: var(--app-muted); margin: 0; }
 
 /* ---------- رسوم بيانية ---------- */

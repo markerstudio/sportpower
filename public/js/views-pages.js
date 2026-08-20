@@ -367,16 +367,31 @@ async function openOnboardModal(onDone, prefill = {}) {
   };
   sourceTypeSel.addEventListener('change', syncSource);
 
-  /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي */
+  /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي.
+     والقائمة تتبع الفرع المختار: باقات عمّان لا تُعرض على زبون في فلسطين. */
   const active = packages.filter((p) => p.active !== false);
-  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
-    ...active.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
-  { value: prefill.packageId || '' });
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)']], { value: prefill.packageId || '' });
+  const priceLabel = el('label', { class: 'field__label' }, 'القيمة');
+  const branchPackages = () => active.filter((p) => packageInBranch(p, Number(branchSel.value)));
+  function fillPackages() {
+    const keep = pkgSel.value;
+    const cur = branchCurrency(Number(branchSel.value));
+    pkgSel.innerHTML = '';
+    pkgSel.append(el('option', { value: '' }, 'باقة مخصّصة (إدخال يدوي)'));
+    branchPackages().forEach((p) => pkgSel.append(
+      el('option', { value: p.id }, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price, cur)}`)));
+    pkgSel.value = [...pkgSel.options].some((o) => o.value === String(keep)) ? keep : '';
+    priceLabel.textContent = `القيمة (${curInfo(cur).name})`;
+  }
   const totalSel = input({ type: 'number', min: 1, value: prefill.totalSessions || 12 });
   const priceIn = input({ type: 'number', min: 0, value: prefill.price !== undefined ? prefill.price : 1200 });
   const startIn = input({ type: 'date', value: todayISO() });
   const endDefault = new Date(); endDefault.setMonth(endDefault.getMonth() + 1);
   const endIn = input({ type: 'date', value: prefill.endDate || endDefault.toISOString().slice(0, 10) });
+  fillPackages();
+  /* تبديل الفرع يعيد بناء قائمة الباقات وعملة القيمة — فلا تبقى باقة
+     فرعٍ آخر مختارةً بعد تغيير الفرع. */
+  branchSel.addEventListener('change', () => { fillPackages(); applyPackage(); });
 
   const applyPackage = () => {
     const p = active.find((x) => String(x.id) === String(pkgSel.value));
@@ -456,7 +471,7 @@ async function openOnboardModal(onDone, prefill = {}) {
       el('div', { class: 'span-2' }, field('جاء عن طريق مدرب؟ (يُحتسب للمدرب في تقريره)', sourceTrainerSel)),
       section('٢ — الاشتراك والباقة'),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
-      field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
+      field('عدد الحصص', totalSel), el('div', { class: 'field' }, priceLabel, priceIn),
       field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
       section('٣ — الدفعة الأولى (اختياري)'),
       field('المبلغ المدفوع الآن', payIn), field('تاريخ الدفعة', payDateIn),
@@ -599,9 +614,27 @@ async function viewSubscriptions(root) {
 async function openSubModal(onDone, trainees, preselectId, presetPackage) {
   const packages = (await API.get('/api/packages').catch(() => [])).filter((p) => p.active !== false);
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: preselectId || '' });
-  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
-    ...packages.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
-  { value: presetPackage ? presetPackage.id : '' });
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)']], { value: presetPackage ? presetPackage.id : '' });
+  const priceLabel = el('label', { class: 'field__label' }, 'القيمة');
+  /* الباقات تتبع فرع المتدرب: تجديدُ مشترك في بيت لحم لا يعرض باقات عمّان،
+     والقيمة تُقرأ بعملة فرعه لا بعملة النظام. */
+  const traineeBranch = () => {
+    const t = trainees.find((x) => String(x.id) === String(traineeSel.value));
+    return t ? Number(t.branchId) : NaN;
+  };
+  function fillPackages() {
+    const keep = pkgSel.value;
+    const b = traineeBranch();
+    const cur = Number.isNaN(b) ? undefined : branchCurrency(b);
+    pkgSel.innerHTML = '';
+    pkgSel.append(el('option', { value: '' }, 'باقة مخصّصة (إدخال يدوي)'));
+    packages.filter((p) => packageInBranch(p, b)).forEach((p) => pkgSel.append(
+      el('option', { value: p.id }, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price, cur)}`)));
+    pkgSel.value = [...pkgSel.options].some((o) => o.value === String(keep)) ? keep : '';
+    priceLabel.textContent = `القيمة (${curInfo(cur).name})`;
+  }
+  fillPackages();
+  traineeSel.addEventListener('change', fillPackages);
   const totalIn = input({ type: 'number', min: 1, value: presetPackage ? presetPackage.sessions : 12 });
   const priceIn = input({ type: 'number', value: presetPackage ? presetPackage.price : 1200, min: 0 });
   const startIn = input({ type: 'date', value: todayISO() });
@@ -641,7 +674,7 @@ async function openSubModal(onDone, trainees, preselectId, presetPackage) {
       el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
       field('عدد الحصص', totalIn),
-      field(`القيمة (${curInfo().name})`, priceIn),
+      el('div', { class: 'field' }, priceLabel, priceIn),
       field('تاريخ البدء', startIn),
       field('تاريخ الانتهاء', endIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تفعيل الاشتراك'))),

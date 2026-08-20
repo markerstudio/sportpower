@@ -2203,7 +2203,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
 
   /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
   const availablePackages = packages
-    .filter((p) => p.active !== false && (!p.branchId || p.branchId === trainee.branchId))
+    .filter((p) => p.active !== false && clients.pkgInBranch(p, trainee.branchId))
     .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
     .map(clients.withCategory)
     .map((p) => (showPrices ? p : clients.stripPackagePrice(p)));
