@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Store = require('./store');
+const storage = require('./storage');
 const growth = require('./growth');
 const clients = require('./clients');
 const flags = require('./flags');
@@ -17,9 +18,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const UPLOADS = process.env.VERCEL ? '/tmp/sportpower-uploads' : path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOADS, { recursive: true });
-if (process.env.VERCEL) {
-  console.warn('[uploads] ⚠️ المرفقات تُكتب في /tmp على بيئة لحظية — تزول مع النسخة. '
-    + 'صور المتابعة وقراءات InBody تحتاج تخزين كائنات دائم (Blob/S3) قبل الاعتماد عليها.');
+if (storage.configured()) {
+  console.log('[uploads] ✓ التخزين الدائم مفعّل عبر Supabase (دلو: ' + storage.BUCKET + ').');
+} else if (process.env.VERCEL) {
+  console.warn('[uploads] ⚠️ المرفقات تُكتب في /tmp على بيئة لحظية — تزول مع النشر. '
+    + 'اضبط SUPABASE_URL و SUPABASE_SERVICE_ROLE_KEY للتخزين الدائم.');
 }
 
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 ساعة
@@ -205,6 +208,15 @@ app.use('/uploads', h(async (req, res, next) => {
   const { user } = await resolveSession(req);
   if (user && !user.mustChangePassword) return next();
   return res.status(403).json({ error: 'رابط المرفق غير صالح أو انتهت صلاحيته.' });
+}), h(async (req, res, next) => {
+  // من التخزين الدائم (Supabase) حين يُضبط
+  if (!storage.configured()) return next();
+  const name = path.basename(decodeURIComponent(req.path.replace(/^\//, '')));
+  const obj = await storage.get(name);
+  if (!obj) return res.status(404).json({ error: 'المرفق غير موجود.' });
+  res.setHeader('Content-Type', obj.contentType);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.send(obj.buffer);
 }), express.static(UPLOADS, { index: false, dotfiles: 'deny' }));
 
 function requireRole(...roles) {
@@ -868,7 +880,7 @@ const IMAGE_MAGIC = {
   webp: (b) => b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP',
 };
 
-function saveImage(imageBase64, prefix) {
+async function saveImage(imageBase64, prefix) {
   if (!imageBase64) return null;
   const m = String(imageBase64).match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/);
   if (!m) return null;
@@ -878,16 +890,19 @@ function saveImage(imageBase64, prefix) {
   if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
   if (!IMAGE_MAGIC[ext] || !IMAGE_MAGIC[ext](buf)) return null;
   const name = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  // تخزين دائم على Supabase حين يُضبط؛ وإلا القرص المحلي (تطوير/عرض)
+  if (storage.configured()) { await storage.put(name, buf, storage.contentTypeOf(name)); return name; }
   fs.writeFileSync(path.join(UPLOADS, name), buf);
   return name;
 }
 
 /* حذف ملف صورة من التخزين — يُستعمل عند محو بيانات متدرب. آمنٌ ضد أسماء
    خبيثة: يقتصر على اسم الملف داخل مجلد المرفقات. */
-function deleteImage(name) {
+async function deleteImage(name) {
   if (!name || typeof name !== 'string') return;
   const base = path.basename(name);
   if (base !== name) return; // لا مسارات نسبية
+  if (storage.configured()) { await storage.del(base); return; }
   try { fs.unlinkSync(path.join(UPLOADS, base)); } catch (e) { /* مفقود أصلًا */ }
 }
 
@@ -1150,7 +1165,7 @@ app.post('/api/users/:id/anonymize', auth, requireRole('admin'), h(async (req, r
   });
 
   // 5) احذف ملفات الصور فعليًا من التخزين
-  for (const f of imageFiles) deleteImage(f);
+  for (const f of imageFiles) await deleteImage(f);
 
   // 6) سجّل الإجراء (بلا اسم — لا نُعيد كتابة ما محوناه)
   try {
@@ -2062,7 +2077,7 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
     weight: Number(weight), bodyFatPct: numOrNull(bodyFatPct), muscleMass: numOrNull(muscleMass),
     fatMass: numOrNull(fatMass), water: numOrNull(water), bmi: numOrNull(bmi), score: numOrNull(score),
     waist: numOrNull(waist), chest: numOrNull(chest), arm: numOrNull(arm), hips: numOrNull(hips), leg: numOrNull(leg),
-    notes: notes || '', image: saveImage(imageBase64, `inbody-${trainee.id}`),
+    notes: notes || '', image: await saveImage(imageBase64, `inbody-${trainee.id}`),
     createdBy: req.user.id,
   });
   await notify(trainee.id, `تمت إضافة قراءة InBody جديدة بتاريخ ${date}.`, 'inbody');
@@ -2113,7 +2128,7 @@ app.post('/api/trainee-photos', auth, requireRole('admin', 'trainer'), h(async (
   if (!images.length) return res.status(400).json({ error: 'أرفق صورة واحدة على الأقل.' });
   const saved = [];
   for (const img of images.slice(0, 8)) {
-    const file = saveImage(img, `photo-${trainee.id}`);
+    const file = await saveImage(img, `photo-${trainee.id}`);
     if (!file) continue;
     saved.push(await Store.insert('traineePhotos', {
       traineeId: trainee.id, date: date || todayStr(), image: file,
@@ -2265,7 +2280,7 @@ app.post('/api/meals', auth, requireRole('admin', 'trainer', 'nutritionist'), h(
     name, type, goal,
     calories: Number(calories), protein: Number(protein) || 0, carbs: Number(carbs) || 0, fat: Number(fat) || 0,
     ingredients: ingredients || '', preparation: preparation || '',
-    image: saveImage(imageBase64, 'meal'), createdBy: req.user.id,
+    image: await saveImage(imageBase64, 'meal'), createdBy: req.user.id,
   });
   res.json((await withImageUrls([{ ...meal }]))[0]);
 }));
