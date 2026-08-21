@@ -3,3 +3,7 @@ data/
 uploads/
 .DS_Store
 backups/
+.env
+.env.*
+*.pem
+*.key
