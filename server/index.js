@@ -26,6 +26,9 @@ const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 ساعة
 /* حدّ أدنى واحد لكل مسارات ضبط كلمة المرور — كان الإنشاء وإعادة التعيين
    من الإدارة يقبلان ٦ بينما التغيير الذاتي يطلب ٨. */
 const MIN_PASSWORD_LEN = 8;
+/* بصمة وهمية تُقارَن بها محاولات الأسماء غير الموجودة — تُحسب مرة واحدة
+   وقت الإقلاع لا داخل الطلب */
+const DUMMY_HASH = Store.hashPasswordSync(crypto.randomBytes(32).toString('hex'));
 
 app.disable('x-powered-by');
 
@@ -52,7 +55,18 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '15mb' }));
+/* حجم الجسم بحسب حاجة المسار: الصور والملفات وحدها تحتاج ميغابايتات،
+   وبقية المسارات — ومنها تسجيل الدخول بلا مصادقة — كانت تقبل ١٥ ميغا
+   وتُحلَّل في الذاكرة قبل أي فحص هوية أو حدّ محاولات. */
+const LARGE_BODY_PATHS = [
+  '/api/trainee-photos', '/api/inbody', '/api/inbody/ocr',
+  '/api/meals', '/api/frozen/import',
+];
+const smallJson = express.json({ limit: '128kb' });
+const largeJson = express.json({ limit: '15mb' });
+app.use((req, res, next) => (
+  LARGE_BODY_PATHS.includes(req.path) ? largeJson(req, res, next) : smallJson(req, res, next)
+));
 
 /* ملفات PWA — بأنواع وترويسات صحيحة */
 app.get('/manifest.webmanifest', (req, res) => {
@@ -489,9 +503,12 @@ app.post('/api/login', h(async (req, res) => {
     return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
   }
   const user = (await Store.find('users', { username: uname }, { limit: 1 }))[0];
+  /* اسم غير موجود كان يردّ فورًا بلا scrypt، والموجود يكلّف ~٤٠ms — فرقٌ
+     يكشف أي اسم مستخدم حقيقي بلا كلمة مرور أصلًا. نصرف العمل نفسه في
+     الحالتين على بصمة وهمية، فيستوي الزمن. */
   const check = user
     ? await Store.verifyPasswordDetailed(password || '', user.password)
-    : { ok: false, legacy: false };
+    : await Store.verifyPasswordDetailed(password || '', DUMMY_HASH);
   if (!user || !check.ok) {
     return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
   }
@@ -799,12 +816,46 @@ async function withTraineeNames(rows) {
   return rows.map((r) => ({ ...r, traineeName: (byId[r.traineeId] || {}).name || null }));
 }
 
+/* ============================================================
+   تصدير CSV — تحييد الصيغ (formula injection)
+   الاسم يصل من نموذج العقد العام (بلا تسجيل دخول) ومن الاستيراد، ثم
+   يُكتب في ملف يفتحه المدير بإكسل. خلية تبدأ بـ = أو + أو - أو @ تُنفَّذ
+   عند الفتح، و=WEBSERVICE(...) وحدها تكفي لتسريب الورقة كاملة — بأرقام
+   جوالات المشتركين وقيم اشتراكاتهم وديونهم — إلى خادم خارجي.
+   نسبقها بفاصلة عليا: إكسل يعرضها نصًا ولا ينفّذها، والنص يبقى مقروءًا.
+   ============================================================ */
+const CSV_FORMULA_START = /^[=+\-@\t\r]/;
+function csvCell(v) {
+  let out = String(v === null || v === undefined ? '' : v).replace(/[,\r\n]+/g, '؛ ');
+  if (CSV_FORMULA_START.test(out)) out = "'" + out;
+  // علامة الاقتباس داخل الخلية تُضاعَف، والخلية تُغلَّف إن لزم
+  if (/["]/.test(out)) out = '"' + out.replace(/"/g, '""') + '"';
+  return out;
+}
+
+/* أقصى حجم لصورة واحدة بعد فكّ الترميز — الحدّ العام للجسم كان يسمح
+   بثماني صور ضخمة في طلب واحد فيمتلئ القرص (و/tmp على البيئة اللحظية
+   صغير أصلًا). */
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+/* بصمات الملفات: الامتداد يأتي من ترويسة يكتبها المرسِل، والبصمة من
+   المحتوى نفسه — فلا يُخزَّن ملفٌ ليس صورة تحت اسم صورة. */
+const IMAGE_MAGIC = {
+  png: (b) => b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
+  jpg: (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  webp: (b) => b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP',
+};
+
 function saveImage(imageBase64, prefix) {
   if (!imageBase64) return null;
-  const m = imageBase64.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/);
+  const m = String(imageBase64).match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/);
   if (!m) return null;
-  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
-  fs.writeFileSync(path.join(UPLOADS, name), Buffer.from(m[2], 'base64'));
+  const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+  let buf;
+  try { buf = Buffer.from(m[2], 'base64'); } catch (e) { return null; }
+  if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
+  if (!IMAGE_MAGIC[ext] || !IMAGE_MAGIC[ext](buf)) return null;
+  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  fs.writeFileSync(path.join(UPLOADS, name), buf);
   return name;
 }
 
@@ -868,6 +919,15 @@ app.get('/api/users', auth, requireRole('admin', 'accountant', 'trainer', 'nutri
      فيرى أهل فروعه — ومعهم الإدارة، فهي بلا فرع ويحتاج أسماءها. */
   const allowed = branchScope(req.user);
   if (allowed) list = list.filter((u) => allowed.includes(Number(u.branchId)) || u.role === 'admin');
+  /* دليل الموظفين: كان كل دور يرى اسم دخول الإدارة ورقمها. المدرب
+     والأخصائية يحتاجان أسماء الزملاء لا بيانات دخولهم — واسم دخول
+     الإدارة تحديدًا نصفُ بيانات اقتحام حسابها. أرقام المتدربين تبقى
+     (منها أزرار واتساب)، وصفحة بيانات الموظفين إدارية أصلًا. */
+  if (!['admin', 'accountant'].includes(req.user.role)) {
+    list = list.map((u) => (
+      u.role === 'trainee' || u.id === req.user.id ? u : { ...u, username: undefined, phone: undefined }
+    ));
+  }
   res.json(list);
 }));
 
@@ -2008,6 +2068,11 @@ function parseInbodyText(raw) {
 app.post('/api/inbody/ocr', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const { imageBase64 } = req.body;
   if (!imageBase64) return res.status(400).json({ error: 'الصورة مطلوبة.' });
+  /* قراءة ضوئية واحدة تشغّل المعالج حتى دقيقة — حسابٌ مسروق يكفي لشلّ
+     الخادم بطلبات متتالية، فلها حدّها كأي عملية ثقيلة. */
+  if (await rateLimited('ocr:' + req.user.id, 20, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'طلبات قراءة كثيرة — انتظر قليلًا ثم أعد المحاولة.' });
+  }
   let Tesseract;
   try { Tesseract = require('tesseract.js'); }
   catch (e) { return res.json({ ocr: false, reason: 'محرك OCR غير مثبت — يرجى الإدخال اليدوي.' }); }
@@ -2616,7 +2681,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
   const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
   const on = (k) => wanted.includes(k);
-  const cell = (v) => String(v === null || v === undefined ? '' : v).replace(/[,\r\n]+/g, '؛ ');
+  const cell = csvCell;
 
   const head = ['#', 'الاسم', 'الفرع'];
   if (on('phone')) head.push('رقم الجوال');
@@ -2722,7 +2787,7 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
       lines.push('');
       lines.push('النوع,المتدرب,الفرع,الرصد,التفصيل,التاريخ,الحالة');
       // الفاصلة داخل النص تكسر أعمدة CSV — نستبدلها بفاصل عربي
-      const cell = (v) => String(v || '').replace(/[,\r\n]+/g, '؛ ');
+      const cell = csvCell;
       rows.forEach(([kind, x]) => lines.push(
         `${kind},${cell(x.traineeName)},${cell(x.branchName)},${cell(x.title)},${cell(x.note)},${x.date},${x.status === 'closed' ? 'مغلق' : 'مفتوح'}`));
     }
@@ -2759,8 +2824,16 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير
 
 /* معالج الأخطاء الموحد */
 app.use((err, req, res, next) => {
-  const status = err.status || 500;
+  const status = err.status || err.statusCode || 500;
   if (status >= 500) console.error('خطأ في الخادم:', err);
+  /* أخطاء المحلّل (جسم مشوّه، جسم أكبر من الحدّ) كانت تُعاد بنصّها
+     الإنجليزي الداخلي — رسالةٌ من مكتبة لا من التطبيق. */
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'حجم الطلب أكبر من المسموح.' });
+  }
+  if (err.type || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'صيغة الطلب غير صحيحة.' });
+  }
   res.status(status).json({ error: status >= 500 ? 'حدث خطأ في الخادم — حاول مجددًا.' : err.message });
 });
 
