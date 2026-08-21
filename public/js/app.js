@@ -120,6 +120,14 @@ async function renderShell(route, renderView) {
   const app = document.getElementById('app');
   app.innerHTML = '';
 
+  /* كلمة مرور مؤقتة: الخادم يرفض كل مسار سواها، فلا معنى لبناء الواجهة
+     كاملة ثم مشاهدتها تفشل طلبًا طلبًا — شاشة واحدة لا مخرج منها غير
+     تغيير كلمة المرور أو الخروج. */
+  if (API.user.mustChangePassword) {
+    app.append(forcePasswordChange());
+    return;
+  }
+
   // عملة النظام من الإعدادات — والفروع قد يكون لكلٍّ منها عملته
   try {
     const cfg = await API.config();
@@ -180,15 +188,6 @@ async function renderShell(route, renderView) {
   app.innerHTML = '';
   app.append(el('div', { class: 'shell' }, sidebar, backdrop, main));
 
-  // تنبيه أمان: كلمة المرور الافتراضية لم تُغيَّر بعد
-  if (API.user.mustChangePassword) {
-    main.insertBefore(
-      el('div', { class: 'alert alert--warning', style: 'margin:16px 28px 0;justify-content:space-between' },
-        el('span', {}, '⚠️ ما زلت تستخدم كلمة المرور الافتراضية — غيّرها الآن لتأمين الحساب.'),
-        el('button', { class: 'btn btn--accent btn--sm', onclick: openPasswordModal }, 'تغيير كلمة المرور')),
-      main.querySelector('#view'));
-  }
-
   // عدّاد الإشعارات
   try {
     const notifs = await API.get('/api/notifications');
@@ -201,8 +200,43 @@ async function renderShell(route, renderView) {
   if (stale()) return;
 
   /* نشرة «ما الجديد» بعد اكتمال الصفحة — مرة واحدة لكل مستخدم بعد التحديث.
-     المستخدم الذي عليه تغيير كلمة مروره يراها بعد أن ينتهي من ذلك. */
-  if (!API.user.mustChangePassword) maybeShowWhatsNew();
+     (من عليه تغيير كلمة مروره لا يصل إلى هنا أصلًا.) */
+  maybeShowWhatsNew();
+}
+
+/* شاشة إلزام تغيير كلمة المرور المؤقتة */
+function forcePasswordChange() {
+  const cur = input({ type: 'password', placeholder: 'كلمة المرور المؤقتة', dir: 'ltr', style: 'text-align:end' });
+  const nxt = input({ type: 'password', placeholder: '8 أحرف على الأقل', dir: 'ltr', style: 'text-align:end' });
+  const rpt = input({ type: 'password', placeholder: 'تأكيد الجديدة', dir: 'ltr', style: 'text-align:end' });
+  return el('div', { class: 'auth-wrap', style: 'min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px' },
+    el('div', { class: 'card', style: 'max-width:420px;width:100%;padding:28px' },
+      el('h2', { style: 'margin:0 0 6px' }, 'غيّر كلمة المرور المؤقتة'),
+      el('p', { style: 'margin:0 0 18px;color:var(--app-muted);font-size:13px;line-height:1.7' },
+        'كلمة المرور التي وصلتك مؤقتة ولا تفتح النظام. اختر كلمة مرور خاصة بك '
+        + 'لتتمكن من المتابعة — وستُنهى بقية جلساتك على الأجهزة الأخرى.'),
+      el('form', {
+        style: 'display:flex;flex-direction:column;gap:14px',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          if (nxt.value !== rpt.value) { toast('كلمتا المرور غير متطابقتين.', true); return; }
+          try {
+            await API.post('/api/me/password', { current: cur.value, next: nxt.value });
+            API.user.mustChangePassword = false;
+            localStorage.setItem('sp-user', JSON.stringify(API.user));
+            toast('تم تغيير كلمة المرور — أهلًا بك.');
+            route();
+          } catch (ex) { toast(ex.message, true); }
+        },
+      },
+        field('كلمة المرور المؤقتة', cur),
+        field('كلمة المرور الجديدة', nxt),
+        field('تأكيد كلمة المرور الجديدة', rpt),
+        el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ ومتابعة')),
+      el('button', {
+        class: 'btn btn--ghost btn--full', style: 'margin-top:10px',
+        onclick: async () => { await API.logout(); location.hash = '#/login'; },
+      }, 'خروج')));
 }
 
 function toggleTheme() {

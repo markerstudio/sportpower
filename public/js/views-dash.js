@@ -1488,8 +1488,8 @@ async function traineePhotosCard(traineeId, onDone) {
     const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px' });
     map.get(d).forEach((p) => {
       grid.append(el('div', { style: 'position:relative' },
-        el('a', { href: '/uploads/' + p.image, target: '_blank' },
-          el('img', { src: '/uploads/' + p.image, alt: 'صورة متابعة ' + p.date, loading: 'lazy',
+        el('a', { href: p.imageUrl, target: '_blank' },
+          el('img', { src: p.imageUrl, alt: 'صورة متابعة ' + p.date, loading: 'lazy',
             style: 'width:100%;height:150px;object-fit:cover;border-radius:10px;border:1px solid var(--app-line)' })),
         p.notes ? el('div', { style: 'font-size:11px;color:var(--app-muted);margin-top:2px' }, p.notes) : '',
         canManage ? el('button', {

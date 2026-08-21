@@ -33,6 +33,16 @@ const API = {
       throw new Error('انتهت الجلسة — يرجى تسجيل الدخول من جديد.');
     }
     const data = await res.json().catch(() => ({}));
+    /* الخادم يمنع كل شيء حتى تُغيَّر كلمة المرور المؤقتة — نعيد المستخدم
+       إلى شاشة التغيير بدل إظهار خطأ صلاحية غامض */
+    if (res.status === 403 && data.code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (this.user && !this.user.mustChangePassword) {
+        this.user.mustChangePassword = true;
+        try { localStorage.setItem('sp-user', JSON.stringify(this.user)); } catch (e) { /* تجاهل */ }
+        if (typeof route === 'function') route();
+      }
+      throw new Error(data.error || 'يجب تغيير كلمة المرور المؤقتة أولًا.');
+    }
     if (!res.ok) throw new Error(data.error || 'حدث خطأ غير متوقع.');
     return data;
   },

@@ -248,6 +248,19 @@ const SCHEMA = {
      مركز القرارات…) — يبقى مستندًا في meta عن قصد، فلا قيمة لتعميده أعمدة */
   settings: { columns: {}, indexes: [] },
 
+  /* حدّ المحاولات — مشترك بين نسخ الخادم.
+     كان عدّادًا في ذاكرة العملية، وعلى بيئة لحظية (Vercel) لكل نسخة
+     عدّادها فينهار الحدّ عمليًا تحت التوازي. الحالة هنا في القاعدة
+     فيصحّ الحدّ مهما تعددت النسخ. */
+  rateLimits: {
+    columns: {
+      key: col('text', { notNull: true, unique: true }),
+      count: col('int', { notNull: true }),
+      resetAt: col('num', { notNull: true }), // epoch ms
+    },
+    indexes: [['resetAt']],
+  },
+
   trainerLogs: {
     columns: {
       trainerId: col('int', { notNull: true, ref: ref('users') }),
@@ -536,7 +549,7 @@ const SCHEMA = {
 const CREATE_ORDER = [
   'branches', 'users', 'packages', 'meals', 'rewards', 'settings',
   'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
-  'notifications', 'tokens', 'trainerLogs', 'tasks', 'targets', 'frozen',
+  'notifications', 'tokens', 'rateLimits', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',
 ];

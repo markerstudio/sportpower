@@ -17,8 +17,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const UPLOADS = process.env.VERCEL ? '/tmp/sportpower-uploads' : path.join(__dirname, '..', 'uploads');
 fs.mkdirSync(UPLOADS, { recursive: true });
+if (process.env.VERCEL) {
+  console.warn('[uploads] ⚠️ المرفقات تُكتب في /tmp على بيئة لحظية — تزول مع النسخة. '
+    + 'صور المتابعة وقراءات InBody تحتاج تخزين كائنات دائم (Blob/S3) قبل الاعتماد عليها.');
+}
 
 const TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 ساعة
+/* حدّ أدنى واحد لكل مسارات ضبط كلمة المرور — كان الإنشاء وإعادة التعيين
+   من الإدارة يقبلان ٦ بينما التغيير الذاتي يطلب ٨. */
+const MIN_PASSWORD_LEN = 8;
 
 app.disable('x-powered-by');
 
@@ -28,6 +35,14 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // النقل المشفَّر إلزاميًا بعد أول زيارة (خلف وكيل TLS مثل Vercel)
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  /* ردود الواجهة البرمجية تحمل بيانات شخصية وصحية ومالية — لا تُخزَّن
+     في الوسطاء ولا في ذاكرة المتصفح ولا تبقى بعد الخروج. */
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; script-src 'self'; " +
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
@@ -70,7 +85,6 @@ app.get('/sw.js', (req, res) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 app.use('/marketing', express.static(path.join(__dirname, '..', 'marketing')));
-app.use('/uploads', express.static(UPLOADS));
 
 /* غلاف موحد لالتقاط الأخطاء في المعالجات غير المتزامنة */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -78,29 +92,106 @@ const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(
 /* ============================================================
    المصادقة والصلاحيات
    ============================================================ */
-const auth = h(async (req, res, next) => {
+/* يحلّ الجلسة من ترويسة Authorization — يعيد { user, tokenId } أو { error }.
+   مشترك بين حارس الواجهة البرمجية وحارس المرفقات. */
+async function resolveSession(req) {
   const raw = (req.headers.authorization || '').replace('Bearer ', '');
-  if (!raw) return res.status(401).json({ error: 'غير مصرّح — يرجى تسجيل الدخول.' });
+  if (!raw) return { error: 'غير مصرّح — يرجى تسجيل الدخول.' };
   const hash = Store.sha256(raw);
   // بحث مفهرس بالبصمة — لا يُسحب جدول الجلسات كاملًا في كل طلب
   const t = (await Store.find('tokens', { hash }, { limit: 1 }))[0];
   if (!t || t.expiresAt < Date.now()) {
     if (t) await Store.remove('tokens', t.id);
-    return res.status(401).json({ error: 'انتهت الجلسة — يرجى تسجيل الدخول من جديد.' });
+    return { error: 'انتهت الجلسة — يرجى تسجيل الدخول من جديد.' };
   }
-  // رموز التحقق الثنائي المؤقتة ليست جلسات
-  if (t.kind) return res.status(401).json({ error: 'غير مصرّح — يرجى تسجيل الدخول.' });
+  // رموز التحقق الثنائي والأجهزة الموثوقة ليست جلسات
+  if (t.kind) return { error: 'غير مصرّح — يرجى تسجيل الدخول.' };
   const user = await Store.get('users', t.userId);
-  if (!user) return res.status(401).json({ error: 'المستخدم غير موجود.' });
-  if (user.active === false) return res.status(401).json({ error: 'هذا الحساب معطّل.' });
+  if (!user) return { error: 'المستخدم غير موجود.' };
+  if (user.active === false) return { error: 'هذا الحساب معطّل.' };
   // تمديد الجلسة إذا اقترب انتهاؤها
   if (t.expiresAt - Date.now() < TOKEN_TTL_MS / 2) {
     await Store.update('tokens', t.id, { expiresAt: Date.now() + TOKEN_TTL_MS });
   }
+  return { user, tokenId: t.id };
+}
+
+/* ما يُسمح به لحاملِ كلمة مرور مؤقتة — لا شيء غير تغييرها والخروج.
+   كان هذا الشرط في الواجهة وحدها، فمن نادى الواجهة البرمجية مباشرة
+   استعمل النظام كاملًا بكلمة المرور المؤقتة بلا تغييرها أبدًا. */
+const PASSWORD_GATE_ALLOWED = new Set(['/api/me', '/api/me/password', '/api/logout']);
+
+const auth = h(async (req, res, next) => {
+  const { user, tokenId, error } = await resolveSession(req);
+  if (error) return res.status(401).json({ error });
+  if (user.mustChangePassword && !PASSWORD_GATE_ALLOWED.has(req.path)) {
+    return res.status(403).json({
+      code: 'PASSWORD_CHANGE_REQUIRED',
+      error: 'يجب تغيير كلمة المرور المؤقتة قبل استخدام النظام.',
+    });
+  }
   req.user = user;
-  req.tokenId = t.id;
+  req.tokenId = tokenId;
   next();
 });
+
+/* ============================================================
+   المرفقات: صور المتابعة وقراءات InBody
+   كانت تُقدَّم بـ express.static بلا أي حارس — من عرف الاسم فتحها بلا
+   جلسة، وهي صور أجساد وأوراق قياسات. الوسم <img> لا يرسل ترويسة
+   Authorization، فالرابط نفسه يحمل توقيعًا موقّتًا بدل الترويسة.
+   ============================================================ */
+const UPLOAD_URL_TTL_MS = 6 * 60 * 60 * 1000;
+
+/* سرّ التوقيع يُولَّد مرة ويُحفظ مع الإعدادات: يبقى ثابتًا عبر كل نسخ
+   الخادم اللحظية (سرٌّ في ذاكرة النسخة يجعل روابط نسخةٍ مرفوضةً عند
+   غيرها) ويصمد عبر إعادة التشغيل، بلا إعداد يدوي. */
+let uploadSecretCache = null;
+async function uploadSecret() {
+  if (uploadSecretCache) return uploadSecretCache;
+  const rows = await Store.all('settings');
+  if (rows[0] && rows[0].uploadSecret) {
+    uploadSecretCache = rows[0].uploadSecret;
+    return uploadSecretCache;
+  }
+  const secret = crypto.randomBytes(32).toString('hex');
+  if (rows[0]) await Store.update('settings', rows[0].id, { uploadSecret: secret });
+  else await Store.insert('settings', { currency: 'ILS', uploadSecret: secret });
+  uploadSecretCache = secret;
+  return secret;
+}
+
+const uploadSig = async (name, exp) => Store.hmac(await uploadSecret(), `${name}.${exp}`).slice(0, 32);
+
+/* رابط موقّع لصورة واحدة */
+async function signUpload(name) {
+  if (!name) return null;
+  const exp = Date.now() + UPLOAD_URL_TTL_MS;
+  return `/uploads/${encodeURIComponent(name)}?exp=${exp}&sig=${await uploadSig(name, exp)}`;
+}
+
+/* يُضيف imageUrl الموقّع لكل صف يحمل image — يقبل صفًا أو مصفوفة */
+async function withImageUrls(rows) {
+  for (const r of (Array.isArray(rows) ? rows : [rows])) {
+    if (r && r.image) r.imageUrl = await signUpload(r.image);
+  }
+  return rows;
+}
+
+app.use('/uploads', h(async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const name = decodeURIComponent(req.path.replace(/^\//, ''));
+  const exp = Number(req.query.exp);
+  const sig = String(req.query.sig || '');
+  if (name && exp > Date.now() && sig) {
+    const want = await uploadSig(name, exp);
+    if (sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return next();
+  }
+  // بديل للاستهلاك البرمجي: جلسة صالحة بترويسة Authorization
+  const { user } = await resolveSession(req);
+  if (user && !user.mustChangePassword) return next();
+  return res.status(403).json({ error: 'رابط المرفق غير صالح أو انتهت صلاحيته.' });
+}), express.static(UPLOADS, { index: false, dotfiles: 'deny' }));
 
 function requireRole(...roles) {
   return (req, res, next) => {
@@ -179,29 +270,74 @@ function branchAllowed(user, branchId) {
   const allowed = branchScope(user);
   return !allowed || (branchId != null && allowed.includes(Number(branchId)));
 }
+/* الملفات الصحية (InBody، صور المتابعة، خطط التغذية) لا تحمل عمود فرع،
+   فكان تقييد الفرع — المبني على تصفية branchId — لا يمسّها: ملف متدرب
+   يُرفض على /api/trainee/:id/overview كان يُقرأ من هذه المسارات بلا مانع.
+   التقييد هنا يمرّ عبر فرع صاحب الملف نفسه. */
+async function traineeSubject(req) {
+  const asked = req.user.role === 'trainee' ? req.user.id : Number(req.query.trainee) || null;
+  if (!asked) return { all: true };
+  const trainee = await Store.get('users', asked);
+  if (!trainee || trainee.role !== 'trainee') return { error: 'notFound' };
+  if (!branchAllowed(req.user, trainee.branchId)) return { error: 'scope' };
+  return { traineeId: trainee.id };
+}
+
+/* معرّفات المتدربين ضمن نطاق صاحب الجلسة — null = بلا تقييد */
+async function scopedTraineeIds(req) {
+  const allowed = branchScope(req.user);
+  if (!allowed) return null;
+  return (await Store.find('users', { role: 'trainee', branchId: { in: allowed } })).map((u) => u.id);
+}
+
 const OUT_OF_SCOPE = 'هذا الفرع خارج نطاق صلاحيتك — راجع الإدارة.';
 function denyOutOfScope(res) {
   return res.status(403).json({ error: OUT_OF_SCOPE });
 }
 
 /* ---------- تحديد معدل محاولات الدخول ---------- */
-const loginAttempts = new Map(); // key → { count, resetAt }
-function rateLimited(key, max, windowMs) {
+/* حدّ المحاولات في القاعدة لا في ذاكرة العملية: على بيئة لحظية (Vercel)
+   لكل نسخة ذاكرتها، فعدّاد الذاكرة كان ينهار تحت التوازي — تكفي محاولات
+   متزامنة موزّعة على نسخ ليسقط الحدّ عمليًا. */
+async function rateLimited(key, max, windowMs) {
   const now = Date.now();
-  const rec = loginAttempts.get(key);
-  if (!rec || rec.resetAt < now) {
-    loginAttempts.set(key, { count: 1, resetAt: now + windowMs });
+  const rec = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
+  if (!rec) {
+    // سباق بين نسختين على المفتاح نفسه: المفتاح فريد فيفشل الإدراج الثاني —
+    // نعيد القراءة ونزيد بدل أن نسقط الطلب
+    try {
+      await Store.insert('rateLimits', { key, count: 1, resetAt: now + windowMs });
+      return false;
+    } catch (e) {
+      const again = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
+      if (!again) throw e;
+      await Store.update('rateLimits', again.id, { count: again.count + 1 });
+      return again.count + 1 > max;
+    }
+  }
+  if (rec.resetAt < now) {
+    await Store.update('rateLimits', rec.id, { count: 1, resetAt: now + windowMs });
     return false;
   }
-  rec.count += 1;
-  return rec.count > max;
+  const count = rec.count + 1;
+  await Store.update('rateLimits', rec.id, { count });
+  return count > max;
 }
+
+const clearRateLimit = (key) => Store.deleteWhere('rateLimits', { key });
 
 const CURRENCIES = ['ILS', 'JOD', 'USD'];
 
 async function getSettings() {
   const rows = await Store.all('settings');
   return rows[0] || { currency: 'ILS' };
+}
+
+/* الإعدادات كما تُعرض: صف الإعدادات يحمل سرّ توقيع روابط المرفقات —
+   وهو سرّ خادم لا يخرج في أي رد. */
+function publicSettings(s) {
+  const { uploadSecret, ...rest } = s || {};
+  return rest;
 }
 
 /* ============================================================
@@ -241,7 +377,7 @@ app.get('/api/config', h(async (req, res) => {
 }));
 
 app.get('/api/settings', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  res.json(await getSettings());
+  res.json(publicSettings(await getSettings()));
 }));
 
 app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
@@ -264,7 +400,7 @@ app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
   const saved = rows[0]
     ? await Store.update('settings', rows[0].id, patch)
     : await Store.insert('settings', { currency: 'ILS', ...patch });
-  res.json(saved);
+  res.json(publicSettings(saved));
 }));
 
 /* فحص الصحة — يستخدمه المزوّد والمراقبة، ويؤكد أن النشر طبّق الترحيلات */
@@ -340,6 +476,7 @@ async function issueSession(user) {
   await Store.insert('tokens', { hash: Store.sha256(token), userId: user.id, expiresAt: Date.now() + TOKEN_TTL_MS });
   // تنظيف دوري: الجلسات المنتهية، والإشعارات المقروءة القديمة
   await Store.deleteWhere('tokens', { expiresAt: { lt: Date.now() } });
+  await Store.deleteWhere('rateLimits', { resetAt: { lt: Date.now() } });
   await sweepOldNotifications();
   return token;
 }
@@ -348,12 +485,20 @@ app.post('/api/login', h(async (req, res) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
   const { username, password } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
-  if (rateLimited('ip:' + ip, 30, 15 * 60 * 1000) || rateLimited('user:' + uname, 8, 15 * 60 * 1000)) {
+  if (await rateLimited('ip:' + ip, 30, 15 * 60 * 1000) || await rateLimited('user:' + uname, 8, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
   }
   const user = (await Store.find('users', { username: uname }, { limit: 1 }))[0];
-  if (!user || !Store.verifyPassword(password || '', user.password)) {
+  const check = user
+    ? await Store.verifyPasswordDetailed(password || '', user.password)
+    : { ok: false, legacy: false };
+  if (!user || !check.ok) {
     return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
+  }
+  /* بصمة قديمة (sha256 ثابت الملح) صحّت: تُرقّى إلى scrypt فورًا — فلا
+     تبقى في القاعدة بصمةٌ ضعيفة بعد أول دخول ناجح لصاحبها. */
+  if (check.legacy) {
+    await Store.update('users', user.id, { password: await Store.hashPassword(password) });
   }
   if (user.active === false) {
     return res.status(403).json({ error: 'هذا الحساب معطّل — تواصل مع الإدارة.' });
@@ -365,7 +510,7 @@ app.post('/api/login', h(async (req, res) => {
       error: 'انتهت صلاحية كلمة المرور المؤقتة — اطلب من الإدارة إرسال بيانات دخول جديدة.',
     });
   }
-  loginAttempts.delete('user:' + uname);
+  await clearRateLimit('user:' + uname);
 
   /* كلمة المرور صحيحة — أدوار المال والإدارة تكمل بالتحقق الثنائي */
   if (mfaRequiredFor(user)) {
@@ -411,7 +556,7 @@ app.post('/api/login/mfa', h(async (req, res) => {
     if (t && t.expiresAt < Date.now()) await Store.remove('tokens', t.id);
     return res.status(401).json({ error: 'انتهت مهلة التحقق — سجّل الدخول من جديد.' });
   }
-  if (rateLimited('mfa:' + t.userId, 8, 15 * 60 * 1000)) {
+  if (await rateLimited('mfa:' + t.userId, 8, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
   }
   const user = await Store.get('users', t.userId);
@@ -426,11 +571,11 @@ app.post('/api/login/mfa', h(async (req, res) => {
       crypto.randomBytes(4).toString('hex').toUpperCase().match(/.{4}/g).join('-'));
     await Store.update('users', user.id, {
       mfaSecret: t.secret, mfaEnrolledAt: todayStr(),
-      mfaBackup: backupCodes.map((c) => Store.hashPassword(c)),
+      mfaBackup: await Promise.all(backupCodes.map((c) => Store.hashPassword(c))),
       mfaLastSlot: slot,
     });
     await Store.remove('tokens', t.id);
-    loginAttempts.delete('mfa:' + user.id);
+    await clearRateLimit('mfa:' + user.id);
     const token = await issueSession(user);
     const deviceToken = await maybeTrustDevice(user, req.body.trustDevice);
     return res.json({ token, user: publicUser({ ...user, mfaSecret: t.secret }), backupCodes, ...(deviceToken ? { deviceToken } : {}) });
@@ -442,7 +587,11 @@ app.post('/api/login/mfa', h(async (req, res) => {
     await Store.update('users', user.id, { mfaLastSlot: slot });
   } else {
     const backups = user.mfaBackup || [];
-    const idx = backups.findIndex((hash) => Store.verifyPassword(String(code).trim().toUpperCase(), hash));
+    const given = String(code).trim().toUpperCase();
+    let idx = -1;
+    for (let i = 0; i < backups.length; i += 1) {
+      if (await Store.verifyPassword(given, backups[i])) { idx = i; break; }
+    }
     if (idx === -1) return res.status(401).json({ error: 'الرمز غير صحيح.' });
     await Store.update('users', user.id, { mfaBackup: backups.filter((_, i) => i !== idx) });
     if (backups.length - 1 <= 2) {
@@ -450,7 +599,7 @@ app.post('/api/login/mfa', h(async (req, res) => {
     }
   }
   await Store.remove('tokens', t.id);
-  loginAttempts.delete('mfa:' + user.id);
+  await clearRateLimit('mfa:' + user.id);
   const token = await issueSession(user);
   const deviceToken = await maybeTrustDevice(user, req.body.trustDevice);
   res.json({ token, user: publicUser(user), ...(deviceToken ? { deviceToken } : {}) });
@@ -487,14 +636,17 @@ app.post('/api/me/seen-release', auth, h(async (req, res) => {
 
 app.post('/api/me/password', auth, h(async (req, res) => {
   const { current, next } = req.body || {};
-  if (!Store.verifyPassword(current || '', req.user.password)) {
+  if (!await Store.verifyPassword(current || '', req.user.password)) {
     return res.status(400).json({ error: 'كلمة المرور الحالية غير صحيحة.' });
   }
-  if (!next || String(next).length < 8) {
-    return res.status(400).json({ error: 'كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف.' });
+  if (!next || String(next).length < MIN_PASSWORD_LEN) {
+    return res.status(400).json({ error: `كلمة المرور الجديدة يجب ألا تقل عن ${MIN_PASSWORD_LEN} أحرف.` });
+  }
+  if (String(next) === String(current)) {
+    return res.status(400).json({ error: 'اختر كلمة مرور مختلفة عن الحالية.' });
   }
   await Store.update('users', req.user.id, {
-    password: Store.hashPassword(next), mustChangePassword: false, tempPasswordExpires: null,
+    password: await Store.hashPassword(next), mustChangePassword: false, tempPasswordExpires: null,
   });
   // إنهاء بقية الجلسات لهذا المستخدم
   await Store.deleteWhere('tokens', { userId: req.user.id, id: { ne: req.tokenId } });
@@ -725,13 +877,13 @@ app.post('/api/users', auth, requireRole('admin'), h(async (req, res) => {
   if (!['trainee', 'trainer', 'accountant', 'nutritionist', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'نوع مستخدم غير صحيح.' });
   }
-  if (String(password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
+  if (String(password).length < MIN_PASSWORD_LEN) return res.status(400).json({ error: `كلمة المرور ${MIN_PASSWORD_LEN} أحرف على الأقل.` });
   const users = await Store.all('users');
   if (users.some((u) => u.username === String(username).toLowerCase())) {
     return res.status(400).json({ error: 'اسم المستخدم موجود مسبقًا.' });
   }
   const user = await Store.insert('users', {
-    username: String(username).toLowerCase(), password: Store.hashPassword(password),
+    username: String(username).toLowerCase(), password: await Store.hashPassword(password),
     createdAt: new Date().toISOString(),
     name, role, phone: phone || '', branchId: branchId || null,
     trainerId: trainerId || null, goal: goal || null, specialty: specialty || null,
@@ -809,8 +961,8 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
 
   // إعادة تعيين كلمة المرور من الإدارة
   if (req.body.password !== undefined) {
-    if (String(req.body.password).length < 6) return res.status(400).json({ error: 'كلمة المرور 6 أحرف على الأقل.' });
-    patch.password = Store.hashPassword(req.body.password);
+    if (String(req.body.password).length < MIN_PASSWORD_LEN) return res.status(400).json({ error: `كلمة المرور ${MIN_PASSWORD_LEN} أحرف على الأقل.` });
+    patch.password = await Store.hashPassword(req.body.password);
     patch.mustChangePassword = user.id !== req.user.id;
     // كلمة مرور يضعها غيرُه مؤقتةٌ لها مهلة؛ ومن يغيّر كلمته بنفسه لا مهلة عليه
     patch.tempPasswordExpires = patch.mustChangePassword ? tempPasswordDeadline() : null;
@@ -851,7 +1003,7 @@ app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'),
   const password = 'sp-' + crypto.randomBytes(6).toString('hex');
   const expiresAt = tempPasswordDeadline();
   const updated = await Store.update('users', user.id, {
-    password: Store.hashPassword(password), mustChangePassword: true, tempPasswordExpires: expiresAt,
+    password: await Store.hashPassword(password), mustChangePassword: true, tempPasswordExpires: expiresAt,
   });
   await Store.deleteWhere('tokens', { userId: user.id });
   res.json({
@@ -906,7 +1058,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
 
   const result = await Store.transaction(async (tx) => {
     const user = await tx.insert('users', {
-      username, password: Store.hashPassword(password), role: 'trainee',
+      username, password: await Store.hashPassword(password), role: 'trainee',
       createdAt: new Date().toISOString(),
       name: String(name).trim(), phone: String(phone).trim(),
       birthDate: birthDate || null, residence: residence || null, branchId: Number(branchId) || null,
@@ -1691,11 +1843,17 @@ app.delete('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'tr
    InBody — رفع وقراءة وحفظ ومقارنة
    ============================================================ */
 app.get('/api/inbody', auth, h(async (req, res) => {
+  const subject = await traineeSubject(req);
+  if (subject.error === 'notFound') return res.status(404).json({ error: 'المتدرب غير موجود.' });
+  if (subject.error === 'scope') return denyOutOfScope(res);
   let list = await Store.all('inbody');
-  if (req.user.role === 'trainee') list = list.filter((r) => r.traineeId === req.user.id);
-  else if (req.query.trainee) list = list.filter((r) => r.traineeId === Number(req.query.trainee));
+  if (subject.traineeId) list = list.filter((r) => r.traineeId === subject.traineeId);
+  else {
+    const ids = await scopedTraineeIds(req);
+    if (ids) list = list.filter((r) => ids.includes(r.traineeId));
+  }
   // بالتاريخ ثم بالمعرّف — حتى يصح اتجاه أسهم التغيّر بين القراءات
-  res.json(list.sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id));
+  res.json(await withImageUrls(list.sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)));
 }));
 
 app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
@@ -1712,7 +1870,7 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
     createdBy: req.user.id,
   });
   await notify(trainee.id, `تمت إضافة قراءة InBody جديدة بتاريخ ${date}.`, 'inbody');
-  res.json(reading);
+  res.json((await withImageUrls([{ ...reading }]))[0]);
 }));
 
 /* محاولة قراءة الصورة تلقائيًا OCR — مع رجوع آمن للإدخال اليدوي */
@@ -1741,10 +1899,12 @@ app.delete('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (re
    (بمبدأ قراءات InBody: سجل بالتاريخ يوثّق تقدّمه بصريًا)
    ============================================================ */
 app.get('/api/trainee-photos', auth, h(async (req, res) => {
-  const traineeId = req.user.role === 'trainee' ? req.user.id : Number(req.query.trainee);
-  if (!traineeId) return res.status(400).json({ error: 'المتدرب مطلوب.' });
-  const photos = await Store.find('traineePhotos', { traineeId });
-  res.json(photos.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id));
+  const subject = await traineeSubject(req);
+  if (subject.error === 'notFound') return res.status(404).json({ error: 'المتدرب غير موجود.' });
+  if (subject.error === 'scope') return denyOutOfScope(res);
+  if (!subject.traineeId) return res.status(400).json({ error: 'المتدرب مطلوب.' });
+  const photos = await Store.find('traineePhotos', { traineeId: subject.traineeId });
+  res.json(await withImageUrls(photos.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)));
 }));
 
 app.post('/api/trainee-photos', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
@@ -1766,7 +1926,7 @@ app.post('/api/trainee-photos', auth, requireRole('admin', 'trainer'), h(async (
   }
   if (!saved.length) return res.status(400).json({ error: 'صيغة الصور غير مدعومة (PNG/JPG/WebP).' });
   await notify(trainee.id, `أُضيفت ${saved.length} صورة متابعة جديدة لملفك بتاريخ ${saved[0].date} 📸`, 'inbody');
-  res.json({ photos: saved });
+  res.json({ photos: await withImageUrls(saved.map((x) => ({ ...x }))) });
 }));
 
 app.delete('/api/trainee-photos/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
@@ -1894,7 +2054,7 @@ app.get('/api/meals', auth, h(async (req, res) => {
     const path = goals.mealGoalOf(req.user.goal);
     list = list.filter((m) => m.goal === path);
   }
-  res.json(list);
+  res.json(await withImageUrls(list.map((m) => ({ ...m }))));
 }));
 
 app.post('/api/meals', auth, requireRole('admin', 'trainer', 'nutritionist'), h(async (req, res) => {
@@ -1906,15 +2066,23 @@ app.post('/api/meals', auth, requireRole('admin', 'trainer', 'nutritionist'), h(
     ingredients: ingredients || '', preparation: preparation || '',
     image: saveImage(imageBase64, 'meal'), createdBy: req.user.id,
   });
-  res.json(meal);
+  res.json((await withImageUrls([{ ...meal }]))[0]);
 }));
 
 app.get('/api/meal-plans', auth, h(async (req, res) => {
+  const subject = await traineeSubject(req);
+  if (subject.error === 'notFound') return res.status(404).json({ error: 'المتدرب غير موجود.' });
+  if (subject.error === 'scope') return denyOutOfScope(res);
   const { mealPlans, meals } = await Store.load('mealPlans', 'meals');
   let list = mealPlans;
-  if (req.user.role === 'trainee') list = list.filter((p) => p.traineeId === req.user.id);
-  else if (req.query.trainee) list = list.filter((p) => p.traineeId === Number(req.query.trainee));
-  res.json(list.map((p) => ({ ...p, meal: meals.find((m) => m.id === p.mealId) })));
+  if (subject.traineeId) list = list.filter((p) => p.traineeId === subject.traineeId);
+  else {
+    const ids = await scopedTraineeIds(req);
+    if (ids) list = list.filter((p) => ids.includes(p.traineeId));
+  }
+  const withMeal = list.map((p) => ({ ...p, meal: meals.find((m) => m.id === p.mealId) }));
+  for (const p of withMeal) if (p.meal) p.meal = (await withImageUrls([{ ...p.meal }]))[0];
+  res.json(withMeal);
 }));
 
 app.post('/api/meal-plans', auth, requireRole('admin', 'trainer', 'nutritionist'), h(async (req, res) => {
@@ -2134,9 +2302,12 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
   // الترتيب بالتاريخ ثم بالمعرّف — قراءتان بنفس اليوم تبقيان بترتيب إدخالهما
   // حتى تصح المقارنة أول/آخر واتجاه أسهم التغيّر
-  const readings = inbody.filter((r) => r.traineeId === id)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
-  const plans = mealPlans.filter((p) => p.traineeId === id).map((p) => ({ ...p, meal: meals.find((m) => m.id === p.mealId) }));
+  const readings = await withImageUrls(inbody.filter((r) => r.traineeId === id)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+    .map((r) => ({ ...r })));
+  const plans = mealPlans.filter((p) => p.traineeId === id)
+    .map((p) => ({ ...p, meal: meals.find((m) => m.id === p.mealId) }));
+  for (const p of plans) if (p.meal) p.meal = (await withImageUrls([{ ...p.meal }]))[0];
 
   // بنظام التناوب لا مدرب ثابتًا — نعرض آخر مدرب درّبه فعليًا
   const lastSession = mySessions[0];

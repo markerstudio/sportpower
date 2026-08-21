@@ -34,17 +34,29 @@ async function ensureDefaultPackages() {
   }
 }
 
-/* حد بسيط لمحاولات فتح/إرسال العقد العام (بلا مصادقة) */
-const publicHits = new Map();
-function publicRateLimited(key, max, windowMs) {
+/* حد محاولات فتح/إرسال العقد العام (بلا مصادقة) — في القاعدة لا في ذاكرة
+   العملية، وإلا فلكل نسخة لحظية عدّادها ولا يصمد الحدّ تحت التوازي. */
+async function publicRateLimited(key, max, windowMs) {
   const now = Date.now();
-  const rec = publicHits.get(key);
-  if (!rec || rec.resetAt < now) {
-    publicHits.set(key, { count: 1, resetAt: now + windowMs });
+  const rec = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
+  if (!rec) {
+    try {
+      await Store.insert('rateLimits', { key, count: 1, resetAt: now + windowMs });
+      return false;
+    } catch (e) {
+      const again = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
+      if (!again) throw e;
+      await Store.update('rateLimits', again.id, { count: again.count + 1 });
+      return again.count + 1 > max;
+    }
+  }
+  if (rec.resetAt < now) {
+    await Store.update('rateLimits', rec.id, { count: 1, resetAt: now + windowMs });
     return false;
   }
-  rec.count += 1;
-  return rec.count > max;
+  const count = rec.count + 1;
+  await Store.update('rateLimits', rec.id, { count });
+  return count > max;
 }
 
 const clean = (v, max) => String(v === undefined || v === null ? '' : v).trim().slice(0, max || 200);
@@ -187,7 +199,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
 
   app.get('/api/public/contract/:token', h(async (req, res) => {
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
-    if (publicRateLimited('view:' + ip, 120, 15 * 60 * 1000)) {
+    if (await publicRateLimited('view:' + ip, 120, 15 * 60 * 1000)) {
       return res.status(429).json({ error: 'محاولات كثيرة — انتظر قليلًا ثم حاول مجددًا.' });
     }
     await ensureDefaultPackages();
@@ -226,7 +238,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
 
   app.post('/api/public/contract/:token', h(async (req, res) => {
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
-    if (publicRateLimited('submit:' + ip, 10, 15 * 60 * 1000)) {
+    if (await publicRateLimited('submit:' + ip, 10, 15 * 60 * 1000)) {
       return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
     }
     const contract = await findContract(req.params.token);
