@@ -15,27 +15,51 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || nul
 const IS_SERVERLESS = !!process.env.VERCEL;
 const DEMO_MODE = !DATABASE_URL || process.env.SEED_DEMO === '1';
 
-/* ---------- كلمات المرور: scrypt مع ملح لكل مستخدم ---------- */
-function hashPassword(password) {
+/* ---------- كلمات المرور: scrypt مع ملح لكل مستخدم ----------
+   scryptSync يحجز حلقة الأحداث ~40ms لكل نداء، وهو على مسار تسجيل
+   الدخول (مسار بلا مصادقة) — فالنسخة غير المتزامنة هي الأصل، وتبقى
+   النسخة المتزامنة للزرع وقت الإقلاع وحده. */
+const scrypt = (password, salt) => new Promise((resolve, reject) => {
+  crypto.scrypt(String(password), salt, 64, (err, key) => (err ? reject(err) : resolve(key)));
+});
+
+function encodeHash(salt, key) { return `scrypt$${salt}$${key.toString('hex')}`; }
+
+async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
-  return `scrypt$${salt}$${hash}`;
+  return encodeHash(salt, await scrypt(password, salt));
 }
 
-function verifyPassword(password, stored) {
-  if (!stored) return false;
+/* للزرع وقت الإقلاع فقط — لا يُستدعى داخل معالج طلب */
+function hashPasswordSync(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return encodeHash(salt, crypto.scryptSync(String(password), salt, 64));
+}
+
+/* يعيد { ok, legacy } — legacy يعني بصمة قديمة تحتاج ترقية إلى scrypt */
+async function verifyPasswordDetailed(password, stored) {
+  if (!stored) return { ok: false, legacy: false };
   if (stored.startsWith('scrypt$')) {
     const [, salt, hash] = stored.split('$');
-    const calc = crypto.scryptSync(String(password), salt, 64);
-    const expect = Buffer.from(hash, 'hex');
-    return calc.length === expect.length && crypto.timingSafeEqual(calc, expect);
+    const expect = Buffer.from(String(hash || ''), 'hex');
+    const calc = await scrypt(password, salt);
+    return { ok: calc.length === expect.length && crypto.timingSafeEqual(calc, expect), legacy: false };
   }
-  // توافق خلفي مع قواعد بيانات محلية قديمة (sha256 ثابت الملح)
-  const legacy = crypto.createHash('sha256').update('sp-salt::' + password).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(legacy), Buffer.from(stored.padEnd(64, '0').slice(0, 64)));
+  // توافق خلفي مع قواعد بيانات قديمة (sha256 ثابت الملح) — تُرقّى عند أول
+  // دخول ناجح فلا تبقى بصمة ضعيفة في القاعدة
+  const legacy = crypto.createHash('sha256').update('sp-salt::' + String(password)).digest('hex');
+  const ok = crypto.timingSafeEqual(Buffer.from(legacy), Buffer.from(String(stored).padEnd(64, '0').slice(0, 64)));
+  return { ok, legacy: ok };
+}
+
+async function verifyPassword(password, stored) {
+  return (await verifyPasswordDetailed(password, stored)).ok;
 }
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+/* توقيع HMAC عام — يُستعمل لروابط المرفقات الموقّتة */
+const hmac = (key, msg) => crypto.createHmac('sha256', key).update(msg).digest('hex');
 
 /* ============================================================
    مطابقة شروط الاستعلام في الذاكرة — بنفس دلالات نسخة SQL
@@ -219,7 +243,7 @@ class JsonDriver {
   }
 
   async reseed() {
-    await this.loadSeed(seedData.demoSeed(hashPassword));
+    await this.loadSeed(seedData.demoSeed(hashPasswordSync));
   }
 
   async schemaVersion() { return 0; } // التخزين الملفّي بلا ترحيلات
@@ -281,7 +305,7 @@ async function seedIfEmpty() {
     : (await driver.count('users', null)) === 0;
   if (!empty) return;
 
-  const seed = DEMO_MODE ? seedData.demoSeed(hashPassword) : seedData.productionSeed(hashPassword);
+  const seed = DEMO_MODE ? seedData.demoSeed(hashPasswordSync) : seedData.productionSeed(hashPasswordSync);
   if (driver instanceof JsonDriver) return driver.loadSeed(seed);
 
   // ترتيب الإدراج يحترم المفاتيح الأجنبية، والمعرّفات تُحفظ كما هي
@@ -338,6 +362,9 @@ module.exports = {
   schemaVersion: async () => { await initOnce(); return driver.schemaVersion(); },
   end: async () => driver.end(),
   hashPassword,
+  hashPasswordSync,
   verifyPassword,
+  verifyPasswordDetailed,
   sha256,
+  hmac,
 };

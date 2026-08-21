@@ -57,13 +57,25 @@ const DEFAULT_CONTRACT_TERMS = [
 
 /* الحد الأدنى للإنتاج: مدير + الفروع + مكتبة الوجبات */
 function productionSeed(hash) {
-  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+  /* لا كلمة مرور افتراضية معروفة: بلا ADMIN_PASSWORD تُولَّد كلمة عشوائية
+     تُطبع مرة واحدة في سجل النشر. «admin123» كانت تبقى صالحة على أي نشرة
+     لم تضبط المتغيّر — واسمها معروف في هذا المستودع. */
+  const generated = !process.env.ADMIN_PASSWORD;
+  const adminPassword = process.env.ADMIN_PASSWORD
+    || 'sp-' + require('crypto').randomBytes(12).toString('base64url');
+  if (generated) {
+    console.warn('\n[seed] ================= كلمة مرور الإدارة =================');
+    console.warn('[seed]   admin / ' + adminPassword);
+    console.warn('[seed]   تُطبع مرة واحدة — سجّلها الآن، وتغييرها إلزامي عند أول دخول.');
+    console.warn('[seed]   لضبطها مسبقًا: متغيّر البيئة ADMIN_PASSWORD');
+    console.warn('[seed] ====================================================\n');
+  }
   return {
     branches: BRANCHES,
     users: [{
       id: 1, username: 'admin', password: hash(adminPassword), role: 'admin',
       name: 'إدارة سبورت باور', phone: '', branchId: null,
-      mustChangePassword: !process.env.ADMIN_PASSWORD,
+      mustChangePassword: generated,
     }],
     subscriptions: [], payments: [], sessions: [], appointments: [],
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],

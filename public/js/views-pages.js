@@ -878,7 +878,7 @@ async function viewInbody(root) {
           changeArrow(r.weight, i > 0 ? readings[i - 1].weight : null, { goodWhenUp: goodWhenUpForGoal(currentGoal()) }),
           r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
-          r.image ? el('a', { href: '/uploads/' + r.image, target: '_blank' }, 'عرض') : '—',
+          r.imageUrl ? el('a', { href: r.imageUrl, target: '_blank' }, 'عرض') : '—',
           // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟
           ...(isStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
             el('button', {
@@ -992,7 +992,7 @@ function mealCard(meal, { slotLabel, actions } = {}) {
   if (!meal) return el('span');
   return el('div', { class: 'card meal-card' },
     el('div', { class: 'meal-card__img' },
-      meal.image ? el('img', { class: 'real', src: '/uploads/' + meal.image, alt: meal.name })
+      meal.imageUrl ? el('img', { class: 'real', src: meal.imageUrl, alt: meal.name })
         : el('img', { class: 'ph', src: '/assets/icons/energy.svg', alt: '' })),
     el('div', { class: 'meal-card__head' },
       el('h4', {}, meal.name),
