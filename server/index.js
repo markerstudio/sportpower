@@ -882,6 +882,15 @@ function saveImage(imageBase64, prefix) {
   return name;
 }
 
+/* حذف ملف صورة من التخزين — يُستعمل عند محو بيانات متدرب. آمنٌ ضد أسماء
+   خبيثة: يقتصر على اسم الملف داخل مجلد المرفقات. */
+function deleteImage(name) {
+  if (!name || typeof name !== 'string') return;
+  const base = path.basename(name);
+  if (base !== name) return; // لا مسارات نسبية
+  try { fs.unlinkSync(path.join(UPLOADS, base)); } catch (e) { /* مفقود أصلًا */ }
+}
+
 /* ============================================================
    الفروع والمستخدمون
    ============================================================ */
@@ -1092,6 +1101,71 @@ app.post('/api/users/:id/credentials', auth, requireRole('admin', 'accountant'),
   res.json({
     user: publicUser(updated),
     credentials: { username: user.username, password, expiresAt, validHours: TEMP_PASSWORD_HOURS },
+  });
+}));
+
+/* ============================================================
+   محو بيانات متدرب (حق النسيان) — إخفاء الهوية لا حذف السجل
+   يمحو كل ما يُعرّف الشخص (اسم، جوال، ميلاد، سكن، صور جسده، قراءات InBody،
+   خطط تغذيته، أهدافه، تقييماته، إشعاراته) ويُبقي الصفوف المالية (اشتراكات
+   ودفعات وحصص) مرتبطةً بسجلٍ مجهول — فلا ينهار حساب المحاسبة. لا رجعة فيه.
+   ============================================================ */
+app.post('/api/users/:id/anonymize', auth, requireRole('admin'), h(async (req, res) => {
+  const user = await Store.get('users', req.params.id);
+  if (!user) return res.status(404).json({ error: 'المستخدم غير موجود.' });
+  if (user.role !== 'trainee') return res.status(400).json({ error: 'محو الهوية للمتدربين فقط — حسابات الموظفين تُعطَّل من التعديل.' });
+  if (user.id === req.user.id) return res.status(400).json({ error: 'لا يمكنك محو حسابك.' });
+  // تأكيد صريح مطلوب — عملية لا رجعة فيها
+  if (req.body.confirm !== true) return res.status(400).json({ error: 'العملية تحتاج تأكيدًا صريحًا (confirm=true).' });
+
+  // 1) اجمع ملفات الصور الحسّاسة قبل حذف صفوفها لنحذفها من التخزين
+  const [inbodyRows, photoRows] = await Promise.all([
+    Store.find('inbody', { traineeId: user.id }),
+    Store.find('traineePhotos', { traineeId: user.id }),
+  ]);
+  const imageFiles = [...inbodyRows.map((r) => r.image), ...photoRows.map((r) => r.image)].filter(Boolean);
+
+  // 2) احذف البيانات الصحية والجسدية والشخصية المرتبطة به
+  const deleted = {};
+  for (const col of ['inbody', 'traineePhotos', 'mealPlans', 'traineeGoals', 'traineeFlags', 'sessionRatings', 'notifications', 'tokens']) {
+    const key = col === 'notifications' || col === 'tokens' ? 'userId' : 'traineeId';
+    deleted[col] = await Store.deleteWhere(col, { [key]: user.id });
+  }
+
+  // 3) أخفِ هوية العقود المرتبطة به (تحمل اسمه وجواله في submission)
+  const linkedContracts = (await Store.all('contracts')).filter((c) => c.traineeId === user.id);
+  for (const c of linkedContracts) {
+    await Store.update('contracts', c.id, { prospectName: '', prospectPhone: '', submission: null });
+  }
+
+  // 4) اطمس بيانات الصف نفسه — يبقى المعرّف والفرع (للتقارير المالية) ويُقفل الحساب
+  const tag = 'deleted-' + user.id + '-' + crypto.randomBytes(3).toString('hex');
+  await Store.update('users', user.id, {
+    name: 'متدرب محذوف', username: tag, phone: '', birthDate: null, residence: null,
+    sourceName: null, sourceRefId: null, seenRelease: null,
+    password: await Store.hashPassword(crypto.randomBytes(24).toString('hex')),
+    active: false, mustChangePassword: false, tempPasswordExpires: null,
+    mfaSecret: null, mfaEnrolledAt: null, mfaBackup: null, mfaLastSlot: null,
+    anonymizedAt: new Date().toISOString(), anonymizedBy: req.user.id,
+  });
+
+  // 5) احذف ملفات الصور فعليًا من التخزين
+  for (const f of imageFiles) deleteImage(f);
+
+  // 6) سجّل الإجراء (بلا اسم — لا نُعيد كتابة ما محوناه)
+  try {
+    await Store.insert('actionLog', {
+      key: 'anonymize:' + user.id, status: 'done', type: 'anonymize',
+      traineeId: user.id, byId: req.user.id, date: todayStr(),
+      note: `محو بيانات متدرب #${user.id}`,
+    });
+  } catch (e) { /* سجل الإجراءات اختياري */ }
+
+  res.json({
+    ok: true,
+    deletedImages: imageFiles.length,
+    deleted,
+    kept: 'الاشتراكات والدفعات والحصص محفوظة مرتبطةً بسجلٍ مجهول (للمحاسبة).',
   });
 }));
 

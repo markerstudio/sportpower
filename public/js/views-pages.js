@@ -728,7 +728,48 @@ function openEditTraineeModal(onDone, trainee, users, branches) {
       el('div', { class: 'span-2' }, field('اسم المستخدم (يدخل به للنظام)', usernameIn)),
       el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
         'اسم المستخدم بالإنجليزية والأرقام فقط. تغييره يعني دخوله بالاسم الجديد في المرة القادمة — أبلغه به.'),
-      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات')),
+      /* منطقة الخطر — محو بيانات المتدرب (حق النسيان). للإدارة وحدها. */
+      API.user.role === 'admin' ? el('div', {
+        class: 'span-2',
+        style: 'margin-top:10px;padding-top:14px;border-top:1px solid var(--app-line)',
+      },
+        el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px;line-height:1.7' },
+          '🔒 محو البيانات نهائيًا: يمسح الاسم والجوال والميلاد والسكن وصور الجسد وقراءات InBody '
+          + 'وخطط التغذية والتقييمات. تبقى الاشتراكات والدفعات محفوظةً بسجلٍ مجهول (للمحاسبة). لا رجعة فيه.'),
+        el('button', {
+          type: 'button', class: 'btn btn--outline btn--full', style: 'color:var(--status-danger);border-color:var(--status-danger)',
+          onclick: () => openAnonymizeModal(() => { close(); onDone && onDone(); }, trainee),
+        }, '🗑️ محو بيانات هذا المتدرب نهائيًا')) : ''),
+  ]);
+}
+
+/* تأكيد محو بيانات متدرب — يتطلّب كتابة «محو» فلا يقع بنقرة واحدة عرَضًا */
+function openAnonymizeModal(onDone, trainee) {
+  const confirmIn = input({ placeholder: 'اكتب: محو', style: 'text-align:center' });
+  const btn = el('button', { class: 'btn btn--full', type: 'submit', disabled: true, style: 'background:var(--status-danger);color:#fff' }, 'تأكيد المحو النهائي');
+  confirmIn.addEventListener('input', () => { btn.disabled = confirmIn.value.trim() !== 'محو'; });
+  const close = modal(`محو بيانات «${trainee.name}»`, [
+    el('form', {
+      style: 'display:flex;flex-direction:column;gap:14px',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (confirmIn.value.trim() !== 'محو') return;
+        btn.disabled = true; btn.textContent = 'جارٍ المحو…';
+        try {
+          const r = await API.post('/api/users/' + trainee.id + '/anonymize', { confirm: true });
+          toast(`تم محو بيانات المتدرب — حُذفت ${r.deletedImages || 0} صورة، والسجلات المالية محفوظة.`);
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); btn.disabled = false; btn.textContent = 'تأكيد المحو النهائي'; }
+      },
+    },
+      el('div', { style: 'font-size:13px;line-height:1.8;color:var(--app-ink)' },
+        `سيُمحى نهائيًا كل ما يُعرّف «${trainee.name}»: الاسم، الجوال، الميلاد، السكن، `
+        + 'صور الجسد، قراءات InBody، خطط التغذية، الأهداف، التقييمات، والإشعارات. ',
+        el('b', {}, 'تبقى الاشتراكات والدفعات والحصص محفوظةً مرتبطةً بسجلٍ مجهول للمحاسبة. '),
+        el('span', { style: 'color:var(--status-danger)' }, 'لا يمكن التراجع عن هذه العملية.')),
+      field('للتأكيد اكتب كلمة «محو»', confirmIn),
+      btn),
   ]);
 }
 
