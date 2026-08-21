@@ -150,6 +150,16 @@ function field(label, input) {
   return el('div', { class: 'field' }, el('label', { class: 'field__label' }, label), input);
 }
 
+/* عنوان حقلٍ ماليّ تتبدّل عملته: «القيمة (شيكل)» → «القيمة (دينار أردني)»
+   حين يتغيّر الفرع في النموذج. يعيد عنصرًا فيه دالة setCurrency(code).
+   يُستعمل في نماذج الإدخال متعددة الفروع فلا يُطبع «شيكل» على مبلغ دينار. */
+function curLabel(prefix, code) {
+  const cur = el('span', {}, curInfo(code).name);
+  const node = el('span', {}, prefix + ' (', cur, ')');
+  node.setCurrency = (c) => { cur.textContent = curInfo(c).name; };
+  return node;
+}
+
 function input(attrs) { return el('input', { class: 'field__input', ...attrs }); }
 function textarea(attrs = {}) {
   const t = el('textarea', { class: 'field__textarea', ...attrs });

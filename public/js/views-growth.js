@@ -242,6 +242,8 @@ function openExpenseModal(onDone, branches, month, existing) {
   const monthIn = input({ type: 'month', value: existing ? existing.month : month });
   const branchSel = select([['', 'عام (كل الشركة)'], ...branches.map((b) => [b.id, b.name])], { value: existing ? existing.branchId || '' : '' });
   const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
+  const expAmountLabel = curLabel('المبلغ', branchCurrency(Number(branchSel.value) || null));
+  branchSel.addEventListener('change', () => expAmountLabel.setCurrency(branchCurrency(Number(branchSel.value) || null)));
   const noteIn = input({ value: existing ? existing.note : '', placeholder: 'اختياري' });
 
   const close = modal(existing ? 'تعديل مصروف' : 'مصروف شهري جديد', [
@@ -263,7 +265,7 @@ function openExpenseModal(onDone, branches, month, existing) {
     },
       el('div', { class: 'span-2' }, field('البيان *', labelIn)),
       field('التصنيف', categorySel), field('الشهر', monthIn),
-      field('الفرع', branchSel), field(`المبلغ (${curInfo().name}) *`, amountIn),
+      field('الفرع', branchSel), field(expAmountLabel, amountIn),
       el('div', { class: 'span-2' }, field('ملاحظة', noteIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ المصروف'))),
   ]);
@@ -480,9 +482,9 @@ async function viewLoyalty(root) {
     container.append(el('div', { class: 'kpis' },
       kpiTile(t.pointsIssued, 'نقاط ممنوحة', 'star'),
       kpiTile(t.pointsRedeemed, 'نقاط مستبدلة', 'gift', 'blue'),
-      kpiTile(t.pendingRedemptions, 'طلبات استبدال معلقة', 'clock', t.pendingRedemptions ? 'warn' : undefined),
+      kpiTile(t.pendingRedemptions, 'طلبات استبدال معلقة', 'clock', (isAdmin && t.pendingRedemptions) ? 'warn' : undefined),
       kpiTile(t.approvedReferrals, 'إحالات معتمدة', 'users'),
-      kpiTile(t.pendingReferrals, 'إحالات بانتظار الاعتماد', 'alert', t.pendingReferrals ? 'warn' : undefined)));
+      kpiTile(t.pendingReferrals, 'إحالات بانتظار الاعتماد', 'alert', (isAdmin && t.pendingReferrals) ? 'warn' : undefined)));
 
     /* إعداد قيم النقاط — تتحكم بها الإدارة.
        «نتيجة منشورة على السوشال ميديا» حلّت محل نقاط حضور الحصة:
@@ -529,10 +531,12 @@ async function viewLoyalty(root) {
         el('h3', { class: 'card__title' }, 'طلبات استبدال المكافآت'),
         dataTable(['المتدرب', 'المكافأة', 'النقاط', 'التاريخ', 'الحالة', ''],
           data.redemptions.map((r) => [r.traineeName, r.rewardName, String(r.points), r.date, statusTagOf(r.status),
-            r.status === 'pending' && isAdmin
-              ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
-                el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/redemptions/' + r.id, 'approve', 'اعتُمدت المكافأة وخُصمت النقاط.') }, 'اعتماد'),
-                el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/redemptions/' + r.id, 'reject', 'رُفض الطلب.') }, 'رفض'))
+            r.status === 'pending'
+              ? (isAdmin
+                ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+                  el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/redemptions/' + r.id, 'approve', 'اعتُمدت المكافأة وخُصمت النقاط.') }, 'اعتماد'),
+                  el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/redemptions/' + r.id, 'reject', 'رُفض الطلب.') }, 'رفض'))
+                : el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'بانتظار اعتماد الإدارة'))
               : '—'],
           ),
           'لا طلبات استبدال بعد.')),
@@ -542,10 +546,12 @@ async function viewLoyalty(root) {
           data.referrals.map((r) => [r.referrerName, r.traineeName || '—',
             el('code', { style: 'direction:ltr;font-family:var(--font-mono);font-size:12px' }, r.code || '—'),
             r.date, statusTagOf(r.status),
-            r.status === 'pending' && isAdmin
-              ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
-                el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/referrals/' + r.id, 'approve', `اعتُمدت الإحالة — ومُنح المُحيل ${data.pts.referral} نقطة.`) }, 'اعتماد'),
-                el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/referrals/' + r.id, 'reject', 'رُفضت الإحالة.') }, 'رفض'))
+            r.status === 'pending'
+              ? (isAdmin
+                ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+                  el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/referrals/' + r.id, 'approve', `اعتُمدت الإحالة — ومُنح المُحيل ${data.pts.referral} نقطة.`) }, 'اعتماد'),
+                  el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/referrals/' + r.id, 'reject', 'رُفضت الإحالة.') }, 'رفض'))
+                : el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'بانتظار اعتماد الإدارة'))
               : '—'],
           ),
           'لا إحالات بعد.'))));

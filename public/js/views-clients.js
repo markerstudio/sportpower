@@ -165,6 +165,8 @@ function openPackageModal(onDone, branches, existing) {
   const durationIn = input({ type: 'number', min: 1, value: existing ? existing.durationDays || 30 : 30 });
   const perWeekIn = input({ type: 'number', min: 1, max: 7, value: existing ? existing.sessionsPerWeek || '' : 3 });
   const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], { value: existing ? existing.branchId || '' : '' });
+  const pkgPriceLabel = curLabel('السعر', branchCurrency(Number(branchSel.value) || null));
+  branchSel.addEventListener('change', () => pkgPriceLabel.setCurrency(branchCurrency(Number(branchSel.value) || null)));
   const categorySel = select(PACKAGE_CATEGORIES, { value: existing ? existing.category || 'personal' : 'personal' });
   const descIn = textarea({ value: existing ? existing.description : '', placeholder: 'وصف مختصر يظهر للزبون في العقد…' });
   const featuresIn = textarea({ value: existing ? existing.features : '', placeholder: 'ميزة في كل سطر:\nبرنامج تدريبي مخصص\nبرنامج غذائي\nقراءات InBody', style: 'min-height:110px' });
@@ -189,7 +191,7 @@ function openPackageModal(onDone, branches, existing) {
       },
     },
       el('div', { class: 'span-2' }, field('اسم الباقة *', nameIn)),
-      field('عدد الحصص *', sessionsIn), field(`السعر (${curInfo().name}) *`, priceIn),
+      field('عدد الحصص *', sessionsIn), field(pkgPriceLabel, priceIn),
       field('مدة الصلاحية (يوم)', durationIn), field('حصص أسبوعيًا', perWeekIn),
       field('نوع الباقة (يظهر في العقد)', categorySel), field('الفرع', branchSel),
       el('div', { class: 'span-2' }, field('وصف الباقة', descIn)),

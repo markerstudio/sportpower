@@ -354,6 +354,13 @@ async function openOnboardModal(onDone, prefill = {}) {
   { value: prefill.packageId || '' });
   const totalSel = input({ type: 'number', min: 1, value: prefill.totalSessions || 12 });
   const priceIn = input({ type: 'number', min: 0, value: prefill.price !== undefined ? prefill.price : 1200 });
+  // عنوان القيمة والدفعة يتبع عملة الفرع المختار (عمّان بالدينار)
+  const priceLabel = curLabel('القيمة', branchCurrency(Number(branchSel.value) || null));
+  const payLabel = curLabel('المبلغ المدفوع الآن', branchCurrency(Number(branchSel.value) || null));
+  branchSel.addEventListener('change', () => {
+    const c = branchCurrency(Number(branchSel.value) || null);
+    priceLabel.setCurrency(c); payLabel.setCurrency(c);
+  });
   const startIn = input({ type: 'date', value: todayISO() });
   const endDefault = new Date(); endDefault.setMonth(endDefault.getMonth() + 1);
   const endIn = input({ type: 'date', value: prefill.endDate || endDefault.toISOString().slice(0, 10) });
@@ -425,10 +432,10 @@ async function openOnboardModal(onDone, prefill = {}) {
       el('div', { class: 'span-2' }, field('جاء عن طريق مدرب؟ (يُحتسب للمدرب في تقريره)', sourceTrainerSel)),
       section('٢ — الاشتراك والباقة'),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
-      field('عدد الحصص', totalSel), field(`القيمة (${curInfo().name})`, priceIn),
+      field('عدد الحصص', totalSel), field(priceLabel, priceIn),
       field('تاريخ البدء', startIn), field('تاريخ الانتهاء', endIn),
       section('٣ — الدفعة الأولى (اختياري)'),
-      field('المبلغ المدفوع الآن', payIn), field('تاريخ الدفعة', payDateIn),
+      field(payLabel, payIn), field('تاريخ الدفعة', payDateIn),
       el('div', { class: 'span-2' }, field('طريقة الدفع', methodSel)),
       section('٤ — أول حصة (اختياري)'),
       el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px' },
@@ -573,6 +580,10 @@ async function openSubModal(onDone, trainees, preselectId, presetPackage) {
   { value: presetPackage ? presetPackage.id : '' });
   const totalIn = input({ type: 'number', min: 1, value: presetPackage ? presetPackage.sessions : 12 });
   const priceIn = input({ type: 'number', value: presetPackage ? presetPackage.price : 1200, min: 0 });
+  // القيمة تتبع عملة فرع المتدرب المختار
+  const subTraineeBranch = () => { const t = trainees.find((x) => String(x.id) === String(traineeSel.value)); return t ? branchCurrency(t.branchId) : ACTIVE_CURRENCY; };
+  const subPriceLabel = curLabel('القيمة', subTraineeBranch());
+  traineeSel.addEventListener('change', () => subPriceLabel.setCurrency(subTraineeBranch()));
   const startIn = input({ type: 'date', value: todayISO() });
   const end = new Date();
   end.setDate(end.getDate() + (presetPackage ? presetPackage.durationDays || 30 : 30));
@@ -610,7 +621,7 @@ async function openSubModal(onDone, trainees, preselectId, presetPackage) {
       el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
       el('div', { class: 'span-2' }, field('الباقة', pkgSel)),
       field('عدد الحصص', totalIn),
-      field(`القيمة (${curInfo().name})`, priceIn),
+      field(subPriceLabel, priceIn),
       field('تاريخ البدء', startIn),
       field('تاريخ الانتهاء', endIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تفعيل الاشتراك'))),

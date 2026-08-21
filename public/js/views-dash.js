@@ -764,7 +764,7 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       const d = await API.get('/api/debts');
       debtSubs = d.rows.map((r) => ({
         id: r.subscriptionId, traineeName: `${r.traineeName}${r.old ? ' (اشتراك سابق)' : ''}`,
-        price: r.price, remaining: r.remaining, status: r.status,
+        price: r.price, remaining: r.remaining, status: r.status, branchId: r.branchId,
         startDate: r.startDate, endDate: r.endDate,
       }));
     } catch (e) { /* نبقى على ما تعرفه الصفحة */ }
@@ -803,15 +803,23 @@ async function openPaymentModal(onDone, subscriptions, existing) {
         // سداد دين: املأ المبلغ بالمتبقي تلقائيًا عند اختيار الاشتراك
         if (row && typeSel.value === 'debt' && !amountIn.value) amountIn.value = row.remaining;
         drawSubInfo();
+        if (typeof updateAmountCur === 'function') updateAmountCur();
       });
     }
     subField.innerHTML = '';
     subField.append(field(typeSel.value === 'debt' ? 'الاشتراك الذي عليه دين'
       : typeSel.value === 'previous' ? 'الاشتراك السابق' : 'الاشتراك', subSel));
     drawSubInfo();
+    if (typeof updateAmountCur === 'function') updateAmountCur();
   };
 
   const amountIn = input({ type: 'number', min: 1, value: existing ? existing.amount : '' });
+  // عنوان المبلغ يتبع عملة فرع الاشتراك المختار (دفعة عمّان بالدينار)
+  const amountLabel = curLabel('المبلغ', existing ? branchCurrency(existing.branchId) : ACTIVE_CURRENCY);
+  const updateAmountCur = () => {
+    const row = poolOf().find((s) => subSel && String(s.id) === String(subSel.value));
+    amountLabel.setCurrency(row && row.branchId != null ? branchCurrency(row.branchId) : ACTIVE_CURRENCY);
+  };
   const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   typeSel.addEventListener('change', buildSubSel);
   buildSubSel();
@@ -849,7 +857,7 @@ async function openPaymentModal(onDone, subscriptions, existing) {
       el('div', { class: 'span-2' }, field('نوع الدفعة', typeSel)),
       subField,
       subInfo,
-      field(`المبلغ (${curInfo().name})`, amountIn),
+      field(amountLabel, amountIn),
       field('تاريخ الدفع', dateIn),
       field('طريقة الدفع', methodSel),
       field('ملاحظة', noteIn),
@@ -1583,7 +1591,7 @@ function openEditSubscriptionModal(onDone, sub, traineeName) {
       },
     },
       field(`عدد الحصص (المستخدم: ${sub.usedSessions})`, totalIn),
-      field(`القيمة (${curInfo().name})`, priceIn),
+      field(`القيمة (${curInfo(branchCurrency(sub.branchId)).name})`, priceIn),
       field('تاريخ البدء', startIn),
       field('تاريخ الانتهاء', endIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
