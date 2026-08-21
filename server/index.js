@@ -350,6 +350,12 @@ async function rateLimited(key, max, windowMs) {
 const clearRateLimit = (key) => Store.deleteWhere('rateLimits', { key });
 
 const CURRENCIES = ['ILS', 'JOD', 'USD'];
+/* دقّة كل عملة: الدينار الأردني ٣ خانات (فلس)، الشيكل والدولار خانتان.
+   التقريب الداخلي يجري على ٣ خانات (مجموعةٌ فوقيّة تحفظ الفلس ولا تضرّ
+   الشيكل)، والتقريب النهائي لكل عملة يجري بدقّتها في sumByCurrency. */
+const CURRENCY_DECIMALS = { ILS: 2, JOD: 3, USD: 2 };
+const roundMoney = (v, code) => { const f = 10 ** (CURRENCY_DECIMALS[code] || 2); return Math.round((Number(v) || 0) * f) / f; };
+const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000;
 
 async function getSettings() {
   const rows = await Store.all('settings');
@@ -383,7 +389,7 @@ function sumByCurrency(rows, cur, amountOf = (r) => r.amount, branchOf = (r) => 
   const out = {};
   for (const r of rows) {
     const c = cur.of(branchOf(r));
-    out[c] = Math.round(((out[c] || 0) + Number(amountOf(r) || 0)) * 100) / 100;
+    out[c] = roundMoney((out[c] || 0) + Number(amountOf(r) || 0), c);
   }
   return out;
 }
@@ -782,11 +788,11 @@ const numOrNull = (v) => (v === undefined || v === null || v === '' ? null : Num
    الديون — فثلاثة أرقام لنفس السؤال. الحساب هنا لكل اشتراك على حدة،
    بلا اشتراكات ملغاة، ولا يقلّ عن صفر.
    ------------------------------------------------------------ */
-const outstandingOf = (sub, paid) => Math.max(0, Math.round((sub.price - (paid || 0)) * 100) / 100);
+const outstandingOf = (sub, paid) => Math.max(0, round3(sub.price - (paid || 0)));
 const countsTowardDebt = (sub) => sub.status !== 'cancelled';
 function outstandingTotal(subs, paidBySub) {
-  return Math.round(subs.filter(countsTowardDebt)
-    .reduce((t, s) => t + outstandingOf(s, paidBySub[s.id]), 0) * 100) / 100;
+  return round3(subs.filter(countsTowardDebt)
+    .reduce((t, s) => t + outstandingOf(s, paidBySub[s.id]), 0));
 }
 
 const DUP_WINDOW_MS = 2 * 60 * 1000;
@@ -1167,7 +1173,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
     if (obPay !== null) {
       pay = await tx.insert('payments', {
         subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId,
-        amount: Math.round(obPay * 100) / 100, date: payment.date || todayStr(),
+        amount: round3(obPay), date: payment.date || todayStr(),
         method: payment.method || 'كاش', note: 'دفعة الاشتراك عند التسجيل', createdBy: req.user.id,
         createdAt: new Date().toISOString(),
       });
@@ -1664,7 +1670,7 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
   if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
   const amt = posMoney(amount);
   if (amt === null || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان (رقم موجب).' });
-  const value = Math.round(amt * 100) / 100;
+  const value = round3(amt);
   const payMethod = method || 'كاش';
 
   /* دفعة مكررة: نفس الاشتراك والمبلغ والتاريخ والطريقة خلال دقيقتين =
@@ -1682,7 +1688,7 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
   const payment = await Store.transaction(async (tx) => {
     const locked = await tx.getForUpdate('subscriptions', sub.id);
     const paidBefore = await tx.sum('payments', 'amount', { subscriptionId: locked.id });
-    const left = Math.round((locked.price - paidBefore) * 100) / 100;
+    const left = round3(locked.price - paidBefore);
     if (value > left + 0.001) {
       throw Object.assign(new Error(left > 0
         ? `المتبقي على هذا الاشتراك ${left} فقط — لا تُسجَّل دفعة أكبر منه. `
@@ -1817,13 +1823,13 @@ app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (
   if (patch.amount !== undefined) {
     const amt = posMoney(patch.amount);
     if (amt === null) return res.status(400).json({ error: 'المبلغ غير صالح (رقم موجب).' });
-    patch.amount = Math.round(amt * 100) / 100;
+    patch.amount = round3(amt);
     // نفس سقف الاشتراك، تحت قفل — تعديل الدفعة لا يكون بابًا خلفيًا للتجاوز
     const updated = await Store.transaction(async (tx) => {
       const sub = await tx.getForUpdate('subscriptions', payment.subscriptionId);
       if (sub) {
         const others = (await tx.sum('payments', 'amount', { subscriptionId: sub.id })) - payment.amount;
-        const left = Math.round((sub.price - others) * 100) / 100;
+        const left = round3(sub.price - others);
         if (patch.amount > left + 0.001) {
           throw Object.assign(new Error(`أقصى مبلغ لهذه الدفعة ${left} (قيمة الاشتراك ناقص بقية دفعاته).`), { status: 400 });
         }
@@ -2346,14 +2352,20 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
   const scope = branchWhere(req);
   const inScope = scopeFilter(req);
   const period = { gte: month + '-01', lte: month + '-31' };
+  // نافذة الرسم البياني: ٧ أشهر تكفي لآخر ٦ التي تعرضها الواجهة
+  const trendStart = (() => {
+    const [y, m] = month.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1 - 6, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  })();
   /* المدفوع لكل اشتراك يُجمَّع في القاعدة بعملية واحدة — كان يُحسب سابقًا
      بحلقة داخل حلقة (كل اشتراك × كل الدفعات). */
-  const [subscriptions, users, paidBySub, monthPayments, byDate, cur] = await Promise.all([
+  const [subscriptions, users, paidBySub, monthPayments, trendPayments, cur] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
     Store.find('payments', { ...scope, date: period }),
-    Store.groupSum('payments', 'amount', 'date', scope),
+    Store.find('payments', { ...scope, date: { gte: trendStart, lte: month + '-31' } }),
     currencyMap(),
   ]);
 
@@ -2372,9 +2384,13 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
       };
     });
 
+  /* الاتجاه الشهري لكل عملة على حدة — لا يُجمع الدينار على الشيكل في عمود
+     واحد. { '2026-08': { ILS: 1200, JOD: 300 } } */
   const byMonth = {};
-  for (const [date, amount] of Object.entries(byDate)) {
-    byMonth[monthOf(date)] = (byMonth[monthOf(date)] || 0) + amount;
+  for (const p of trendPayments) {
+    const mo = monthOf(p.date); const c = cur.of(p.branchId);
+    (byMonth[mo] = byMonth[mo] || {});
+    byMonth[mo][c] = roundMoney((byMonth[mo][c] || 0) + Number(p.amount || 0), c);
   }
 
   res.json({
@@ -2469,7 +2485,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     const paidOf = (sid) => payments.filter((p) => p.subscriptionId === sid).reduce((t, p) => t + p.amount, 0);
     const totalDue = counted.reduce((t, s) => t + s.price, 0);
     const totalPaid = payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0);
-    const remaining = Math.round(counted.reduce((t, s) => t + Math.max(0, s.price - paidOf(s.id)), 0) * 100) / 100;
+    const remaining = round3(counted.reduce((t, s) => t + Math.max(0, s.price - paidOf(s.id)), 0));
     return { totalDue, totalPaid, remaining };
   })() : null;
 
@@ -2721,13 +2737,21 @@ async function buildTraineeRoster({ branch, status }) {
     .map((a) => ({ ...a, branches: Object.entries(a.branches).map(([name, n]) => ({ branch: name, trainees: n })) }))
     .sort((a, b) => b.trainees - a.trainees || a.area.localeCompare(b.area, 'ar'));
 
+  // الإجماليات لكل عملة على حدة — لا يُجمع دينار عمّان على شيكل الضفة
+  const cur = await currencyMap();
+  const paidByCur = {}, dueByCur = {};
+  for (const r of rows) {
+    const c = cur.of(r.branchId);
+    paidByCur[c] = roundMoney((paidByCur[c] || 0) + Number(r.paidTotal || 0), c);
+    dueByCur[c] = roundMoney((dueByCur[c] || 0) + Number(r.dueAll || 0), c);
+  }
   return {
     rows, areas,
     totals: {
       trainees: rows.length,
       active: rows.filter((r) => r.subscription && r.subscription.status === 'active').length,
-      paidTotal: Math.round(rows.reduce((s, r) => s + r.paidTotal, 0) * 100) / 100,
-      dueTotal: Math.round(rows.reduce((s, r) => s + r.dueAll, 0) * 100) / 100,
+      paidTotal: paidByCur,
+      dueTotal: dueByCur,
       withResidence: rows.filter((r) => r.residence).length,
     },
   };
@@ -2776,8 +2800,9 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   lines.push('', 'الإجمالي,القيمة');
   lines.push(`عدد المتدربين,${data.totals.trainees}`);
   lines.push(`منهم باشتراك فعّال,${data.totals.active}`);
-  lines.push(`إجمالي المحصّل منهم,${data.totals.paidTotal}`);
-  lines.push(`إجمالي المتبقي عليهم,${data.totals.dueTotal}`);
+  const curTotal = (m) => Object.entries(m || {}).map(([c, v]) => `${v} ${c}`).join(' / ') || '0';
+  lines.push(`إجمالي المحصّل منهم,${curTotal(data.totals.paidTotal)}`);
+  lines.push(`إجمالي المتبقي عليهم,${curTotal(data.totals.dueTotal)}`);
 
   lines.push('', 'المنطقة (مكان السكن),عدد المتدربين,منهم فعّالون,التوزّع على الفروع');
   data.areas.forEach((a) => lines.push(

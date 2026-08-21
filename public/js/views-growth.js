@@ -158,7 +158,7 @@ function renderGrowthReport(container, g) {
     el('div', { class: 'kpis' },
       kpiTile((k.netGrowth > 0 ? '+' : '') + k.netGrowth, 'النمو الصافي Net Growth', 'chart', k.netGrowth >= 0 ? undefined : 'danger'),
       kpiTile(k.avgDurationMonths !== null ? k.avgDurationMonths + ' شهر' : '—', 'متوسط بقاء العميل', 'clock'),
-      kpiTile(k.ltv !== null ? fmtMoney(k.ltv) : '—', 'متوسط قيمة العميل LTV', 'wallet', 'blue'))));
+      kpiTile(k.ltv && Object.keys(k.ltv).length ? fmtMoneyMap(k.ltv) : '—', 'متوسط قيمة العميل LTV', 'wallet', 'blue'))));
 
   // أسباب الإلغاء + المالية (المصاريف وصافي الربح)
   const churnRows = Object.entries(g.churnReasons).sort((a, b) => b[1] - a[1]);
@@ -171,9 +171,9 @@ function renderGrowthReport(container, g) {
     el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'الأرباح وصافي الربح'),
       el('div', { class: 'kpis', style: 'grid-template-columns:1fr 1fr 1fr;margin-bottom:12px' },
-        kpiTile(fmtMoney(g.finance.revenue), 'التحصيل', 'wallet'),
-        kpiTile(fmtMoney(g.finance.expensesTotal), 'المصاريف', 'card', 'warn'),
-        kpiTile(fmtMoney(g.finance.netProfit), 'صافي الربح', 'chart', g.finance.netProfit >= 0 ? 'blue' : 'danger')),
+        kpiTile(fmtMoneyMap(g.finance.revenue), 'التحصيل', 'wallet'),
+        kpiTile(fmtMoneyMap(g.finance.expensesTotal), 'المصاريف', 'card', 'warn'),
+        kpiTile(fmtMoneyMap(g.finance.netProfit), 'صافي الربح', 'chart', Object.values(g.finance.netProfit || {}).every((v) => Number(v) >= 0) ? 'blue' : 'danger')),
       dataTable(['المصروف', 'التصنيف', 'المبلغ'],
         g.finance.expenses.map((e) => [e.label, e.category, fmtMoney(e.amount)]),
         'لا مصاريف مسجلة لهذا الشهر.'))));

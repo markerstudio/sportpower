@@ -701,17 +701,25 @@ async function viewAccountantDash(root) {
     container.append(expensesCard(expenses, branches, state.month, render));
 
     const months = Object.keys(data.byMonth).sort().slice(-6);
+    /* الاتجاه الشهري لكل عملة على حدة — رسمٌ منفصل لكل عملة، فلا يُجمع
+       الدينار على الشيكل في عمود واحد. */
+    const trendCurs = [...new Set(months.flatMap((m) => Object.keys(data.byMonth[m] || {})))];
+    const trendBody = !months.length
+      ? el('div', { class: 'empty' }, 'لا بيانات.')
+      : el('div', {}, ...(trendCurs.length ? trendCurs : ['ILS']).map((code) => el('div', { style: 'margin-bottom:8px' },
+          trendCurs.length > 1 ? el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:2px' }, curInfo(code).name) : '',
+          barChart(months.map((m) => m.slice(2)), months.map((m) => (data.byMonth[m] || {})[code] || 0), { unit: curInfo(code).symbol }))));
     container.append(el('div', { class: 'grid-2' },
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, 'التحصيل الشهري (آخر 6 أشهر)'),
-        months.length ? barChart(months.map((m) => m.slice(2)), months.map((m) => data.byMonth[m])) : el('div', { class: 'empty' }, 'لا بيانات.')),
+        trendBody),
       el('div', { class: 'card' },
         el('h3', { class: 'card__title' }, `دفعات شهر ${data.month}`),
         pagedTable(['المتدرب', 'المبلغ', 'التاريخ', 'الطريقة', ''],
           data.payments,
           (p) => {
             const sub = data.subscriptions.find((s) => s.id === p.subscriptionId) || {};
-            return [sub.traineeName || '—', fmtMoney(p.amount), p.date,
+            return [sub.traineeName || '—', fmtMoney(p.amount, p.branchId), p.date,
               p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(render, data.subscriptions, p) }, 'تعديل')];
           },
@@ -723,14 +731,14 @@ async function viewAccountantDash(root) {
       pagedTable(['المتدرب', 'قيمة الاشتراك', 'المدفوع', 'المتبقي', 'تاريخ البدء', 'تاريخ الانتهاء', 'الحالة'],
         data.subscriptions,
         (s) => [el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, s.traineeName),
-          fmtMoney(s.price, s.currency), fmtMoney(s.paid, s.currency),
+          fmtMoney(s.price, s.branchId), fmtMoney(s.paid, s.branchId),
           /* الاشتراك الملغى لا يُطالَب به — يظهر متبقيه رماديًا وخارج
              مجموع الديون، وإلا بدا دَينًا يُلاحَق وهو ليس كذلك */
           el('span', {
             style: s.cancelled ? 'color:var(--app-muted);text-decoration:line-through'
               : s.remaining > 0 ? 'color:var(--status-danger);font-weight:700' : '',
             title: s.cancelled ? 'اشتراك ملغى — لا يدخل في إجمالي الديون' : null,
-          }, fmtMoney(s.remaining, s.currency)),
+          }, fmtMoney(s.remaining, s.branchId)),
           s.startDate, s.endDate, statusTag(s.status)],
         { pageSize: 15, searchText: (s) => s.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
   }
@@ -1102,7 +1110,7 @@ async function viewTraineePage(root, traineeId) {
     historyGrid.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'سجل الدفعات'),
       dataTable(['التاريخ', 'المبلغ', 'الطريقة', 'ملاحظة', ...(isMoneyStaff ? [''] : [])],
-        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount),
+        data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount, p.branchId),
           p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
           p.note || '—',
           ...(isMoneyStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
@@ -1110,7 +1118,7 @@ async function viewTraineePage(root, traineeId) {
             el('button', {
               class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
               onclick: async () => {
-                if (!confirm(`حذف دفعة ${fmtMoney(p.amount)} بتاريخ ${p.date}؟`)) return;
+                if (!confirm(`حذف دفعة ${fmtMoney(p.amount, p.branchId)} بتاريخ ${p.date}؟`)) return;
                 try { await API.del('/api/payments/' + p.id); toast('حُذفت الدفعة وتحدّثت الأرقام.'); refreshPage(); }
                 catch (ex) { toast(ex.message, true); }
               },
