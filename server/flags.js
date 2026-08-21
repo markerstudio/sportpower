@@ -118,6 +118,8 @@ module.exports = function registerFlags(app, { auth, requireRole, h, notify,
   app.put('/api/trainee-flags/:id', auth, requireRole(...STAFF), h(async (req, res) => {
     const flag = await Store.get('traineeFlags', req.params.id);
     if (!flag) return res.status(404).json({ error: 'السجل غير موجود.' });
+    // المحاسب مقيّد بفرعه — لا يعدّل رصد متدرب فرعٍ خارج نطاقه (كالإنشاء)
+    if (!branchAllowed(req.user, flag.branchId)) return denyOutOfScope(res);
     const patch = {};
     if (req.body.title !== undefined) patch.title = clean(req.body.title, 160);
     if (req.body.note !== undefined) patch.note = clean(req.body.note, 600);

@@ -204,9 +204,11 @@ app.use('/uploads', h(async (req, res, next) => {
     const want = await uploadSig(name, exp);
     if (sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return next();
   }
-  // بديل للاستهلاك البرمجي: جلسة صالحة بترويسة Authorization
+  // بديل للاستهلاك البرمجي: جلسة موظّف صالحة بترويسة Authorization.
+  // المتدرّب يصل صوره دائمًا برابط موقّع — فلا يُمنَح هذا البديل كي لا يسحب
+  // صور غيره بالاسم؛ والموظّفون يحتاجونه للعرض البرمجي.
   const { user } = await resolveSession(req);
-  if (user && !user.mustChangePassword) return next();
+  if (user && !user.mustChangePassword && user.role !== 'trainee') return next();
   return res.status(403).json({ error: 'رابط المرفق غير صالح أو انتهت صلاحيته.' });
 }), h(async (req, res, next) => {
   // من التخزين الدائم (Supabase) حين يُضبط
@@ -329,6 +331,12 @@ async function rateLimited(key, max, windowMs) {
   const now = Date.now();
   const rec = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
   if (!rec) {
+    /* كنس الصفوف المنتهية عند إنشاء مفتاح جديد — كي لا ينمو الجدول بلا حدّ
+       تحت وابل محاولات فاشلة لا يُنشئ جلسةً تكنسه (الكنس الآخر عند الدخول
+       الناجح فقط). احتمالٌ خفيف يكفي لتقليمه دون DELETE على كل إدراج. */
+    if (Math.random() < 0.08) {
+      try { await Store.deleteWhere('rateLimits', { resetAt: { lt: now } }); } catch (e) { /* غير حرِج */ }
+    }
     // سباق بين نسختين على المفتاح نفسه: المفتاح فريد فيفشل الإدراج الثاني —
     // نعيد القراءة ونزيد بدل أن نسقط الطلب
     try {
@@ -360,6 +368,18 @@ async function rateLimited(key, max, windowMs) {
 }
 
 const clearRateLimit = (key) => Store.deleteWhere('rateLimits', { key });
+
+/* عنوان العميل الحقيقي خلف وكيل Vercel: x-forwarded-for يكتبه العميل فيمكن
+   انتحاله لتفادي حدود المعدّل (تخمين كلمات المرور، العقد العام). نُفضّل
+   x-real-ip الذي يضبطه وكيل Vercel، ثم آخر عنوان في XFF (يضيفه الوكيل الموثوق
+   لا العميل)، ثم req.ip. */
+function clientIp(req) {
+  const real = String(req.headers['x-real-ip'] || '').trim();
+  if (real) return real;
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (xff.length) return xff[xff.length - 1];
+  return req.ip || 'unknown';
+}
 
 const CURRENCIES = ['ILS', 'JOD', 'USD'];
 /* دقّة كل عملة: الدينار الأردني ٣ خانات (فلس)، الشيكل والدولار خانتان.
@@ -504,13 +524,14 @@ function verifyTotp(secret, code, lastSlot) {
   return null;
 }
 
-/* إلزامي على الإنتاج (Postgres)؛ وضع العرض المحلي بلا احتكاك.
-   حساب مُعفى (بقرار الإدارة) يدخل بكلمة المرور فقط.
-   MFA_FORCE=1 يفعّله محليًا للاختبار، وMFA_DISABLE=1 للطوارئ فقط. */
+/* إلزامي على الإنتاج (Postgres) وعلى أي نشرٍ على Vercel — حتى لو أُقلع
+   بالخطأ على تخزين ملفّي، فلا يسقط التحقق الثنائي بصمت عند سوء الضبط.
+   حساب مُعفى (بقرار الإدارة) يدخل بكلمة المرور فقط. وضع العرض المحلي بلا
+   احتكاك. MFA_FORCE=1 يفعّله محليًا للاختبار، وMFA_DISABLE=1 للطوارئ فقط. */
 const mfaRequiredFor = (user) => MFA_ROLES.includes(user.role)
   && user.mfaExempt !== true
   && process.env.MFA_DISABLE !== '1'
-  && (Store.IS_PG || process.env.MFA_FORCE === '1');
+  && (Store.IS_PG || !!process.env.VERCEL || process.env.MFA_FORCE === '1');
 
 async function issueSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -523,7 +544,7 @@ async function issueSession(user) {
 }
 
 app.post('/api/login', h(async (req, res) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+  const ip = clientIp(req);
   const { username, password } = req.body || {};
   const uname = String(username || '').trim().toLowerCase();
   if (await rateLimited('ip:' + ip, 30, 15 * 60 * 1000) || await rateLimited('user:' + uname, 8, 15 * 60 * 1000)) {
@@ -889,7 +910,9 @@ async function saveImage(imageBase64, prefix) {
   try { buf = Buffer.from(m[2], 'base64'); } catch (e) { return null; }
   if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
   if (!IMAGE_MAGIC[ext] || !IMAGE_MAGIC[ext](buf)) return null;
-  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  /* 16 بايت عشوائية (128 بت): البادئة والوقت متوقّعان، فالجزء العشوائي وحده
+     يمنع تخمين أسماء صور الجسد/InBody وسحبها عبر جلسة صالحة. */
+  const name = `${prefix}-${Date.now()}-${crypto.randomBytes(16).toString('hex')}.${ext}`;
   // تخزين دائم على Supabase حين يُضبط؛ وإلا القرص المحلي (تطوير/عرض)
   if (storage.configured()) { await storage.put(name, buf, storage.contentTypeOf(name)); return name; }
   fs.writeFileSync(path.join(UPLOADS, name), buf);
@@ -1472,7 +1495,8 @@ app.get('/api/sessions', auth, h(async (req, res) => {
   if (req.query.trainer && ['admin', 'accountant'].includes(req.user.role)) where.trainerId = Number(req.query.trainer);
   if (req.query.trainer && req.user.role === 'trainer' && req.query.all) where.trainerId = Number(req.query.trainer);
   Object.assign(where, branchWhere(req));
-  if (req.query.trainee) where.traineeId = Number(req.query.trainee);
+  // المتدرّب مقيّد بسجلّه فقط — لا يتجاوزه ?trainee في الرابط
+  if (req.query.trainee && req.user.role !== 'trainee') where.traineeId = Number(req.query.trainee);
   if (req.query.search && !where.traineeId) where.traineeId = { in: await traineeIdsMatching(req.query.search) };
   const opts = pageOpts(req, req.query.limit ? { order: [['date', 'desc'], ['time', 'desc']] } : {});
   const [found, total] = await Promise.all([
@@ -1998,6 +2022,8 @@ app.post('/api/appointments', auth, requireRole('admin', 'accountant', 'trainer'
 app.put('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
   const appt = await Store.get('appointments', req.params.id);
   if (!appt) return res.status(404).json({ error: 'الموعد غير موجود.' });
+  // المحاسب مقيّد بفرعه — لا يعدّل موعد فرعٍ خارج نطاقه
+  if (!branchAllowed(req.user, appt.branchId)) return denyOutOfScope(res);
   if (req.user.role === 'trainer' && appt.trainerId !== req.user.id) {
     return res.status(403).json({ error: 'لا يمكنك تعديل مواعيد مدرب آخر.' });
   }
@@ -2034,6 +2060,8 @@ app.put('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'train
 app.delete('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
   const appt = await Store.get('appointments', req.params.id);
   if (!appt) return res.status(404).json({ error: 'الموعد غير موجود.' });
+  // المحاسب مقيّد بفرعه — لا يحذف موعد فرعٍ خارج نطاقه
+  if (!branchAllowed(req.user, appt.branchId)) return denyOutOfScope(res);
   if (req.user.role === 'trainer' && appt.trainerId !== req.user.id) {
     return res.status(403).json({ error: 'لا يمكنك حذف مواعيد مدرب آخر.' });
   }
@@ -2229,6 +2257,10 @@ app.post('/api/inbody/ocr', auth, requireRole('admin', 'trainer'), h(async (req,
   catch (e) { return res.json({ ocr: false, reason: 'محرك OCR غير مثبت — يرجى الإدخال اليدوي.' }); }
   try {
     const buf = Buffer.from(imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    /* حدّ الحجم قبل تشغيل المحرك — صورة ضخمة تُبقي المعالج مشغولًا دقيقة كاملة. */
+    if (!buf.length || buf.length > MAX_IMAGE_BYTES) {
+      return res.status(413).json({ ocr: false, reason: 'الصورة كبيرة جدًا — يرجى الإدخال اليدوي.' });
+    }
     /* ورقة InBody فيها أرقام عربية أحيانًا وعناوين إنجليزية دائمًا —
        نجرّب العربية+الإنجليزية ونرجع للإنجليزية وحدها إن لم تتوفر اللغة. */
     const recognize = (langs) => Tesseract.recognize(buf, langs);
@@ -2908,14 +2940,17 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   const month = req.query.month || thisMonthStr();
   const branch = scopedBranchIds(req);
   const r = await buildMonthlyReport(month, branch);
+  // أسماء المدربين/الفروع/المصاريف يُدخلها المستخدم — تُمرَّر عبر csvCell كي
+  // لا تُفسَّر كصيغ في Excel (حقن CSV) ولا تكسر الأعمدة بفاصلة داخل النص.
+  const cell = csvCell;
   const lines = [];
   lines.push(`تقرير شهر ${month}`);
   lines.push('');
   lines.push('المدرب,الفرع,عدد الحصص,عدد الأشخاص,متدربون فريدون,ساعات التدريب,ساعات مكتبية,ستوري,ريلز,نتائج,مشاكل,زبائن عن طريقه (الشهر),زبائن عن طريقه (الكل),إنجاز المهام %');
-  r.trainers.forEach((t) => lines.push(`${t.trainer},${t.branch},${t.sessions},${t.persons},${t.uniqueTrainees},${t.hours},${t.officeHours},${t.stories},${t.reels},${t.results},${t.problems},${t.referredMonth},${t.referredTotal},${t.tasksPct ?? '-'}`));
+  r.trainers.forEach((t) => lines.push(`${cell(t.trainer)},${cell(t.branch)},${t.sessions},${t.persons},${t.uniqueTrainees},${t.hours},${t.officeHours},${t.stories},${t.reels},${t.results},${t.problems},${t.referredMonth},${t.referredTotal},${t.tasksPct ?? '-'}`));
   lines.push('');
   lines.push(`الفرع,عدد الحصص,ساعات التدريب,متدربون فعالون,التحصيل,الغيابات,نسبة الحضور %,حصص ${r.prevMonth},تحصيل ${r.prevMonth}`);
-  r.branches.forEach((b) => lines.push(`${b.branch},${b.sessions},${b.hours},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevSessions},${b.prevCollected}`));
+  r.branches.forEach((b) => lines.push(`${cell(b.branch)},${b.sessions},${b.hours},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevSessions},${b.prevCollected}`));
 
   // Branch Health Score — صحة كل فرع من 100
   try {
@@ -2923,8 +2958,8 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
     lines.push('');
     lines.push('الفرع,Branch Health Score,التصنيف');
     hs.branches.filter((b) => inBranchScope(branch, b.branchId))
-      .forEach((b) => lines.push(`${b.branch},${b.score ?? '-'},${b.label}`));
-    if (!branch && hs.company.score !== null) lines.push(`الشركة كاملة,${hs.company.score},${hs.company.label}`);
+      .forEach((b) => lines.push(`${cell(b.branch)},${b.score ?? '-'},${cell(b.label)}`));
+    if (!branch && hs.company.score !== null) lines.push(`الشركة كاملة,${hs.company.score},${cell(hs.company.label)}`);
   } catch (e) { /* التقرير يكتمل بدونه */ }
 
   // مؤشرات النمو + المالية (المصاريف وصافي الربح)
@@ -2950,7 +2985,7 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   if (g.finance.expenses.length) {
     lines.push('');
     lines.push('المصروف,التصنيف,المبلغ');
-    g.finance.expenses.forEach((e) => lines.push(`${e.label},${e.category},${e.amount}`));
+    g.finance.expenses.forEach((e) => lines.push(`${cell(e.label)},${cell(e.category)},${e.amount}`));
   }
 
   // نتائج المشتركين ومشاكلهم — سرّية عن المتدرب، وجزء من التقرير الشهري
@@ -2962,8 +2997,7 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
     if (rows.length) {
       lines.push('');
       lines.push('النوع,المتدرب,الفرع,الرصد,التفصيل,التاريخ,الحالة');
-      // الفاصلة داخل النص تكسر أعمدة CSV — نستبدلها بفاصل عربي
-      const cell = csvCell;
+      // الفاصلة داخل النص تكسر أعمدة CSV — cell (csvCell) يتكفّل بها
       rows.forEach(([kind, x]) => lines.push(
         `${kind},${cell(x.traineeName)},${cell(x.branchName)},${cell(x.title)},${cell(x.note)},${x.date},${x.status === 'closed' ? 'مغلق' : 'مفتوح'}`));
     }
@@ -2981,10 +3015,10 @@ const scope = { branchScope, scopedBranchIds, branchWhere, scopeFilter, branchAl
 require('./ops')(app, { auth, requireRole, h, notify, subStatus, ...scope });
 
 /* وحدة النمو: مصاريف، تقرير نمو، مبيعات، برامج تدريبية، ولاء وإحالات */
-growth(app, { auth, requireRole, h, notify, subStatus, ...scope });
+growth(app, { auth, requireRole, h, notify, subStatus, rateLimited, ...scope });
 
 /* وحدة العملاء: الباقات، العقد الإلكتروني، تقييم الحصص */
-clients(app, { auth, requireRole, h, notify, ...scope });
+clients(app, { auth, requireRole, h, notify, rateLimited, clientIp, ...scope });
 
 /* نتائج المشتركين ومشاكلهم — رصد داخلي سرّي عن المتدرب */
 require('./flags')(app, { auth, requireRole, h, notify, ...scope });
