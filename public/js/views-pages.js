@@ -1183,8 +1183,8 @@ async function viewTraineeRoster(root) {
     container.append(el('div', { class: 'kpis' },
       kpiTile(t.trainees, 'متدرب في التقرير', 'users'),
       kpiTile(t.active, 'باشتراك فعّال', 'check'),
-      kpiTile(fmtMoney(t.paidTotal), 'إجمالي المحصّل منهم', 'wallet'),
-      kpiTile(fmtMoney(t.dueTotal), 'إجمالي المتبقي عليهم', 'card', t.dueTotal > 0 ? 'warn' : undefined),
+      kpiTile(fmtMoneyMap(t.paidTotal), 'إجمالي المحصّل منهم', 'wallet'),
+      kpiTile(fmtMoneyMap(t.dueTotal), 'إجمالي المتبقي عليهم', 'card', Object.values(t.dueTotal || {}).some((v) => Number(v) > 0) ? 'warn' : undefined),
       kpiTile(`${t.withResidence}/${t.trainees}`, 'مسجّل لهم مكان السكن', 'building',
         t.withResidence < t.trainees ? 'warn' : undefined)));
 

@@ -139,7 +139,7 @@ async function buildGrowthReport(month, branchArg, subStatus) {
   const scope = scopeWhere(branch);
   /* الأهداف السنوية تُحسب شهرًا بشهر، فنحتاج نافذة السنة — لا التاريخ كله.
      أما LTV (إجمالي ما دفعه العميل طوال بقائه) فيُحسب بتجميع في القاعدة. */
-  const [subscriptions, subEvents, users, expenses, targets, branches, payments, lifetimePaid, payerCount] = await Promise.all([
+  const [subscriptions, subEvents, users, expenses, targets, branches, payments, lifetimeByBranch, allPays] = await Promise.all([
     Store.all('subscriptions'),
     Store.find('subEvents', { date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
     Store.all('users'),
@@ -147,8 +147,8 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     Store.all('targets'),
     Store.all('branches'),
     Store.find('payments', { ...scope, subscriptionId: { isNull: false }, date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
-    Store.sum('payments', 'amount', { ...scope, subscriptionId: { isNull: false } }),
-    Store.countDistinct('payments', 'traineeId', { ...scope, subscriptionId: { isNull: false } }),
+    Store.groupSum('payments', 'amount', 'branchId', { ...scope, subscriptionId: { isNull: false } }),
+    Store.find('payments', { ...scope, subscriptionId: { isNull: false } }, { }),
   ]);
   // مؤشرات الحصص تُحمَّل فقط إن وُجد هدف يعتمدها
   const needSessions = targets.some((t) => ['sessions', 'uniqueTrainees'].includes(t.metric)
@@ -188,6 +188,16 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     if (s.startDate < t.min) t.min = s.startDate;
     if (s.endDate > t.max) t.max = s.endDate;
   });
+  const CURRENCY_DECIMALS = { ILS: 2, JOD: 3, USD: 2 };
+  const roundMoney = (v, code) => { const f = 10 ** (CURRENCY_DECIMALS[code] || 2); return Math.round((Number(v) || 0) * f) / f; };
+  const sysCur = (await Store.all('settings'))[0];
+  const fallbackCur = ['ILS', 'JOD', 'USD'].includes(sysCur && sysCur.currency) ? sysCur.currency : 'ILS';
+  const curOf = (bid) => { const b = branches.find((x) => x.id === bid); return (b && ['ILS','JOD','USD'].includes(b.currency)) ? b.currency : fallbackCur; };
+  const byCur = (rows, amtOf = (r) => r.amount) => {
+    const o = {};
+    for (const r of rows) { const c = curOf(r.branchId); o[c] = roundMoney((o[c] || 0) + Number(amtOf(r) || 0), c); }
+    return o;
+  };
   const today = todayStr();
   const durations = Object.values(spanByTrainee).map(({ min, max }) => {
     const end = max > today ? today : max;
@@ -195,9 +205,17 @@ async function buildGrowthReport(month, branchArg, subStatus) {
   });
   const avgDurationMonths = durations.length ? round1(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
 
-  // متوسط قيمة العميل LTV — مجموع كل ما دُفع ÷ عدد الدافعين (مُجمَّعان في القاعدة)
+  // متوسط قيمة العميل LTV — لكل عملة على حدة (لا يُقسَم دينارٌ على دافعي الشيكل)
   const pays = data.payments;
-  const ltv = payerCount ? Math.round(lifetimePaid / payerCount) : null;
+  const lifePaidByCur = {};
+  for (const [bid, amt] of Object.entries(lifetimeByBranch)) {
+    const c = curOf(Number(bid)); lifePaidByCur[c] = roundMoney((lifePaidByCur[c] || 0) + Number(amt || 0), c);
+  }
+  const payersByCur = {};
+  { const seen = {}; for (const p of allPays) { const c = curOf(p.branchId); (seen[c] = seen[c] || new Set()).add(p.traineeId); }
+    for (const c of Object.keys(seen)) payersByCur[c] = seen[c].size; }
+  const ltv = {};
+  for (const c of Object.keys(lifePaidByCur)) if (payersByCur[c]) ltv[c] = roundMoney(lifePaidByCur[c] / payersByCur[c], c);
 
   // أسباب الإلغاء
   const churnReasons = {};
@@ -206,11 +224,22 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     churnReasons[r] = (churnReasons[r] || 0) + 1;
   });
 
-  // المالية: التحصيل − المصاريف = صافي الربح
+  // المالية: التحصيل − المصاريف = صافي الربح — لكل عملة على حدة
   const monthPays = pays.filter((p) => monthOf(p.date) === month);
-  const revenue = monthPays.reduce((s, p) => s + p.amount, 0);
+  const revenue = byCur(monthPays);
   const monthExpenses = data.expenses.filter((e) => e.month === month && inScopeList(branch, e.branchId));
-  const expensesTotal = monthExpenses.reduce((s, e) => s + e.amount, 0);
+  const expensesTotal = byCur(monthExpenses);
+  const netProfit = {};
+  for (const c of new Set([...Object.keys(revenue), ...Object.keys(expensesTotal)])) {
+    netProfit[c] = roundMoney((revenue[c] || 0) - (expensesTotal[c] || 0), c);
+  }
+  /* هامش الربح كنسبة — للحساب الداخلي (نقاط الصحّة). التقرير المُوجَّه لفرع
+     واحد عملةٌ واحدة فالنسبة معرّفة؛ التقرير المختلط يعيد null (لا نسبة
+     ذات معنى عبر عملتين). */
+  const curKeys = new Set([...Object.keys(revenue), ...Object.keys(expensesTotal)]);
+  const profitMargin = (curKeys.size === 1)
+    ? (() => { const c = [...curKeys][0]; return revenue[c] > 0 && expensesTotal[c] > 0 ? netProfit[c] / revenue[c] : null; })()
+    : null;
 
   // الأهداف: الشهرية (مع الترحيل) + السنوية مقسمة على الأشهر
   const scopedTargets = data.targets.filter((t) => (t.scope === 'company' && !branch)
@@ -249,7 +278,7 @@ async function buildGrowthReport(month, branchArg, subStatus) {
       avgDurationMonths, ltv,
     },
     churnReasons,
-    finance: { revenue, expensesTotal, netProfit: revenue - expensesTotal, expenses: monthExpenses },
+    finance: { revenue, expensesTotal, netProfit, profitMargin, expenses: monthExpenses },
     goals: { monthly: monthlyGoals, annual: annualGoals },
   };
 }
@@ -308,8 +337,8 @@ async function buildHealthScores(month, subStatus) {
 
     /* الربحية: هامش صافي الربح — هامش 50% فأكثر = 100 نقطة.
        بلا مصاريف مسجّلة لا يُحتسب المحور (رقم مضلِّل أسوأ من غيابه). */
-    const profit = g.finance.revenue > 0 && g.finance.expensesTotal > 0
-      ? clamp01((g.finance.netProfit / g.finance.revenue) * 200)
+    const profit = g.finance.profitMargin !== null && g.finance.profitMargin !== undefined
+      ? clamp01(g.finance.profitMargin * 200)
       : null;
 
     /* أداء المدربين: نسبة إنجاز مهام مدربي الفرع لهذا الشهر */
