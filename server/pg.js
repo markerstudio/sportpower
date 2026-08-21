@@ -108,7 +108,8 @@ function buildOrder(collection, order) {
     const lhs = field === 'id' ? '"id"'
       : spec ? `"${spec.column}"`
         : `meta->>'${field.replace(/'/g, "''")}'`;
-    return `${lhs} ${String(dir).toLowerCase() === 'desc' ? 'DESC' : 'ASC'}`;
+    // NULLS LAST يطابق مشغّل الملف (يضع الفارغ آخرًا في الاتجاهين)
+    return `${lhs} ${String(dir).toLowerCase() === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`;
   }).join(', ');
 }
 

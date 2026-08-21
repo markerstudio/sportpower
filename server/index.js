@@ -333,8 +333,17 @@ async function rateLimited(key, max, windowMs) {
     await Store.update('rateLimits', rec.id, { count: 1, resetAt: now + windowMs });
     return false;
   }
-  const count = rec.count + 1;
-  await Store.update('rateLimits', rec.id, { count });
+  /* الزيادة ذرّيًا: القفل يُسلسِل محاولات متزامنة على نفس المفتاح، وإلا
+     قرأ عشرةٌ منها count نفسه وكتبوا count+1، فامتصّت النافذة عشرًا كأنها
+     واحدة — يتجاوز حدّ محاولات الدخول بإطلاقها متوازية. */
+  const count = await Store.transaction(async (tx) => {
+    const r = await tx.getForUpdate('rateLimits', rec.id);
+    if (!r) return 1;
+    if (r.resetAt < now) { await tx.update('rateLimits', r.id, { count: 1, resetAt: now + windowMs }); return 1; }
+    const c = r.count + 1;
+    await tx.update('rateLimits', r.id, { count: c });
+    return c;
+  });
   return count > max;
 }
 
@@ -674,8 +683,15 @@ app.post('/api/me/password', auth, h(async (req, res) => {
    أدوات مشتركة
    ============================================================ */
 const monthOf = (dateStr) => (dateStr || '').slice(0, 7);
-const todayStr = () => new Date().toISOString().slice(0, 10);
-const thisMonthStr = () => todayStr().slice(0, 7);
+/* رقم مالي صالح: منتهٍ (لا NaN/Infinity) وغير سالب. كان الفحص «!amount ||
+   Number(amount)<=0» يمرّر «abc» لأن NaN<=0 = false، فتُدرَج دفعة قيمتها
+   NaN تُفسد كل مجاميع المال على Postgres. */
+const posMoney = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+const nonNegMoney = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; };
+const posInt = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
+
+// التاريخ والوقت بتوقيت النادي (لا UTC) — انظر server/clock.js
+const { todayStr, nowLocalMinute, thisMonthStr } = require('./clock');
 
 function subStatus(sub) {
   if (sub.status === 'frozen') return 'frozen';
@@ -685,7 +701,8 @@ function subStatus(sub) {
   return 'active';
 }
 function subExpiring(sub) {
-  if (subStatus(sub) === 'expired') return false;
+  // المجمّد والملغى لا «يوشكان على الانتهاء» — تنبيهٌ على اشتراك أُوقف عمدًا ضجيج
+  if (subStatus(sub) !== 'active') return false;
   const remaining = sub.totalSessions - sub.usedSessions;
   const soon = new Date();
   soon.setDate(soon.getDate() + 7);
@@ -1081,10 +1098,18 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم المتدرب مطلوب.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'رقم الجوال مطلوب (يُستخدم لاسم المستخدم وواتساب).' });
   if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
-  if (!subscription || !subscription.totalSessions || !subscription.price || !subscription.startDate || !subscription.endDate) {
+  if (!subscription || !subscription.startDate || !subscription.endDate) {
     return res.status(400).json({ error: 'بيانات الاشتراك (الحصص والقيمة والتواريخ) مطلوبة.' });
   }
-  if (payment && Number(payment.amount) > Number(subscription.price)) {
+  const obSessions = posInt(subscription.totalSessions);
+  const obPrice = nonNegMoney(subscription.price);
+  if (obSessions === null) return res.status(400).json({ error: 'عدد الحصص يجب أن يكون رقمًا صحيحًا موجبًا.' });
+  if (obPrice === null) return res.status(400).json({ error: 'قيمة الاشتراك يجب أن تكون رقمًا غير سالب.' });
+  const obPay = payment ? posMoney(payment.amount) : null;
+  if (payment && payment.amount !== undefined && payment.amount !== '' && obPay === null) {
+    return res.status(400).json({ error: 'قيمة الدفعة الأولى غير صالحة.' });
+  }
+  if (obPay !== null && obPay > obPrice + 0.001) {
     return res.status(400).json({ error: 'الدفعة الأولى أكبر من قيمة الاشتراك.' });
   }
   let trainer = null;
@@ -1129,8 +1154,8 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
     });
     const sub = await tx.insert('subscriptions', {
       traineeId: user.id, branchId: user.branchId,
-      totalSessions: Number(subscription.totalSessions), usedSessions: 0,
-      price: Number(subscription.price),
+      totalSessions: obSessions, usedSessions: 0,
+      price: obPrice,
       startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
       createdAt: new Date().toISOString(),
@@ -1139,10 +1164,10 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
     });
     let pay = null;
-    if (payment && Number(payment.amount) > 0) {
+    if (obPay !== null) {
       pay = await tx.insert('payments', {
         subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId,
-        amount: Number(payment.amount), date: payment.date || todayStr(),
+        amount: Math.round(obPay * 100) / 100, date: payment.date || todayStr(),
         method: payment.method || 'كاش', note: 'دفعة الاشتراك عند التسجيل', createdBy: req.user.id,
         createdAt: new Date().toISOString(),
       });
@@ -1164,7 +1189,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
   }
 
   // ولاء المشترك — يُقيَّم أيضًا عند دفعة التسجيل الكاملة
-  if (result.pay) await growth.evaluateLoyalty(result.sub.id).catch(() => null);
+  if (result.pay) await growth.evaluateLoyalty(result.sub.id).catch((e) => { console.error('تقييم الولاء فشل:', e.message); return null; });
 
   // إحالة صديق: كود الإحالة يُنشئ سجل إحالة بانتظار اعتماد الإدارة
   if (req.body.referralCode) {
@@ -1240,10 +1265,15 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
 /* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
 app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const { traineeId, totalSessions, price, startDate, endDate, packageId } = req.body;
+  // أرقام صالحة قبل الإدراج: «1,200» أو نصّ يعطي NaN كان يُخزَّن فيُفسد الدَّين
+  const nSessions = posInt(totalSessions);
+  const nPrice = nonNegMoney(price);
   const trainee = await Store.get('users', Number(traineeId));
   if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
   if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
-  if (!totalSessions || !price || !startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
+  if (!startDate || !endDate) return res.status(400).json({ error: 'كل الحقول مطلوبة.' });
+  if (nSessions === null) return res.status(400).json({ error: 'عدد الحصص يجب أن يكون رقمًا صحيحًا موجبًا.' });
+  if (nPrice === null) return res.status(400).json({ error: 'قيمة الاشتراك يجب أن تكون رقمًا غير سالب.' });
   const pkg = packageId ? await Store.get('packages', Number(packageId)) : null;
   if (startDate > endDate) return res.status(400).json({ error: 'تاريخ البدء بعد تاريخ الانتهاء.' });
   const mine = await Store.find('subscriptions', { traineeId: trainee.id });
@@ -1253,31 +1283,37 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
      للطلب نفسه. كان التجديد يُنشئ اشتراكين بدل واحد فيتضاعف المستحق
      ويتوزّع الرصيد على اثنين. نُعيد الاشتراك الأصلي بدل إنشاء توأمه. */
   const twin = mine
-    .filter((x) => x.totalSessions === Number(totalSessions) && x.price === Number(price)
+    .filter((x) => x.totalSessions === nSessions && x.price === nPrice
       && x.startDate === startDate && x.endDate === endDate && withinDupWindow(x))
     .sort((x, y) => y.id - x.id)[0];
   if (twin) {
     return res.json({ ...twin, duplicate: true, status: subStatus(twin), remaining: twin.totalSessions - twin.usedSessions });
   }
 
-  const sub = await Store.insert('subscriptions', {
-    traineeId: trainee.id, branchId: trainee.branchId,
-    totalSessions: Number(totalSessions), usedSessions: 0, price: Number(price),
-    startDate, endDate, status: 'active',
-    packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
-    createdAt: new Date().toISOString(),
+  /* الاشتراك وحدثه معًا في معاملة واحدة: لو سقط إدراج الحدث بعد الاشتراك
+     لبقيت تقارير التجديد ناقصةً دائمًا (الاشتراك موجود بلا حدث تجديد). */
+  const sub = await Store.transaction(async (tx) => {
+    const created = await tx.insert('subscriptions', {
+      traineeId: trainee.id, branchId: trainee.branchId,
+      totalSessions: nSessions, usedSessions: 0, price: nPrice,
+      startDate, endDate, status: 'active',
+      packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
+      createdAt: new Date().toISOString(),
+    });
+    await tx.insert('subEvents', {
+      subscriptionId: created.id, traineeId: trainee.id, branchId: trainee.branchId,
+      type: prior ? 'renewal' : 'new', date: todayStr(),
+    });
+    return created;
   });
-  // سجل الحدث لِلوحة المتابعة اليومية (جديد أم تجديد)
-  await Store.insert('subEvents', {
-    subscriptionId: sub.id, traineeId: trainee.id, branchId: trainee.branchId,
-    type: prior ? 'renewal' : 'new', date: todayStr(),
-  });
-  await notify(trainee.id, `تم تفعيل اشتراك جديد: ${sub.totalSessions} حصة حتى ${sub.endDate}.`, 'subscription');
-  // نقاط الولاء عند تجديد الاشتراك
-  if (prior) {
-    const pts = await growth.loyaltyPts();
-    await growth.awardPoints(trainee.id, pts.renewal, 'تجديد الاشتراك');
-  }
+  // آثار جانبية أفضل الجهد: فشلها لا يُلغي اشتراكًا نجح ولا يُرجع خطأ للمستخدم
+  try {
+    await notify(trainee.id, `تم تفعيل اشتراك جديد: ${sub.totalSessions} حصة حتى ${sub.endDate}.`, 'subscription');
+    if (prior) {
+      const pts = await growth.loyaltyPts();
+      await growth.awardPoints(trainee.id, pts.renewal, 'تجديد الاشتراك');
+    }
+  } catch (e) { console.error('اشتراك: أثر جانبي فشل (الاشتراك سُجّل):', e.message); }
   res.json(sub);
 }));
 
@@ -1292,6 +1328,19 @@ app.post('/api/subscriptions/:id/action', auth, requireRole('admin', 'accountant
   if (!map[action]) return res.status(400).json({ error: 'الإجراء: freeze أو unfreeze أو cancel.' });
   if (action === 'freeze' && subStatus(sub) !== 'active') return res.status(400).json({ error: 'لا يُجمَّد إلا اشتراك فعّال.' });
   if (action === 'unfreeze' && sub.status !== 'frozen') return res.status(400).json({ error: 'الاشتراك ليس مجمّدًا.' });
+  /* سقف التجميد للفرع كان يُعرَض في KPI ولا يُطبَّق — فيُتجاوز بلا مانع.
+     نحسب المجمَّدين فعليًا في فرع الاشتراك ونمنع الزيادة عن الحد. */
+  if (action === 'freeze' && sub.branchId != null) {
+    const branch = await Store.get('branches', sub.branchId);
+    const limit = branch && Number(branch.freezeLimit) > 0 ? Number(branch.freezeLimit) : null;
+    if (limit !== null) {
+      const branchSubs = await Store.find('subscriptions', { branchId: sub.branchId });
+      const frozenNow = branchSubs.filter((x) => subStatus(x) === 'frozen').length;
+      if (frozenNow >= limit) {
+        return res.status(400).json({ error: `بلغ فرع التجميد حدّه (${limit} مجمَّد). افكك تجميد اشتراك قبل تجميد آخر.` });
+      }
+    }
+  }
 
   const patch = { status: map[action] };
   if (action === 'cancel') patch.cancelReason = reason;
@@ -1613,8 +1662,9 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
   const sub = await Store.get('subscriptions', Number(subscriptionId));
   if (!sub) return res.status(400).json({ error: 'الاشتراك غير موجود.' });
   if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
-  if (!amount || Number(amount) <= 0 || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان.' });
-  const value = Math.round(Number(amount) * 100) / 100;
+  const amt = posMoney(amount);
+  if (amt === null || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان (رقم موجب).' });
+  const value = Math.round(amt * 100) / 100;
   const payMethod = method || 'كاش';
 
   /* دفعة مكررة: نفس الاشتراك والمبلغ والتاريخ والطريقة خلال دقيقتين =
@@ -1625,30 +1675,30 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
     .sort((x, y) => y.id - x.id)[0];
   if (twin) return res.json({ ...twin, duplicate: true, loyaltyPoint: false });
 
-  /* لا تتجاوز الدفعات قيمة الاشتراك: الزيادة كانت تُسجَّل بصمت فتُخفي
-     دَينًا على اشتراك آخر (لوحة الإدارة تطرح إجمالي المدفوع من إجمالي
-     المستحق) وتُظهر «التحصيل» أعلى من الواقع. */
-  const paidBefore = await Store.sum('payments', 'amount', { subscriptionId: sub.id });
-  const left = Math.round((sub.price - paidBefore) * 100) / 100;
-  if (value > left + 0.001) {
-    return res.status(400).json({
-      error: left > 0
+  /* لا تتجاوز الدفعات قيمة الاشتراك، **ذرّيًا**: القفل يُسلسِل دفعتين
+     متزامنتين على نفس الاشتراك (نسختان لحظيتان على Postgres) فلا تمرّان
+     معًا فوق السقف. كان الفحص «اجمع ثم أدرج» بلا قفل، فيقرأ المتزامنان
+     الرصيد نفسه ويتجاوزان القيمة — تحصيلٌ وهميّ يُخفي دَينًا حقيقيًا. */
+  const payment = await Store.transaction(async (tx) => {
+    const locked = await tx.getForUpdate('subscriptions', sub.id);
+    const paidBefore = await tx.sum('payments', 'amount', { subscriptionId: locked.id });
+    const left = Math.round((locked.price - paidBefore) * 100) / 100;
+    if (value > left + 0.001) {
+      throw Object.assign(new Error(left > 0
         ? `المتبقي على هذا الاشتراك ${left} فقط — لا تُسجَّل دفعة أكبر منه. `
           + 'إن كان المبلغ يخص اشتراكًا آخر فاختره من «دفعة على اشتراك سابق» أو «سداد دين».'
-        : 'هذا الاشتراك مسدَّد بالكامل — لا متبقي عليه. اختر الاشتراك الذي عليه الدين.',
-      remaining: Math.max(0, left),
+        : 'هذا الاشتراك مسدَّد بالكامل — لا متبقي عليه. اختر الاشتراك الذي عليه الدين.'),
+      { status: 400 });
+    }
+    return tx.insert('payments', {
+      subscriptionId: locked.id, traineeId: locked.traineeId, branchId: locked.branchId,
+      amount: value, date, method: payMethod, note: note || '', createdBy: req.user.id,
+      debt: !!req.body.debt,
+      createdAt: new Date().toISOString(),
     });
-  }
-
-  const payment = await Store.insert('payments', {
-    subscriptionId: sub.id, traineeId: sub.traineeId, branchId: sub.branchId,
-    amount: value, date, method: payMethod, note: note || '', createdBy: req.user.id,
-    // سداد دين سابق: الدفعة تُنسب لاشتراك قديم غير مسدَّد ولا تمس رصيد الاشتراك الحالي
-    debt: !!req.body.debt,
-    createdAt: new Date().toISOString(),
   });
   // ولاء المشترك: نقطة إن اكتمل السداد دفعةً واحدة على تجديد في وقته
-  const loyalty = await growth.evaluateLoyalty(sub.id).catch(() => null);
+  const loyalty = await growth.evaluateLoyalty(sub.id).catch((e) => { console.error('تقييم الولاء فشل:', e.message); return null; });
   res.json({ ...payment, loyaltyPoint: !!loyalty });
 }));
 
@@ -1765,16 +1815,22 @@ app.put('/api/payments/:id', auth, requireRole('accountant', 'admin'), h(async (
   if (req.body.debt !== undefined) patch.debt = !!req.body.debt;
   // تعديل المبلغ يخضع لنفس سقف الاشتراك — وإلا صار التعديل بابًا خلفيًا للتجاوز
   if (patch.amount !== undefined) {
-    if (!(patch.amount > 0)) return res.status(400).json({ error: 'المبلغ غير صالح.' });
-    patch.amount = Math.round(patch.amount * 100) / 100;
-    const sub = await Store.get('subscriptions', payment.subscriptionId);
-    if (sub) {
-      const others = (await Store.sum('payments', 'amount', { subscriptionId: sub.id })) - payment.amount;
-      const left = Math.round((sub.price - others) * 100) / 100;
-      if (patch.amount > left + 0.001) {
-        return res.status(400).json({ error: `أقصى مبلغ لهذه الدفعة ${left} (قيمة الاشتراك ناقص بقية دفعاته).` });
+    const amt = posMoney(patch.amount);
+    if (amt === null) return res.status(400).json({ error: 'المبلغ غير صالح (رقم موجب).' });
+    patch.amount = Math.round(amt * 100) / 100;
+    // نفس سقف الاشتراك، تحت قفل — تعديل الدفعة لا يكون بابًا خلفيًا للتجاوز
+    const updated = await Store.transaction(async (tx) => {
+      const sub = await tx.getForUpdate('subscriptions', payment.subscriptionId);
+      if (sub) {
+        const others = (await tx.sum('payments', 'amount', { subscriptionId: sub.id })) - payment.amount;
+        const left = Math.round((sub.price - others) * 100) / 100;
+        if (patch.amount > left + 0.001) {
+          throw Object.assign(new Error(`أقصى مبلغ لهذه الدفعة ${left} (قيمة الاشتراك ناقص بقية دفعاته).`), { status: 400 });
+        }
       }
-    }
+      return tx.update('payments', payment.id, patch);
+    });
+    return res.json(updated);
   }
   res.json(await Store.update('payments', payment.id, patch));
 }));
@@ -2405,11 +2461,17 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     || (req.user.role === 'trainee' && req.user.id === id);
   const subIds = subs.map((s) => s.id);
   const myPayments = canSeeMoney ? payments.filter((p) => subIds.includes(p.subscriptionId)) : null;
-  const finance = canSeeMoney ? {
-    totalDue: subs.filter((s) => s.status !== 'cancelled').reduce((t, s) => t + s.price, 0),
-    totalPaid: payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0),
-  } : null;
-  if (finance) finance.remaining = Math.max(0, finance.totalDue - finance.totalPaid);
+  /* المتبقي يُحسب لكل اشتراك على حدة ثم يُجمع — لا بطرح إجمالي المدفوع من
+     إجمالي المستحق. الطرح الإجمالي كان يجعل فائض اشتراك ملغى (دفعاته تبقى)
+     يمحو دَينًا حقيقيًا على اشتراك آخر، فيظهر المشترك شبه مسدَّد وهو مدين. */
+  const finance = canSeeMoney ? (() => {
+    const counted = subs.filter((s) => s.status !== 'cancelled');
+    const paidOf = (sid) => payments.filter((p) => p.subscriptionId === sid).reduce((t, p) => t + p.amount, 0);
+    const totalDue = counted.reduce((t, s) => t + s.price, 0);
+    const totalPaid = payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0);
+    const remaining = Math.round(counted.reduce((t, s) => t + Math.max(0, s.price - paidOf(s.id)), 0) * 100) / 100;
+    return { totalDue, totalPaid, remaining };
+  })() : null;
 
   /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
   const availablePackages = packages

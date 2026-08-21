@@ -12,7 +12,7 @@ const Store = require('./store');
 const ops = require('./ops');
 
 const monthOf = (d) => (d || '').slice(0, 7);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const { todayStr, nowLocalMinute } = require('./clock');
 const thisMonthStr = () => todayStr().slice(0, 7);
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
@@ -175,7 +175,7 @@ async function buildActions({ branch, subStatus, forTrainer }) {
     inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks, traineeGoals };
 
   const TH = readThresholds(data.settings[0]);
-  const nowIso = new Date().toISOString().slice(0, 16);
+  const nowIso = nowLocalMinute(); // بتوقيت النادي
   const inBranch = (x) => inScopeList(branch, x.branchId);
 
   const userById = (id) => data.users.find((u) => u.id === id) || {};
