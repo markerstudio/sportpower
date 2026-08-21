@@ -17,8 +17,9 @@ The audit found **no critical, remotely-exploitable vulnerability** — nothing 
 |---|---|---|---|
 | Critical | 0 | — | — |
 | High | 2 | 2 | 0 |
-| Medium | 7 | 7 | 0 |
-| Low | 5 | 4 | 1 |
+| Medium | 8 | 8 | 0 |
+| Low | 4 | 3 | 1 |
+| **Total** | **14** | **13** | **1** |
 
 **Bottom line:** after this remediation, I am comfortable that the application's access controls and abuse defenses are appropriate for launch with real member health data. The remaining launch conditions are **operational, not code** (Section 6) — chiefly secret management, backups, and legal sign-off on the privacy policy.
 
