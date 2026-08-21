@@ -665,12 +665,23 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
     if (redemption.status !== 'pending') return res.status(400).json({ error: 'الطلب معالج مسبقًا.' });
     const { action } = req.body || {};
     if (action === 'approve') {
-      const balance = await pointsBalance(redemption.traineeId);
-      if (balance < redemption.points) return res.status(400).json({ error: `رصيد المتدرب ${balance} نقطة فقط — لا يكفي.` });
-      await awardPoints(redemption.traineeId, -redemption.points, `استبدال مكافأة: ${redemption.rewardName}`);
-      const updated = await Store.update('redemptions', redemption.id, { status: 'approved', decidedAt: todayStr() });
-      await notify(redemption.traineeId, `🎉 تم اعتماد مكافأتك «${redemption.rewardName}» — راجع الاستقبال لاستلامها.`, 'loyalty');
-      return res.json(updated);
+      /* ذرّيًا: قفل المتدرب يُسلسِل اعتمادين متزامنين (أو نقرة مزدوجة) —
+         كان كلاهما يقرأ الرصيد نفسه ويخصم، فيهبط الرصيد تحت الصفر ويُمنح
+         مكافأتان بنقاط واحدة. نُعيد قراءة الطلب والرصيد داخل القفل. */
+      try {
+        const updated = await Store.transaction(async (tx) => {
+          await tx.getForUpdate('users', redemption.traineeId);
+          const fresh = await tx.get('redemptions', redemption.id);
+          if (!fresh || fresh.status !== 'pending') throw Object.assign(new Error('الطلب معالج مسبقًا.'), { status: 400 });
+          const log = await tx.find('pointsLog', { traineeId: redemption.traineeId });
+          const balance = log.reduce((t, e) => t + e.points, 0);
+          if (balance < fresh.points) throw Object.assign(new Error(`رصيد المتدرب ${balance} نقطة فقط — لا يكفي.`), { status: 400 });
+          await tx.insert('pointsLog', { traineeId: fresh.traineeId, points: -fresh.points, reason: `استبدال مكافأة: ${fresh.rewardName}`, date: todayStr() });
+          return tx.update('redemptions', fresh.id, { status: 'approved', decidedAt: todayStr() });
+        });
+        await notify(redemption.traineeId, `🎉 تم اعتماد مكافأتك «${redemption.rewardName}» — راجع الاستقبال لاستلامها.`, 'loyalty').catch(() => {});
+        return res.json(updated);
+      } catch (e) { return res.status(e.status || 500).json({ error: e.status ? e.message : 'تعذّر الاعتماد.' }); }
     }
     if (action === 'reject') {
       const updated = await Store.update('redemptions', redemption.id, { status: 'rejected', decidedAt: todayStr() });
@@ -696,9 +707,25 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
     if (referral.status !== 'pending') return res.status(400).json({ error: 'الإحالة معالجة مسبقًا.' });
     const { action } = req.body || {};
     if (action === 'approve') {
-      const pts = await loyaltyPts();
-      await awardPoints(referral.referrerId, pts.referral, `إحالة صديق (${referral.traineeName || 'مشترك جديد'})`);
-      return res.json(await Store.update('referrals', referral.id, { status: 'approved', decidedAt: todayStr() }));
+      /* قفل الإحالة يمنع اعتمادين متزامنين من مكافأة المُحيل مرتين */
+      try {
+        const pts = await loyaltyPts();
+        const updated = await Store.transaction(async (tx) => {
+          const fresh = await tx.getForUpdate('referrals', referral.id);
+          if (!fresh || fresh.status !== 'pending') throw Object.assign(new Error('الإحالة معالجة مسبقًا.'), { status: 400 });
+          await tx.insert('pointsLog', { traineeId: fresh.referrerId, points: pts.referral, reason: `إحالة صديق (${fresh.traineeName || 'مشترك جديد'})`, date: todayStr() });
+          return tx.update('referrals', fresh.id, { status: 'approved', decidedAt: todayStr() });
+        });
+        // إشعار المُحيل بنقاطه — أفضل الجهد (كما كان awardPoints يفعل)
+        if (pts.referral > 0) {
+          await Store.insert('notifications', {
+            userId: referral.referrerId,
+            text: `🎁 حصلت على ${pts.referral} نقطة — إحالة صديق. اطّلع على «نقاطي ومكافآتي».`,
+            date: todayStr(), read: false, type: 'loyalty',
+          }).catch(() => {});
+        }
+        return res.json(updated);
+      } catch (e) { return res.status(e.status || 500).json({ error: e.status ? e.message : 'تعذّر الاعتماد.' }); }
     }
     if (action === 'reject') {
       return res.json(await Store.update('referrals', referral.id, { status: 'rejected', decidedAt: todayStr() }));

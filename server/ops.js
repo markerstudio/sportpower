@@ -6,7 +6,7 @@
 const Store = require('./store');
 
 const monthOf = (d) => (d || '').slice(0, 7);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const { todayStr, nowLocalMinute } = require('./clock');
 const thisMonthStr = () => todayStr().slice(0, 7);
 
 /* هل يقع التاريخ ضمن الفترة؟ فترات: YYYY-MM | YYYY-H1 | YYYY-H2 | YYYY */
@@ -494,7 +494,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
        فروع المحاسب المقيَّد فلا يرى يوم فرعٍ ليس له. */
     const myBranches = scopedBranchIds(req);
     const inBranch = (x) => inScopeList(myBranches, x && x.branchId);
-    const nowIso = new Date().toISOString().slice(0, 16).replace('T', 'T');
+    const nowIso = nowLocalMinute(); // بتوقيت النادي — رصد الغياب فورًا لا بعد ساعات
     /* لوحة يوم واحد: كل الجداول الكبيرة تُصفّى بالتاريخ في القاعدة،
        عدا المواعيد فنحتاج نافذة 30 يومًا لرصد الغياب المتكرر. */
     const absenceFrom = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
@@ -738,12 +738,23 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     };
 
     let imported = 0, skipped = 0;
+    const dataRows = rows.slice(headerIdx + 1);
+    // سقف صفوف: ملف ضخم كان يُدرَج صفًا صفًا بلا حدّ فيتوقّف الطلب في منتصفه
+    const MAX_IMPORT = 5000;
+    if (dataRows.length > MAX_IMPORT) {
+      return res.status(400).json({ error: `الملف يحوي ${dataRows.length} صفًا — الحدّ ${MAX_IMPORT}. قسّمه إلى ملفات أصغر.` });
+    }
     const existing = await Store.all('frozen');
-    for (const r of rows.slice(headerIdx + 1)) {
+    // بصمة الموجود + ما أُدرج في هذا الملف نفسه — فلا يتكرر صفّان متطابقان
+    // داخل الملف، ولا تتكرر إعادة رفع ملف نصفُه مُدرَج مسبقًا
+    const seen = new Set(existing.map((f) => `${f.name}\u0000${f.phone || ''}`));
+    for (const r of dataRows) {
       const name = String(cols.name >= 0 ? r[cols.name] : '').trim();
       if (!name || /ملاحظة:/.test(name)) { skipped++; continue; }
       const phone = cols.phone >= 0 ? String(r[cols.phone] || '').trim() : '';
-      if (existing.some((f) => f.name === name && f.phone === phone)) { skipped++; continue; }
+      const key = `${name}\u0000${phone}`;
+      if (seen.has(key)) { skipped++; continue; }
+      seen.add(key);
 
       const branchText = cols.branch >= 0 ? String(r[cols.branch] || '').trim() : '';
       const branch = branches.find((b) => branchText && (b.name.includes(branchText) || branchText.includes(b.name.replace('فرع ', ''))));
