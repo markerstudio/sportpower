@@ -134,6 +134,53 @@ test('uploads: unsigned access is forbidden, signed access works', async () => {
   const file = r.photos[0].image; const signed = r.photos[0].imageUrl;
   assert.equal((await fetch(base + '/uploads/' + file)).status, 403, 'unsigned must be 403');
   assert.equal((await fetch(base + signed)).status, 200, 'signed must be 200');
+  S.uploadFile = file;
+});
+
+test('uploads: the session fallback is for staff only — a trainee cannot pull a file by name', async () => {
+  const auth = (token) => fetch(base + '/uploads/' + S.uploadFile, { headers: { Authorization: 'Bearer ' + token } });
+  assert.equal((await auth(S.admin)).status, 200, 'staff session may read via the programmatic fallback');
+  assert.equal((await auth(S.trainee)).status, 403, 'a trainee session must not read an upload by bare name');
+});
+
+test('isolation: a trainee cannot read another trainee\'s sessions via ?trainee', async () => {
+  // المتدرب مقيّد بسجلّه — لا يتجاوزه بتمرير معرّف متدرب آخر في الرابط
+  const r = await req('GET', '/api/sessions?trainee=11', { token: S.trainee });
+  assert.equal(r.status, 200);
+  const rows = r.json.rows || r.json || [];
+  const leaked = rows.filter((s) => s.traineeId !== 10);
+  assert.equal(leaked.length, 0, 'a trainee must never see another member\'s sessions');
+});
+
+test('CSV export: a formula in an expense label is neutralised in the monthly report', async () => {
+  const month = new Date().toISOString().slice(0, 7);
+  await req('POST', '/api/expenses', { token: S.admin, body: {
+    month, branchId: 1, category: '=cmd|calc', label: '=HYPERLINK("http://evil","x")', amount: 5,
+  } });
+  const res = await fetch(base + '/api/reports/export.csv?month=' + month, { headers: { Authorization: 'Bearer ' + S.admin } });
+  const text = await res.text();
+  const dangerous = text.split('\n').flatMap((l) => l.split(',')).filter((c) => /^[=+@]/.test(c.trim()) && c.trim().length > 3);
+  assert.equal(dangerous.length, 0, 'no report cell may begin with a raw formula character');
+});
+
+test('branch scope: a scoped accountant cannot edit a contract or appointment outside their branch', async () => {
+  // عقد وموعد في الفرع 1
+  const contract = (await req('POST', '/api/contracts', { token: S.admin, body: { branchId: 1, validDays: 30 } })).json;
+  const appt = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: 11, date: '2026-08-25', time: '10:00' } })).json;
+  // نحصر رنا (محاسِبة) في الفرع 2
+  assert.equal((await req('PUT', '/api/users/5', { token: S.admin, body: { branchId: 2 } })).status, 200);
+  const rana = (await login('rana', '123456')).token;
+  try {
+    assert.equal((await req('PUT', '/api/contracts/' + contract.id, { token: rana, body: { note: 'x' } })).status, 403,
+      'accountant scoped to branch 2 must not edit a branch-1 contract');
+    assert.equal((await req('PUT', '/api/appointments/' + appt.id, { token: rana, body: { note: 'x' } })).status, 403,
+      'accountant scoped to branch 2 must not edit a branch-1 appointment');
+    assert.equal((await req('DELETE', '/api/appointments/' + appt.id, { token: rana })).status, 403,
+      'accountant scoped to branch 2 must not delete a branch-1 appointment');
+  } finally {
+    // إعادة رنا لغير محصورة كي لا تتأثر بقية الاختبارات
+    await req('PUT', '/api/users/5', { token: S.admin, body: { branchId: null } });
+  }
 });
 
 test('CSV export: a formula in a name is neutralised', async () => {

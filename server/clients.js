@@ -34,30 +34,9 @@ async function ensureDefaultPackages() {
   }
 }
 
-/* حد محاولات فتح/إرسال العقد العام (بلا مصادقة) — في القاعدة لا في ذاكرة
-   العملية، وإلا فلكل نسخة لحظية عدّادها ولا يصمد الحدّ تحت التوازي. */
-async function publicRateLimited(key, max, windowMs) {
-  const now = Date.now();
-  const rec = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
-  if (!rec) {
-    try {
-      await Store.insert('rateLimits', { key, count: 1, resetAt: now + windowMs });
-      return false;
-    } catch (e) {
-      const again = (await Store.find('rateLimits', { key }, { limit: 1 }))[0];
-      if (!again) throw e;
-      await Store.update('rateLimits', again.id, { count: again.count + 1 });
-      return again.count + 1 > max;
-    }
-  }
-  if (rec.resetAt < now) {
-    await Store.update('rateLimits', rec.id, { count: 1, resetAt: now + windowMs });
-    return false;
-  }
-  const count = rec.count + 1;
-  await Store.update('rateLimits', rec.id, { count });
-  return count > max;
-}
+/* حدّ محاولات فتح/إرسال العقد العام (بلا مصادقة) يستخدم rateLimited الذرّي
+   الممرَّر من الوحدة الرئيسة — عدّادٌ في القاعدة يصمد تحت التوازي، لا نسخة
+   غير ذرّية لكل عملية لحظية. */
 
 const clean = (v, max) => String(v === undefined || v === null ? '' : v).trim().slice(0, max || 200);
 
@@ -72,7 +51,7 @@ const catOf = (p) => (PACKAGE_CATEGORIES.includes(p.category) ? p.category : 'pe
 const withCategory = (p) => ({ ...p, category: catOf(p), categoryLabel: CATEGORY_LABELS[catOf(p)] });
 
 module.exports = function registerClients(app, { auth, requireRole, h, notify,
-  scopedBranchIds, branchAllowed, denyOutOfScope }) {
+  rateLimited, clientIp, scopedBranchIds, branchAllowed, denyOutOfScope }) {
   /* ============================================================
      الباقات (Packages)
      ============================================================ */
@@ -172,6 +151,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
   app.put('/api/contracts/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const contract = await Store.get('contracts', req.params.id);
     if (!contract) return res.status(404).json({ error: 'العقد غير موجود.' });
+    // المحاسب مقيّد بفرعه — لا يعدّل عقد فرعٍ آخر (كالإنشاء تمامًا)
+    if (!branchAllowed(req.user, contract.branchId)) return denyOutOfScope(res);
     const patch = {};
     if (req.body.note !== undefined) patch.note = clean(req.body.note, 300);
     if (req.body.status !== undefined) {
@@ -198,8 +179,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
   const findContract = async (token) => (await Store.all('contracts')).find((c) => c.token === String(token || ''));
 
   app.get('/api/public/contract/:token', h(async (req, res) => {
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
-    if (await publicRateLimited('view:' + ip, 120, 15 * 60 * 1000)) {
+    const ip = clientIp(req);
+    if (await rateLimited('view:' + ip, 120, 15 * 60 * 1000)) {
       return res.status(429).json({ error: 'محاولات كثيرة — انتظر قليلًا ثم حاول مجددًا.' });
     }
     await ensureDefaultPackages();
@@ -232,13 +213,16 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       terms: s.contractTerms || seedData.DEFAULT_CONTRACT_TERMS,
       packages: list, // بكل الأسعار — الزبون يرى كل شيء قبل أن يشترك
       categories,
-      submission: ['submitted', 'converted'].includes(contract.status) ? contract.submission : null,
+      /* نعيد البيانات المُدخَلة عبر الرابط العام أثناء المراجعة فقط. بعد
+         التحويل لمشترك تُقرأ من حساب المشترك والواجهة المصادَقة — فلا يبقى
+         الرابط العام يكشف الملاحظات الصحّية وجوال الطوارئ لكل من يحمله. */
+      submission: contract.status === 'submitted' ? contract.submission : null,
     });
   }));
 
   app.post('/api/public/contract/:token', h(async (req, res) => {
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
-    if (await publicRateLimited('submit:' + ip, 10, 15 * 60 * 1000)) {
+    const ip = clientIp(req);
+    if (await rateLimited('submit:' + ip, 10, 15 * 60 * 1000)) {
       return res.status(429).json({ error: 'محاولات كثيرة — انتظر 15 دقيقة ثم حاول مجددًا.' });
     }
     const contract = await findContract(req.params.token);

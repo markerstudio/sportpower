@@ -410,7 +410,7 @@ function leadsSummary(leads, month) {
 }
 
 module.exports = function registerGrowth(app, { auth, requireRole, h, notify, subStatus,
-  scopedBranchIds, scopeFilter, branchAllowed, denyOutOfScope }) {
+  rateLimited, scopedBranchIds, scopeFilter, branchAllowed, denyOutOfScope }) {
   /* ============================================================
      المصاريف الشهرية (المحاسب/الإدارة)
      ============================================================ */
@@ -675,6 +675,10 @@ module.exports = function registerGrowth(app, { auth, requireRole, h, notify, su
 
   /* ---------- طلبات استبدال النقاط ---------- */
   app.post('/api/redemptions', auth, requireRole('trainee'), h(async (req, res) => {
+    // حدّ لطلبات الاستبدال — كي لا يُغرق متدرب الإدارة بإشعارات وسجلات معلّقة
+    if (await rateLimited('redeem:' + req.user.id, 20, 60 * 60 * 1000)) {
+      return res.status(429).json({ error: 'طلبات كثيرة — انتظر قليلًا ثم حاول مجددًا.' });
+    }
     const reward = await Store.get('rewards', Number(req.body.rewardId));
     if (!reward || reward.active === false) return res.status(400).json({ error: 'المكافأة غير متاحة.' });
     const balance = await pointsBalance(req.user.id);
