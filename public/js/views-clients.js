@@ -699,6 +699,10 @@ async function viewPublicContract(root, token) {
     el('ul', { class: 'public-terms' }, ...(data.terms || '').split('\n').filter(Boolean).map((t) => el('li', {}, t))),
     el('label', { class: 'public-agree' }, agreeIn,
       el('span', {}, 'قرأت شروط الاشتراك وأوافق عليها، والبيانات التي أدخلتها صحيحة.')),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
+      'بياناتك تُعالَج وفق ',
+      el('a', { href: '/privacy.html', target: '_blank', rel: 'noopener', style: 'color:var(--action)' }, 'سياسة الخصوصية'),
+      '.'),
     el('button', {
       class: 'btn btn--accent btn--lg btn--full',
       onclick: async (e) => {
