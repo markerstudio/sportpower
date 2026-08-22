@@ -1375,12 +1375,14 @@ async function viewReports(root) {
   async function render() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [report, branches, kpis, growthReport, health] = await Promise.all([
+    const [report, branches, kpis, growthReport, health, allTargets, allTrainers] = await Promise.all([
       API.get(`/api/reports/monthly?month=${state.month}&branch=${state.branch}`),
       API.get('/api/branches'),
       API.get('/api/kpi?month=' + state.month).catch(() => []),
       API.get(`/api/reports/growth?month=${state.month}&branch=${state.branch}`).catch(() => null),
       API.get('/api/reports/health?month=' + state.month).catch(() => null),
+      API.get('/api/targets').catch(() => []),
+      API.get('/api/users?role=trainer').catch(() => []),
     ]);
     container.innerHTML = '';
 
@@ -1401,6 +1403,44 @@ async function viewReports(root) {
       const scored = health.branches.filter((b) => !state.branch || b.branchId === Number(state.branch));
       container.append(branchHealthCard(health, scored));
     }
+
+    /* 🎯 أهداف الشهر بحركة — القضبان تتقدم والأرقام تصعد لا جداول فقط
+       (بطلب العميل). تشمل كل نطاق: الشركة، الفروع، وكل مدرب بمؤشراته. */
+    const monthNum = Number(state.month.slice(5, 7));
+    const yearStr = state.month.slice(0, 4);
+    const coversMonth = (p) => p === state.month || p === yearStr
+      || (p === yearStr + '-H1' && monthNum <= 6) || (p === yearStr + '-H2' && monthNum >= 7);
+    let goals = (allTargets || []).filter((t) => coversMonth(t.period));
+    if (state.branch) {
+      const bid = Number(state.branch);
+      goals = goals.filter((t) => t.scope === 'company'
+        || (t.scope === 'branch' && t.refId === bid)
+        || (t.scope === 'trainer' && ((allTrainers.find((x) => x.id === t.refId) || {}).branchId === bid)));
+    }
+    const scopeOrder = { company: 0, branch: 1, trainer: 2 };
+    goals.sort((a, b) => (scopeOrder[a.scope] ?? 9) - (scopeOrder[b.scope] ?? 9)
+      || String(a.refName || '').localeCompare(String(b.refName || ''), 'ar')
+      || String(a.metricLabel).localeCompare(String(b.metricLabel), 'ar'));
+    const goalsCard = el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `🎯 أهداف ${state.month} — كم حققنا؟`,
+        API.user.role === 'admin'
+          ? el('a', { class: 'btn btn--outline btn--sm', href: '#/kpi' }, 'ضبط الأهداف ←')
+          : el('span')));
+    if (!goals.length) {
+      goalsCard.append(el('div', { class: 'empty' },
+        'لا أهداف مضبوطة تشمل هذا الشهر. من صفحة KPI والأهداف («+ هدف جديد») يُضبط هدف لأي مؤشر من جدول المدربين — '
+        + 'حصص، ساعات تدريب، ساعات مكتبية، ستوريات، ريلز، نتائج، زبائن عن طريقه… لكل مدرب أو فرع أو للشركة، ويظهر هنا تقدّمه.'));
+    } else {
+      goalsCard.append(el('div', { class: 'goalgrid' },
+        ...goals.map((t, i) => goalMeter({
+          title: `${t.refName || 'الشركة كاملة'} — ${t.metricLabel}`,
+          sub: periodLabel(t.period)
+            + (t.carried > 0 ? ` · مُرحَّل من السابق +${t.metric === 'revenue' ? fmtMoney(t.carried) : t.carried}` : ''),
+          pct: t.pct, actual: t.actual, money: t.metric === 'revenue',
+          targetText: t.metric === 'revenue' ? fmtMoney(t.effective) : String(t.effective),
+        }, i))));
+    }
+    container.append(goalsCard);
 
     const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
     container.append(el('div', { class: 'card' },

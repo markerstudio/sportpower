@@ -83,13 +83,52 @@ const ICONS = {
   tag: '<path d="M3.5 11.2V4.5a1 1 0 0 1 1-1h6.7a1 1 0 0 1 .7.3l8 8a1 1 0 0 1 0 1.4l-6.7 6.7a1 1 0 0 1-1.4 0l-8-8a1 1 0 0 1-.3-.7z"/><circle cx="8" cy="8" r="1.6"/>',
 };
 
-/* شريط تقدم بنِسَب ملونة */
+/* شريط تقدم بنِسَب ملونة — يتقدّم من الصفر لقيمته عند الظهور */
 function progressBar(pct) {
   const p = Math.max(0, Math.min(Number(pct) || 0, 120));
   const tone = p >= 80 ? 'var(--accent)' : p >= 50 ? 'var(--status-warning)' : 'var(--status-danger)';
-  return el('div', { class: 'bar', title: p + '%' },
-    el('span', { class: 'bar__fill', style: `width:${Math.min(p, 100)}%;background:${tone}` }),
-    el('b', {}, p + '%'));
+  const fill = el('span', { class: 'bar__fill', style: `width:0%;background:${tone}` });
+  // بعد الإدراج في الصفحة — كي يعمل الانتقال المعرَّف في CSS
+  requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = Math.min(p, 100) + '%'; }));
+  return el('div', { class: 'bar', title: p + '%' }, fill, el('b', {}, p + '%'));
+}
+
+/* رقم يصعد لقيمته — حركة التقارير */
+function countUp(node, value, { money, suffix = '', duration = 900 } = {}) {
+  const target = Number(value) || 0;
+  const fmt = (v) => (money ? fmtMoney(Math.round(v)) : String(Math.round(v))) + suffix;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { node.textContent = fmt(target); return node; }
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min((now - t0) / duration, 1);
+    node.textContent = fmt(target * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return node;
+}
+
+/* عدّاد هدف متحرك: شريط يتقدم ورقم يصعد — للتقرير الشهري وأمثاله */
+function goalMeter({ title, sub, pct, actual, money, targetText }, i = 0) {
+  const p = pct === null || pct === undefined ? null : Math.max(0, Math.min(Number(pct), 120));
+  const tone = p === null ? 'var(--app-muted)'
+    : p >= 100 ? 'var(--accent)' : p >= 70 ? 'var(--blue-500)' : p >= 40 ? 'var(--status-warning)' : 'var(--status-danger)';
+  const tagTone = p === null ? 'tag--neutral'
+    : p >= 100 ? 'tag--accent' : p >= 70 ? 'tag--info' : p >= 40 ? 'tag--warning' : 'tag--danger';
+  const actualEl = el('b', {}, '0');
+  const pctEl = el('span', { class: 'tag ' + tagTone }, p === null ? '—' : '0%');
+  const fill = el('span', { class: 'goalmeter__fill', style: `background:${tone};transition-delay:${Math.min(i, 10) * 80}ms` });
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    fill.style.width = Math.min(p || 0, 100) + '%';
+    countUp(actualEl, actual || 0, { money });
+    if (p !== null) countUp(pctEl, p, { suffix: '%' });
+  }));
+  return el('div', { class: 'goalmeter' },
+    el('div', { class: 'goalmeter__head' },
+      el('div', {}, el('b', {}, title), sub ? el('div', { class: 'goalmeter__sub' }, sub) : el('span')),
+      pctEl),
+    el('div', { class: 'goalmeter__bar' }, fill),
+    el('div', { class: 'goalmeter__meta' }, 'المحقق ', actualEl, ' من هدف ', el('b', {}, targetText)));
 }
 
 /* رابط واتساب مع تعويض الاسم في القالب */
@@ -314,7 +353,10 @@ function barChart(labels, values, { height = 190, unit = '' } = {}) {
   values.forEach((v, i) => {
     const h = (v / max) * (H - bottom - 26);
     const x = pad + i * bw + bw * 0.18;
-    svg.append(mk('rect', { x, y: H - bottom - h, width: bw * 0.64, height: Math.max(h, 1), rx: 3, class: 'bar' }));
+    // الأعمدة تنمو من القاعدة بتتابع خفيف — حركة التقارير (تُعطَّل مع تفضيل تقليل الحركة)
+    const bar = mk('rect', { x, y: H - bottom - h, width: bw * 0.64, height: Math.max(h, 1), rx: 3, class: 'bar' });
+    bar.style.animationDelay = Math.min(i * 45, 900) + 'ms';
+    svg.append(bar);
     if (v) svg.append(mk('text', { x: x + bw * 0.32, y: H - bottom - h - 5, 'text-anchor': 'middle' }, v + unit));
     svg.append(mk('text', { x: x + bw * 0.32, y: H - 7, 'text-anchor': 'middle' }, labels[i]));
   });

@@ -354,3 +354,34 @@ test('sessions: measurements can be added AFTER recording — saved to InBody, u
   const manual = all.find((r) => r.notes === 'قياس يدوي');
   assert.equal(manual.weight, 83, 'manual reading untouched');
 });
+
+test('targets: trainer-performance metrics become measurable goals (hours, office, stories, referred)', async () => {
+  const month = '2026-08';
+  // سجل يوم للمدرب عمر: حضور 5 ساعات + 4 ستوريات + 2 ريلز
+  assert.equal((await req('POST', '/api/trainer-logs', { token: S.admin, body: {
+    trainerId: 2, date: '2026-08-20', checkIn: '09:00', checkOut: '14:00', stories: 4, reels: 2,
+  } })).status, 200);
+  // زبون جاء عن طريق المدرب — Onboarding بمصدره
+  await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'زبون محال', phone: '0599777004', branchId: 1, goal: 'loss', sourceTrainerId: 2,
+    subscription: { totalSessions: 8, price: 300, startDate: '2026-08-01', endDate: '2026-11-01' },
+  } });
+  for (const [metric, value] of [['hours', 3], ['officeHours', 40], ['stories', 10], ['reels', 8], ['referred', 5]]) {
+    assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+      scope: 'trainer', refId: 2, metric, period: month, value,
+    } })).status, 200, metric + ' target accepted');
+  }
+  const targets = (await req('GET', '/api/targets', { token: S.admin })).json;
+  const of = (m) => targets.find((t) => t.scope === 'trainer' && t.refId === 2 && t.metric === m && t.period === month);
+  assert.equal(of('hours').metricLabel, 'ساعات التدريب');
+  assert.ok(of('hours').actual >= 1, 'hours computed from delivered sessions');
+  assert.ok(of('officeHours').actual >= 5, 'office hours include the check-in/out log');
+  assert.ok(of('stories').actual >= 4, 'stories include the day log');
+  assert.ok(of('reels').actual >= 2, 'reels include the day log');
+  assert.ok(of('referred').actual >= 1, 'referred counts sourced onboarding');
+
+  // KPI الشهري للمدرب يلتقط الأهداف الجديدة تلقائيًا
+  const kpis = (await req('GET', '/api/kpi?month=' + month, { token: S.admin })).json;
+  const k = kpis.find((x) => x.trainerId === 2);
+  assert.ok(k && k.targetsPct !== null, 'trainer KPI includes the new metric targets');
+});
