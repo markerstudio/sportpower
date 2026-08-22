@@ -290,3 +290,26 @@ test('appointment vs session: manual «done» is blocked; recording deducts, lin
   const keep = await req('PUT', '/api/appointments/' + test1.id, { token: S.admin, body: { status: 'done', note: 'تصحيح ملاحظة' } });
   assert.equal(keep.status, 200, 'saving an already-done appointment stays possible');
 });
+
+test('trainees report: payments=1 exports the FULL payments log, not only the last payment', async () => {
+  // متدرب باشتراك — عليه دفعتان بتاريخين مختلفين
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب الدفعات', phone: '0599777002', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 12, price: 600, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const subId = ob.subscription.id;
+  assert.equal((await req('POST', '/api/payments', { token: S.admin, body: { subscriptionId: subId, amount: 200, date: '2026-08-05', method: 'كاش' } })).status, 200);
+  assert.equal((await req('POST', '/api/payments', { token: S.admin, body: { subscriptionId: subId, amount: 150, date: '2026-08-18', method: 'تحويل' } })).status, 200);
+
+  const res = await fetch(base + '/api/reports/trainees.csv?payments=1', { headers: { Authorization: 'Bearer ' + S.admin } });
+  const text = await res.text();
+  assert.ok(text.includes('سجل الدفعات كاملًا'), 'the payments-log section must exist');
+  const logPart = text.slice(text.indexOf('سجل الدفعات كاملًا'));
+  const mine = logPart.split('\r\n').filter((l) => l.includes('متدرب الدفعات'));
+  assert.equal(mine.length, 2, 'both payments must appear, not only the last one');
+  assert.ok(mine.some((l) => l.includes('2026-08-05') && l.includes('200')), 'first payment present');
+  assert.ok(mine.some((l) => l.includes('2026-08-18') && l.includes('150')), 'second payment present');
+  // بدون payments=1 لا يظهر القسم — التقرير القديم كما هو
+  const res2 = await fetch(base + '/api/reports/trainees.csv', { headers: { Authorization: 'Bearer ' + S.admin } });
+  assert.ok(!(await res2.text()).includes('سجل الدفعات كاملًا'), 'section only appears when requested');
+});

@@ -2873,6 +2873,30 @@ async function buildTraineeRoster({ branch, status }) {
   if (status === 'inactive') rows = rows.filter((r) => !r.subscription || r.subscription.status !== 'active');
   rows.sort((a, b) => a.branch.localeCompare(b.branch, 'ar') || a.name.localeCompare(b.name, 'ar'));
 
+  /* سجل الدفعات كاملًا — دفعة بسطر، الأحدث أولًا. كان التقرير يُخرج
+     «آخر دفعة» وحدها فيبدو عند التنزيل إلى Excel أن الدفعات ضاعت؛
+     المحاسبة تحتاج كل دفعة بتاريخها ومبلغها لمطابقة الصندوق. */
+  const inRoster = new Set(rows.map((r) => r.traineeId));
+  const subById = {};
+  subscriptions.forEach((s) => { subById[s.id] = s; });
+  const rowByTrainee = {};
+  rows.forEach((r) => { rowByTrainee[r.traineeId] = r; });
+  const paymentsLog = payments
+    .filter((p) => inRoster.has(p.traineeId))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+    .map((p) => {
+      const sub = p.subscriptionId != null ? subById[p.subscriptionId] : null;
+      const r = rowByTrainee[p.traineeId];
+      const bid = p.branchId != null ? p.branchId : r.branchId;
+      return {
+        traineeId: p.traineeId, name: r.name, branchId: bid, branch: branchName(bid),
+        date: p.date, amount: p.amount, method: p.method || '',
+        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة` : '',
+        subPeriod: sub ? `${sub.startDate} ← ${sub.endDate}` : '',
+        note: p.note || '',
+      };
+    });
+
   /* من أي المناطق يأتي المشتركون فعلًا — المنطقة الفارغة تُعرض صراحةً
      «غير محدد» حتى يظهر حجم النقص في الإدخال بدل أن يختفي. */
   const areaMap = {};
@@ -2897,6 +2921,7 @@ async function buildTraineeRoster({ branch, status }) {
   }
   return {
     rows, areas,
+    paymentsLog: paymentsLog.map((p) => ({ ...p, currency: cur.of(p.branchId) })),
     totals: {
       trainees: rows.length,
       active: rows.filter((r) => r.subscription && r.subscription.status === 'active').length,
@@ -2953,6 +2978,18 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   const curTotal = (m) => Object.entries(m || {}).map(([c, v]) => `${v} ${c}`).join(' / ') || '0';
   lines.push(`إجمالي المحصّل منهم,${curTotal(data.totals.paidTotal)}`);
   lines.push(`إجمالي المتبقي عليهم,${curTotal(data.totals.dueTotal)}`);
+
+  /* سجل الدفعات كاملًا — كان العمود «آخر دفعة» يوحي عند التنزيل أن باقي
+     الدفعات ضاعت؛ هنا كل دفعة بسطرها لمطابقة الصندوق في Excel. */
+  if (req.query.payments) {
+    lines.push('', `سجل الدفعات كاملًا — دفعة بسطر (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
+    lines.push('#,المتدرب,الفرع,التاريخ,المبلغ,العملة,طريقة الدفع,الباقة,فترة الاشتراك,ملاحظة');
+    data.paymentsLog.forEach((p, i) => lines.push(
+      `${i + 1},${cell(p.name)},${cell(p.branch)},${p.date},${p.amount},${p.currency},${cell(p.method)},${cell(p.packageName)},${cell(p.subPeriod)},${cell(p.note)}`));
+    const sums = {};
+    data.paymentsLog.forEach((p) => { sums[p.currency] = roundMoney((sums[p.currency] || 0) + p.amount, p.currency); });
+    lines.push(`إجمالي السجل,${curTotal(sums)}`);
+  }
 
   lines.push('', 'المنطقة (مكان السكن),عدد المتدربين,منهم فعّالون,التوزّع على الفروع');
   data.areas.forEach((a) => lines.push(

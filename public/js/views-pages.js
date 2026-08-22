@@ -1271,16 +1271,26 @@ async function viewTraineeRoster(root) {
         return el('label', { style: 'display:flex;gap:5px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' }, chk, label);
       }));
 
+    /* سجل الدفعات كاملًا في الملف — كان عمود «آخر دفعة» وحده يوحي أن باقي
+       الدفعات ضاعت عند التنزيل إلى Excel (بطلب المحاسبة: كل دفعة بسطر) */
+    const payLogChk = input({ type: 'checkbox' });
+    payLogChk.checked = state.payLog !== false;
+    payLogChk.addEventListener('change', () => { state.payLog = payLogChk.checked; });
+
     container.append(el('div', { class: 'card' },
       el('div', { class: 'filters' },
         field('الفرع', branchSel), field('الحالة', statusSel),
         el('div', { style: 'flex:1' }),
+        el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
+          payLogChk, 'مع سجل الدفعات كاملًا (كل دفعة بسطر)'),
         el('button', {
           class: 'btn btn--accent',
           onclick: () => API.download(
-            `/api/reports/trainees.csv${q}&cols=${[...state.cols].join(',')}`,
+            `/api/reports/trainees.csv${q}&cols=${[...state.cols].join(',')}` + (payLogChk.checked ? '&payments=1' : ''),
             `sportpower-trainees-${todayISO()}.csv`)
-            .then(() => toast('نُزّل التقرير بالأعمدة المختارة — يفتح في Excel.'))
+            .then(() => toast(payLogChk.checked
+              ? 'نُزّل التقرير ومعه سجل الدفعات كاملًا — كل دفعة بسطرها في Excel.'
+              : 'نُزّل التقرير بالأعمدة المختارة — يفتح في Excel.'))
             .catch((ex) => toast(ex.message, true)),
         }, 'تصدير Excel (CSV)'),
         el('button', { class: 'btn btn--outline', onclick: () => window.print() }, 'طباعة / PDF')),
