@@ -102,9 +102,15 @@ async function viewCalendar(root) {
           .forEach((a) => {
             const trainer = trainers.find((t) => t.id === a.trainerId);
             const showTrainer = (isAdmin || (API.user.role === 'trainer' && state.branchScope)) && trainer;
+            /* موعد متدرب فات وقته بلا حصة (أو عُلّم «منفذًا» بلا حصة أيام
+               اللبس بين الموعد والحصة) — يُعلَّم للطاقم ليُسوّى: حصة أو غياب.
+               لا يظهر للمتدرب كي لا يُقلقه شأن تسويةٍ داخلية. */
+            const unsettled = (isAdmin || API.user.role === 'trainer')
+              && a.traineeId && !a.sessionId
+              && (a.status === 'done' || (a.status === 'scheduled' && a.date < todayISO()));
             const chip = el('button', { class: 'cal-chip ' + a.status, onclick: () => openApptModal(render, trainers, trainees, a) },
               el('b', {}, personName(a)),
-              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : a.kind === 'test' ? ' · Test' : '') + (showTrainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '')));
+              el('small', {}, ` ${a.time}` + (a.kind === 'makeup' ? ' · تعويض' : a.kind === 'test' ? ' · Test' : '') + (showTrainer ? ` · ${trainer.name.split(' ')[1] || trainer.name}` : '') + (unsettled ? ' · ⚠️ بلا حصة' : '')));
             cell.append(chip);
           });
         sessions.filter((s) => s.date === iso(d) && Number((s.time || '').slice(0, 2)) === h)
@@ -123,7 +129,13 @@ async function viewCalendar(root) {
     container.append(el('div', { class: 'card cal-legend' },
       el('span', { class: 'cal-chip', style: 'display:inline-block;width:auto' }, 'موعد مجدول'),
       el('span', { class: 'cal-chip done', style: 'display:inline-block;width:auto' }, 'موعد منفذ'),
-      el('span', { class: 'cal-chip session', style: 'display:inline-block;width:auto' }, 'حصة مسجلة')));
+      el('span', { class: 'cal-chip session', style: 'display:inline-block;width:auto' }, 'حصة مسجلة'),
+      /* الفرق الذي أوقع المدربين في اللبس — يُقال صراحة تحت الدليل */
+      el('div', { style: 'flex-basis:100%;font-size:12px;color:var(--app-muted)' },
+        'الموعد حجزٌ في البرنامج فقط ولا يخصم من الرصيد — «تسجيل الحصة» هو ما يخصمها ويعلّم الموعد منفذًا تلقائيًا.'
+        + (isAdmin || API.user.role === 'trainer'
+          ? ' ⚠️ بلا حصة = موعد فات دون تسجيل، ويُحسب المجدولُ منه غيابًا في التقارير حتى يُسوّى من نافذته أو من «بلا تسوية» في لوحة المدرب.'
+          : ''))));
   }
 
   await render();
@@ -189,7 +201,16 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
   const timeIn = input({ type: 'time', value: existing ? existing.time : '17:00' });
   const durIn = input({ type: 'number', value: existing ? existing.duration : 60, min: 15, step: 15 });
   const noteIn = input({ value: existing ? existing.note : '', placeholder: 'اختياري' });
-  const statusSel = existing ? select([['scheduled', 'مجدولة'], ['done', 'منفذة'], ['cancelled', 'ملغاة']], { value: existing.status }) : null;
+  /* «منفذة» لا تُختار يدويًا لموعد متدرب لم تُسجَّل حصته: كان المدربون
+     يعلّمونها ظنًا أنها تسجّل الحصة — بلا خصم ولا سجل، والخادم يرفضها الآن.
+     البند يظهر فقط حين يكون الموعد منفذًا فعلًا (حصة مرتبطة أو حالة قديمة
+     تُركت لتصحيحها بإرجاعها «مجدولة» ثم تسجيل حصتها). */
+  const manualDoneOk = existing && (!existing.traineeId || existing.sessionId || existing.status === 'done');
+  const statusSel = existing ? select([
+    ['scheduled', 'مجدولة'],
+    ...(manualDoneOk ? [['done', 'منفذة']] : []),
+    ['cancelled', 'ملغاة'],
+  ], { value: existing.status }) : null;
 
   /* صاحب الـ Test زائر جديد: لم يشترك بعد ولا حساب له ولا صفحة — فيُكتب
      اسمه وجواله يدويًا، ويتحوّل لحساب كامل حين يشترك. */
@@ -221,6 +242,23 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
      للاطّلاع فقط بدل أن يصطدم برفض الخادم بعد ملء النموذج. */
   const readOnly = !!(existing && API.user.role === 'trainer' && existing.trainerId !== API.user.id);
 
+  /* توضيح الفرق الذي أوقع المدربين في اللبس: الموعد حجز لا يخصم رصيدًا،
+     والحصة تُسجَّل من زرها فتُخصم ويُعلَّم الموعد منفذًا تلقائيًا. */
+  const needsSession = !!(existing && existing.traineeId && !existing.sessionId && existing.status !== 'cancelled');
+  const clarify = !existing
+    ? el('div', { class: 'alert alert--info span-2', style: 'margin:0' },
+      'الموعد حجزٌ في البرنامج فقط ولا يخصم من رصيد المتدرب — يوم التنفيذ سجِّل الحصة من زر «تسجيل الحصة» فتُخصم ويُعلَّم الموعد منفذًا تلقائيًا.')
+    : existing.sessionId
+      ? el('div', { class: 'alert alert--info span-2', style: 'margin:0' }, '✓ هذا الموعد منفذ وحصته مسجلة ومخصومة من الرصيد.')
+      : needsSession
+        ? el('div', { class: 'alert alert--info span-2', style: 'margin:0' },
+          'لم تُسجَّل حصة لهذا الموعد بعد — الموعد وحده لا يخصم من الرصيد'
+          + (existing.date < todayISO() && existing.status === 'scheduled' ? '، وما دام فائتًا بلا تسوية فهو محسوب غيابًا في التقارير' : '')
+          + '. عند التنفيذ سجِّل الحصة (أو الغياب) من زر «تسجيل الحصة المنفذة».')
+        : el('span');
+  // تسوية الموعد من نافذته مباشرة — المدرب والإدارة (المحاسب لا يسجّل حصصًا)
+  const canLogSession = needsSession && ['admin', 'trainer'].includes(API.user.role);
+
   const close = modal(existing ? 'تعديل موعد' : 'إضافة موعد جديد', [
     el('form', {
       class: 'form-grid',
@@ -249,6 +287,7 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
         } catch (ex) { toast(ex.message, true); }
       },
     },
+      clarify,
       branchPick ? field('الفرع', branchPick) : el('span'),
       trainerSel ? field('المدرب', trainerSel) : el('span'),
       field('نوع الحصة', kindSel),
@@ -260,9 +299,25 @@ async function openApptModal(onDone, trainers, trainees, existing, prefillTraine
       field('المدة (دقيقة)', durIn),
       statusSel ? field('الحالة', statusSel) : el('span'),
       el('div', { class: 'span-2' }, field('ملاحظة', noteIn)),
+      /* تسوية الموعد من مكانه: تسجيل الحصة يخصمها ويربطها ويعلّم الموعد
+         منفذًا — وهو الإجراء الأول لموعد بلا حصة، فحفظ التعديل يصير ثانويًا */
+      canLogSession
+        ? el('div', { class: 'span-2' }, el('button', {
+          class: 'btn btn--accent btn--full', type: 'button',
+          onclick: () => {
+            close();
+            openLogSessionModal(onDone, {
+              traineeId: existing.traineeId, trainerId: existing.trainerId,
+              date: existing.date, time: existing.time, duration: existing.duration,
+              kind: existing.kind === 'test' ? 'makeup' : existing.kind,
+              appointmentId: existing.id,
+            });
+          },
+        }, 'تسجيل الحصة المنفذة — تُخصم وتُعلّم الموعد منفذًا ←'))
+        : el('span'),
       el('div', { class: 'span-2' }, readOnly
         ? el('div', { class: 'alert alert--info', style: 'margin:0' }, `هذا الموعد على برنامج ${(trainers.find((t) => t.id === existing.trainerId) || {}).name || 'مدرب آخر'} — للاطّلاع فقط. يعدّله صاحبه أو الإدارة.`)
-        : el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الموعد')),
+        : el('button', { class: 'btn ' + (canLogSession ? 'btn--outline' : 'btn--accent') + ' btn--full', type: 'submit' }, existing ? 'حفظ التعديل' : 'إضافة الموعد')),
       /* الزائر الذي أعجبه الـ Test يتحوّل لزبون كامل من هنا — ببياناته نفسها،
          ويُنسب موعده القديم لحسابه الجديد فلا ينقطع تاريخه. */
       isProspect && isAdmin

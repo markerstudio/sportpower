@@ -1527,6 +1527,20 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
      خصم حصة إضافية من رصيده بصمت. */
   const clash = (await Store.find('sessions', { traineeId: trainee.id, date, time }, { limit: 1 }))[0];
   if (clash) {
+    /* أيام اللبس بين الموعد والحصة سُجّل التدريب الواحد مرتين: حصةً من جهة،
+       وموعدًا بقي «بلا حصة» من جهة. فإن جاء التسجيل من موعد غير مربوط
+       والحصة المطابقة غير مربوطة بموعد آخر، نربطهما بدل الرفض —
+       تسوية للموعد دون أي خصم جديد. */
+    if (appointmentId) {
+      const appt = await Store.get('appointments', Number(appointmentId));
+      const owner = (await Store.find('appointments', { sessionId: clash.id }, { limit: 1 }))[0];
+      if (appt && !appt.sessionId && appt.traineeId === trainee.id && !owner) {
+        await Store.update('appointments', appt.id, {
+          status: clash.kind === 'absence' ? 'missed' : 'done', sessionId: clash.id,
+        });
+        return res.json({ linked: true, session: clash });
+      }
+    }
     return res.status(409).json({
       error: `لهذا المتدرب حصة مسجَّلة بالفعل يوم ${date} الساعة ${time} — لم تُسجَّل حصة ثانية ولم يُخصم رصيد إضافي.`
         + ' إن كانت حصةً مختلفة فعلًا فغيّر الساعة.',
@@ -2033,6 +2047,21 @@ app.put('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'train
     if (req.body[k] !== undefined) patch[k] = k === 'duration' ? Number(req.body[k]) : req.body[k];
   });
   if (req.body.kind !== undefined) patch.kind = apptKind(req.body.kind);
+  /* الفخ الذي أوقع المدربين في اللبس: تعليم الموعد «منفذًا» من القائمة لا
+     يسجّل حصة ولا يخصم من الرصيد — لكنه كان يبدو في التقويم كأن الحصة تمت.
+     التنفيذ الصحيح من زر «تسجيل الحصة»: يخصم ويربط الحصة ويعلّم الموعد
+     تلقائيًا. (موعد Test لزائر بلا حساب يبقى يُعلَّم يدويًا — لا رصيد له.)
+     يُمنع التحويل فقط، فتعديل موعد عُلّم قديمًا لا يُرفض. */
+  if (appt.traineeId && !appt.sessionId && patch.status === 'done' && appt.status !== 'done') {
+    return res.status(400).json({
+      error: 'تعليم الموعد «منفذًا» لا يسجّل حصة ولا يخصم من الرصيد. سجّل الحصة من زر «تسجيل الحصة» — تُخصم من الاشتراك ويُعلَّم الموعد منفذًا تلقائيًا.',
+    });
+  }
+  if (appt.traineeId && !appt.sessionId && patch.status === 'missed' && appt.status !== 'missed') {
+    return res.status(400).json({
+      error: 'الغياب يُسجَّل من زر «غياب» ليُخصم من الرصيد حسب سياسة النادي — ويُعلَّم الموعد فائتًا تلقائيًا.',
+    });
+  }
   // تصحيح اسم صاحب الـ Test أو جواله (زائر غير مسجّل)
   if (appt.traineeId == null) {
     if (req.body.prospectName !== undefined) patch.prospectName = String(req.body.prospectName || '').trim().slice(0, 100);

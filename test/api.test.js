@@ -217,3 +217,76 @@ test('anonymize: admin-only, needs confirmation, scrubs identity but keeps finan
   const login10 = await login('ahmad', '123456');
   assert.ok(!login10.token, 'anonymized account can no longer log in');
 });
+
+/* ============================================================
+   الموعد ≠ الحصة: كان المدربون يعلّمون الموعد «منفذًا» ظنًا أنه يسجّل
+   الحصة — بلا خصم ولا سجل. الاختبارات تثبّت الصمّام والتسوية.
+   ============================================================ */
+test('appointment vs session: manual «done» is blocked; recording deducts, links, and settles', async () => {
+  // متدرب جديد باشتراك فعّال معزول عن بقية الاختبارات
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب التسوية', phone: '0599777001', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 10, price: 400, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const tid = ob.user.id;
+  const subId = ob.subscription.id;
+  const remaining = async () => {
+    const subs = (await req('GET', '/api/subscriptions?trainee=' + tid, { token: S.admin })).json;
+    return subs.find((s) => s.id === subId).remaining;
+  };
+  const getAppt = async (id, date) => {
+    const list = (await req('GET', `/api/appointments?from=${date}&to=${date}`, { token: S.admin })).json;
+    return list.find((a) => a.id === id);
+  };
+
+  // 1) موعد مجدول لا يخصم شيئًا، وتعليمه «منفذًا» يدويًا مرفوض
+  const a1 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-20', time: '10:00' } })).json;
+  assert.equal(await remaining(), 10, 'booking an appointment must not deduct');
+  const deny = await req('PUT', '/api/appointments/' + a1.id, { token: S.admin, body: { status: 'done' } });
+  assert.equal(deny.status, 400, 'manual «done» without a session must be rejected');
+  assert.equal((await req('PUT', '/api/appointments/' + a1.id, { token: S.admin, body: { status: 'missed' } })).status, 400,
+    'manual «missed» without a session must be rejected');
+
+  // 2) تسجيل الحصة من الموعد: يخصم ويربط ويعلّم الموعد منفذًا
+  const s1 = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-20', time: '10:00', duration: 60, appointmentId: a1.id,
+  } });
+  assert.equal(s1.status, 200);
+  assert.equal(await remaining(), 9, 'recording the session deducts exactly one');
+  const a1After = await getAppt(a1.id, '2026-08-20');
+  assert.equal(a1After.status, 'done');
+  assert.equal(a1After.sessionId, s1.json.session.id, 'appointment links to its session');
+
+  // 3) إدخال مزدوج قديم: حصة سُجّلت من غير الموعد — التسجيل من الموعد يربطها بلا خصم جديد
+  const a2 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-21', time: '17:00' } })).json;
+  await req('POST', '/api/sessions', { token: S.admin, body: { traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60 } });
+  assert.equal(await remaining(), 8, 'the standalone session deducted one');
+  const link = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60, appointmentId: a2.id,
+  } });
+  assert.equal(link.status, 200);
+  assert.equal(link.json.linked, true, 'duplicate from an unlinked appointment links instead of erroring');
+  assert.equal(await remaining(), 8, 'linking must not deduct a second session');
+  const a2After = await getAppt(a2.id, '2026-08-21');
+  assert.equal(a2After.status, 'done');
+  assert.equal(a2After.sessionId, link.json.session.id);
+
+  // 4) الحصة المربوطة بموعدٍ ما لا تُربط بموعد آخر — يبقى الرفض 409
+  const a3 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-21', time: '17:30' } })).json;
+  const steal = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60, appointmentId: a3.id,
+  } });
+  assert.equal(steal.status, 409, 'a session already linked to another appointment is not re-linked');
+  assert.equal(steal.json.duplicate, true);
+
+  // 5) موعد Test لزائر بلا حساب: التعليم اليدوي «منفذ» يبقى مسموحًا (لا رصيد له)
+  const test1 = (await req('POST', '/api/appointments', { token: S.admin, body: {
+    trainerId: 2, kind: 'test', prospectName: 'زائر تجربة', date: '2026-08-22', time: '12:00',
+  } })).json;
+  assert.equal((await req('PUT', '/api/appointments/' + test1.id, { token: S.admin, body: { status: 'done' } })).status, 200,
+    'prospect Test appointments are still settled manually');
+
+  // 6) تعديل موعد قديم عُلّم «منفذًا» بلا حصة لا يُرفض (المنع على التحويل فقط)
+  const keep = await req('PUT', '/api/appointments/' + test1.id, { token: S.admin, body: { status: 'done', note: 'تصحيح ملاحظة' } });
+  assert.equal(keep.status, 200, 'saving an already-done appointment stays possible');
+});
