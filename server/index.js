@@ -1664,7 +1664,8 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
 /* قياسات الحصة (وزن/دهون %/كتلة دهون كغ/عضل + شريط القياس) تُحفظ تلقائيًا
    قراءةً في سجل InBody */
 const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
-async function recordSessionMeasurements(traineeId, date, m, byId) {
+const SESSION_MEASURE_NOTE = 'قياسات مسجلة مع الحصة';
+async function recordSessionMeasurements(traineeId, date, m, byId, { upsert = false, prevDate = null } = {}) {
   const vals = {};
   let any = false;
   for (const k of SESSION_MEASURE_KEYS) {
@@ -1672,10 +1673,24 @@ async function recordSessionMeasurements(traineeId, date, m, byId) {
     if (vals[k]) any = true;
   }
   if (!any) return false;
+  /* قياس بعد الحصة (تعديلها): القراءة المرتبطة بالحصة تُحدَّث لا تُكرَّر —
+     يُملأ المرسَل فقط فلا يمحو تعديلٌ لاحق قياسًا سابقًا، ولا تُمسّ قراءة
+     أُدخلت يدويًا في اليوم نفسه (تُميَّز قراءة الحصة بملاحظتها). */
+  if (upsert) {
+    const dates = prevDate && prevDate !== date ? [date, prevDate] : [date];
+    const twin = (await Store.find('inbody', { traineeId, date: { in: dates } }))
+      .find((r) => (r.notes || '') === SESSION_MEASURE_NOTE);
+    if (twin) {
+      const patch = { date };
+      for (const k of SESSION_MEASURE_KEYS) if (vals[k]) patch[k] = vals[k];
+      await Store.update('inbody', twin.id, patch);
+      return true;
+    }
+  }
   await Store.insert('inbody', {
     traineeId, date, ...vals,
     water: null, bmi: null, score: null,
-    notes: 'قياسات مسجلة مع الحصة', createdBy: byId,
+    notes: SESSION_MEASURE_NOTE, createdBy: byId,
   });
   return true;
 }
@@ -1732,7 +1747,19 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
     }
     patch.trainerId = newTrainer.id;
   }
-  res.json(await Store.update('sessions', session.id, patch));
+  const updated = await Store.update('sessions', session.id, patch);
+
+  /* القياس بعد الحصة: كانت القياسات تُدخل لحظة تسجيل الحصة فقط، والمدرب
+     قد يقيس بعدها — فتُقبل هنا أيضًا وتُحفظ قراءةً في سجل InBody كما عند
+     التسجيل (تحديثًا للقراءة المرتبطة بالحصة إن وُجدت، لا تكرارًا). */
+  let measured = false;
+  if ((patch.kind || session.kind) !== 'absence') {
+    const m = {};
+    for (const k of SESSION_MEASURE_KEYS) if (req.body[k] !== undefined) m[k] = req.body[k];
+    measured = await recordSessionMeasurements(session.traineeId, updated.date, m, req.user.id,
+      { upsert: true, prevDate: session.date });
+  }
+  res.json({ ...updated, measured });
 }));
 
 /* حذف حصة — الإدارة لأي حصة، والمدرب لحصصه هو (تصحيح إدخال خاطئ).

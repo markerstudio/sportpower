@@ -1693,7 +1693,7 @@ function openFreezeSubModal(onDone, sub, traineeName) {
   ]);
 }
 
-/* تعديل حصة مسجلة — البيانات الوصفية، والإدارة تنقلها لمدرب آخر */
+/* تعديل حصة مسجلة — البيانات الوصفية والقياسات، والإدارة تنقلها لمدرب آخر */
 async function openSessionEditModal(onDone, s) {
   const dateIn = input({ type: 'date', value: s.date });
   const timeIn = input({ type: 'time', value: s.time });
@@ -1701,6 +1701,31 @@ async function openSessionEditModal(onDone, s) {
   const styleIn = input({ value: s.style || '' });
   const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
   const notesIn = textarea({ value: s.notes || '' });
+
+  /* القياس بعد الحصة (بطلب المدربين): المدرب قد يقيس بعد التسجيل لا قبله —
+     فالحقول كلها هنا أيضًا، معبأة من قراءة الحصة في سجل InBody إن وُجدت،
+     والحفظ يحدّث القراءة نفسها لا يكررها. */
+  const twin = (await API.get('/api/inbody?trainee=' + s.traineeId).catch(() => []))
+    .find((r) => r.date === s.date && (r.notes || '') === 'قياسات مسجلة مع الحصة') || {};
+  if (!weightIn.value && twin.weight) weightIn.value = twin.weight;
+  const fatIn = input({ type: 'number', step: '0.1', value: twin.bodyFatPct ?? '', placeholder: 'اختياري' });
+  const fatMassIn = input({ type: 'number', step: '0.1', value: twin.fatMass ?? '', placeholder: 'اختياري' });
+  const muscleIn = input({ type: 'number', step: '0.1', value: twin.muscleMass ?? '', placeholder: 'اختياري' });
+  const tape = {};
+  for (const k of ['waist', 'chest', 'arm', 'hips', 'leg']) tape[k] = input({ type: 'number', step: '0.5', value: twin[k] ?? '', placeholder: 'سم' });
+  const measureFields = [
+    field('الوزن (كغ)', weightIn),
+    field('نسبة الدهون %', fatIn),
+    field('كتلة الدهون (كغ)', fatMassIn),
+    field('كتلة العضلات (كغ)', muscleIn),
+    el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
+    el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
+      field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
+      field('الحوض', tape.hips), field('الرجل', tape.leg)),
+    el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+      'أي قياس يُدخل أو يُعدَّل هنا يُحفظ في قراءة الحصة بسجل InBody — قِس قبل الحصة أو بعدها كما يناسبك.'),
+  ];
+
   /* التبديل بين الأنواع تصحيحُ توسيمٍ واحتسابِ حضور. والحصة التعويضية
      المرتبطة بغياب (بلا خصم) لا تُحوَّل — يرفضها الخادم وتُحذف وتُسجَّل
      من جديد. */
@@ -1711,9 +1736,13 @@ async function openSessionEditModal(onDone, s) {
   ], { value: ['makeup', 'absence'].includes(s.kind) ? s.kind : 'regular' });
   const absenceReasonIn = input({ value: s.absenceReason || '', placeholder: 'سبب الغياب (اختياري)' });
   const absenceField = el('div', { class: 'span-2' }, field('سبب الغياب', absenceReasonIn));
-  const syncKind = () => { absenceField.style.display = kindSel.value === 'absence' ? '' : 'none'; };
+  const syncKind = () => {
+    const absent = kindSel.value === 'absence';
+    absenceField.style.display = absent ? '' : 'none';
+    // لا قياسات في الغياب — تختفي بدل أن تُترك فارغة
+    measureFields.forEach((n) => { n.style.display = absent ? 'none' : ''; });
+  };
   kindSel.addEventListener('change', syncKind);
-  syncKind();
   /* الإدارة تنقل أي حصة لمدرب آخر — والمدرب ينقل حصته هو
      (سجّلها على برنامجه بينما درّبها زميله) */
   let trainerSel = null;
@@ -1727,14 +1756,23 @@ async function openSessionEditModal(onDone, s) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await API.put('/api/sessions/' + s.id, {
+          const absent = kindSel.value === 'absence';
+          const r = await API.put('/api/sessions/' + s.id, {
             date: dateIn.value, time: timeIn.value, duration: durIn.value,
-            style: styleIn.value, notes: notesIn.value, weight: weightIn.value || null,
+            style: styleIn.value, notes: notesIn.value, weight: absent ? null : (weightIn.value || null),
+            bodyFatPct: absent ? undefined : (fatIn.value || undefined),
+            fatMass: absent ? undefined : (fatMassIn.value || undefined),
+            muscleMass: absent ? undefined : (muscleIn.value || undefined),
+            waist: absent ? undefined : (tape.waist.value || undefined),
+            chest: absent ? undefined : (tape.chest.value || undefined),
+            arm: absent ? undefined : (tape.arm.value || undefined),
+            hips: absent ? undefined : (tape.hips.value || undefined),
+            leg: absent ? undefined : (tape.leg.value || undefined),
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
             kind: kindSel.value,
             absenceReason: kindSel.value === 'absence' ? absenceReasonIn.value : undefined,
           });
-          toast('حُفظت الحصة.');
+          toast(r && r.measured ? 'حُفظت الحصة — والقياسات في سجل InBody.' : 'حُفظت الحصة.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -1743,11 +1781,13 @@ async function openSessionEditModal(onDone, s) {
       el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       absenceField,
       field('التاريخ', dateIn), field('الساعة', timeIn),
-      field('المدة (دقيقة)', durIn), field('الوزن (كغ)', weightIn),
+      field('المدة (دقيقة)', durIn),
       el('div', { class: 'span-2' }, field('الأسلوب', styleIn)),
+      ...measureFields,
       el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
+  syncKind();
 }
 
 /* تعديل قراءة InBody */

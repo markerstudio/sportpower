@@ -313,3 +313,44 @@ test('trainees report: payments=1 exports the FULL payments log, not only the la
   const res2 = await fetch(base + '/api/reports/trainees.csv', { headers: { Authorization: 'Bearer ' + S.admin } });
   assert.ok(!(await res2.text()).includes('سجل الدفعات كاملًا'), 'section only appears when requested');
 });
+
+test('sessions: measurements can be added AFTER recording — saved to InBody, updated not duplicated', async () => {
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب القياسات', phone: '0599777003', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 10, price: 500, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const tid = ob.user.id;
+
+  // حصة بلا أي قياسات وقت التسجيل
+  const s = (await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-19', time: '09:00', duration: 60,
+  } })).json.session;
+  const readings = async () => (await req('GET', '/api/inbody?trainee=' + tid, { token: S.admin })).json
+    .filter((r) => r.date === '2026-08-19');
+  assert.equal((await readings()).length, 0, 'no reading yet');
+
+  // القياس بعد الحصة: تعديلها بالقياسات يُنشئ قراءة InBody
+  const put1 = await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82.5, bodyFatPct: 21, waist: 90 } });
+  assert.equal(put1.status, 200);
+  assert.equal(put1.json.measured, true);
+  let rs = await readings();
+  assert.equal(rs.length, 1, 'one reading created after the fact');
+  assert.equal(rs[0].weight, 82.5);
+  assert.equal(rs[0].bodyFatPct, 21);
+
+  // تعديل ثانٍ يحدّث القراءة نفسها — لا يكررها ولا يمحو ما لم يُرسل
+  const put2 = await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82.5, bodyFatPct: 20.5 } });
+  assert.equal(put2.json.measured, true);
+  rs = await readings();
+  assert.equal(rs.length, 1, 'still a single session reading');
+  assert.equal(rs[0].bodyFatPct, 20.5, 'updated value');
+  assert.equal(rs[0].waist, 90, 'unsent field kept');
+
+  // قراءة يدوية بنفس اليوم لا تُمسّ
+  await req('POST', '/api/inbody', { token: S.admin, body: { traineeId: tid, date: '2026-08-19', weight: 83, notes: 'قياس يدوي' } });
+  await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82 } });
+  const all = await readings();
+  assert.equal(all.length, 2, 'manual reading coexists');
+  const manual = all.find((r) => r.notes === 'قياس يدوي');
+  assert.equal(manual.weight, 83, 'manual reading untouched');
+});
