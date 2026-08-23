@@ -297,7 +297,9 @@ async function viewTrainerDash(root) {
 /* جدول اليوم للمدرب — البرنامج لكل الفرع مع فلتر المدرب.
    الموعد قد يكون على برنامج مدرب وينفّذه آخر، فيسجّل الحصة باسم من نفّذها. */
 async function renderTrainerSchedule(card, dashData, onDone) {
-  const state = { scope: 'mine' };
+  /* الحالة تبقى عبر إعادة رسم اللوحة: من يسوّي مواعيد متأخرة واحدًا بعد
+     الآخر لا يُعاد إلى «جدول اليوم» بعد كل تسوية */
+  const state = (renderTrainerSchedule._state = renderTrainerSchedule._state || { scope: 'mine', mode: 'today' });
   let trainers = [];
   let trainees = [];
   try { [trainers, trainees] = await Promise.all([API.get('/api/users?role=trainer'), API.get('/api/users?role=trainee')]); }
@@ -320,78 +322,142 @@ async function renderTrainerSchedule(card, dashData, onDone) {
   const kindTag = (a) => (a.kind === 'makeup' ? el('span', { class: 'tag tag--info' }, 'تعويض')
     : a.kind === 'test' ? el('span', { class: 'tag tag--petrol' }, 'Test') : el('span', { class: 'tag tag--neutral' }, 'عادية'));
 
+  /* «بلا تسوية»: مواعيد فات وقتها ولم تُسجَّل حصتها — أثر اللبس القديم بين
+     الموعد والحصة. تُصفّى من هنا واحدًا واحدًا: حصة، أو غياب، أو ربط بحصة
+     سُجّلت يومَها من غير الموعد (بلا خصم جديد). */
+  const backlogBtn = el('button', {
+    class: 'btn btn--outline btn--sm',
+    onclick: () => { state.mode = state.mode === 'today' ? 'backlog' : 'today'; draw(); },
+  }, 'بلا تسوية');
+
   const body = el('div');
   card.append(el('h3', { class: 'card__title' }, 'جدول اليوم — برنامج الفرع',
-    el('div', { style: 'display:flex;gap:8px;align-items:center' }, scopeSel, addBtn,
+    el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, scopeSel, backlogBtn, addBtn,
       el('a', { class: 'btn btn--outline btn--sm', href: '#/calendar' }, 'التقويم الكامل'))), body);
 
   const refresh = () => { draw(); onDone && onDone(); };
 
   async function draw() {
     body.innerHTML = '';
-    let appts;
-    if (state.scope === 'mine') {
-      // بعد أي تعديل نُعيد قراءة مواعيد اليوم بدل الاعتماد على لقطة اللوحة
-      body.append(spinnerCard());
-      const today = todayISO();
-      const mine = await API.get(`/api/appointments?from=${today}&to=${today}`).catch(() => dashData.todayAppointments);
-      appts = mine.filter((a) => a.status === 'scheduled').sort((a, b) => a.time.localeCompare(b.time));
-      body.innerHTML = '';
-    } else {
-      body.append(spinnerCard());
-      const today = todayISO();
-      const all = await API.get(`/api/appointments?from=${today}&to=${today}&all=1`).catch(() => []);
-      appts = all.filter((a) => a.status === 'scheduled' && (state.scope === 'all' || a.trainerId === Number(state.scope)))
-        .sort((a, b) => a.time.localeCompare(b.time));
-      body.innerHTML = '';
-    }
+    body.append(spinnerCard());
+    const today = todayISO();
+    const back = new Date(); back.setDate(back.getDate() - 90);
+    const from = back.toISOString().slice(0, 10);
+    const scopeQ = state.scope === 'mine' ? '' : '&all=1';
+    /* مواعيد اليوم للجدول، و90 يومًا سابقة لعدّاد «بلا تسوية» — وحصص المدة
+       نفسها (بكل مدربي الفرع) لكشف حصةٍ سُجّلت يوم الموعد من غير ربط */
+    const [todayAppts, pastAppts, pastSessions] = await Promise.all([
+      API.get(`/api/appointments?from=${today}&to=${today}${scopeQ}`).catch(() => dashData.todayAppointments || []),
+      API.get(`/api/appointments?from=${from}&to=${today}${scopeQ}`).catch(() => []),
+      API.get(`/api/sessions?from=${from}&to=${today}&all=1`).catch(() => []),
+    ]);
+    body.innerHTML = '';
+
+    const inScope = (a) => state.scope === 'mine' || state.scope === 'all' || a.trainerId === Number(state.scope);
+    /* موعد متدرب بلا حصة مرتبطة (ولو عُلّم «منفذًا» أيام اللبس)، وموعد Test
+       لزائر بقي مجدولًا — كلاهما ينتظر تسوية */
+    const needsSettle = (a) => (a.traineeId
+      ? !a.sessionId && (a.status === 'scheduled' || a.status === 'done')
+      : a.status === 'scheduled');
+    const backlog = pastAppts
+      .filter((a) => a.date < today && inScope(a) && needsSettle(a))
+      .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    backlogBtn.textContent = state.mode === 'backlog' ? '← جدول اليوم' : `بلا تسوية (${backlog.length})`;
+    backlogBtn.className = 'btn btn--sm ' + (state.mode === 'today' && backlog.length ? 'btn--accent' : 'btn--outline');
+
+    /* حصص لم تُربط بأي موعد — مرشّحة لتسوية «الإدخال المزدوج»: الأقرب ساعةً
+       لحصة اليوم نفسه هي الأرجح أنها حصة هذا الموعد نفسها */
+    const linkedIds = new Set(pastAppts.concat(todayAppts).map((a) => a.sessionId).filter(Boolean));
+    const freeSessions = pastSessions.filter((s) => !linkedIds.has(s.id));
+    const mins = (t) => Number((t || '00:00').slice(0, 2)) * 60 + Number((t || '00:00').slice(3, 5));
+    const matchFor = (a) => {
+      if (!a.traineeId) return null;
+      return freeSessions
+        .filter((s) => s.traineeId === a.traineeId && s.date === a.date)
+        .sort((x, y) => Math.abs(mins(x.time) - mins(a.time)) - Math.abs(mins(y.time) - mins(a.time)))[0] || null;
+    };
+
+    const isBacklog = state.mode === 'backlog';
+    let appts = isBacklog
+      ? backlog
+      : todayAppts.filter((a) => a.status === 'scheduled' && inScope(a)).sort((a, b) => a.time.localeCompare(b.time));
     // موعد Test لزائر بلا حساب: اسمه مكتوب على الموعد نفسه
     appts = appts.map((a) => ({
       ...a,
       traineeName: a.traineeId ? (a.traineeName || nameOf(a.traineeId)) : (a.prospectName || 'زائر Test'),
     }));
+
+    if (isBacklog) {
+      body.append(el('div', { class: 'alert alert--info', style: 'margin:0 0 10px' },
+        'مواعيد فات وقتها (آخر 90 يومًا) دون حصة مسجلة — الموعد وحده لا يخصم من الرصيد، والمجدول الفائت يُحسب غيابًا في التقارير حتى يُسوّى. '
+        + 'سوِّ كل موعد: سجّل حصته أو غيابه، أو اربطه بحصة سُجّلت يومَها من غير الموعد (بلا خصم جديد).'));
+    }
+
     const showTrainer = state.scope !== 'mine';
-    body.append(dataTable(['الساعة', 'المتدرب', ...(showTrainer ? ['المدرب'] : []), 'النوع', 'ملاحظة', ''],
-      appts.map((a) => [a.time,
-        a.traineeId
-          ? el('a', { href: '#/trainee/' + a.traineeId, style: 'color:var(--action);text-decoration:none' }, a.traineeName)
-          : el('span', {}, a.traineeName, ' ', el('span', { class: 'tag tag--neutral' }, 'زائر')),
-        ...(showTrainer ? [trainerName(a.trainerId)] : []),
-        kindTag(a), a.note || '—',
-        el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
-          /* زائر الـ Test لا اشتراك له ولا رصيد يُخصم منه — فالإجراء عليه
-             «تم الـ Test» أو تحويله لزبون، لا تسجيل حصة. */
-          a.traineeId
-            ? el('button', {
-              class: 'btn btn--accent btn--sm',
-              onclick: () => openLogSessionModal(refresh, {
-                traineeId: a.traineeId, time: a.time, appointmentId: a.id,
-                kind: a.kind === 'test' ? 'makeup' : a.kind, trainerId: a.trainerId,
-              }),
-            }, 'تسجيل الحصة')
-            : el('button', {
-              class: 'btn btn--accent btn--sm', title: 'انتهى الـ Test — علّم الموعد منفَّذًا',
-              onclick: async () => {
-                try { await API.put('/api/appointments/' + a.id, { status: 'done' }); toast('سُجّل تنفيذ الـ Test.'); refresh(); }
-                catch (ex) { toast(ex.message, true); }
-              },
-            }, 'تم الـ Test'),
-          a.traineeId
-            ? el('button', {
-              class: 'btn btn--outline btn--sm', title: 'لم يحضر — تسجيل غياب (يُخصم من الرصيد)',
-              onclick: () => openLogSessionModal(refresh, {
-                traineeId: a.traineeId, time: a.time, appointmentId: a.id, kind: 'absence', trainerId: a.trainerId,
-              }),
-            }, 'غياب')
-            : el('button', {
-              class: 'btn btn--outline btn--sm', title: 'لم يحضر الـ Test',
-              onclick: async () => {
-                try { await API.put('/api/appointments/' + a.id, { status: 'cancelled' }); toast('سُجّل عدم حضور الـ Test.'); refresh(); }
-                catch (ex) { toast(ex.message, true); }
-              },
-            }, 'لم يحضر'),
-          el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openApptModal(refresh, trainers, trainees, a) }, 'تعديل'))]),
-      'لا مواعيد لهذا اليوم.'));
+    body.append(dataTable([...(isBacklog ? ['التاريخ'] : []), 'الساعة', 'المتدرب', ...(showTrainer ? ['المدرب'] : []), 'النوع', 'ملاحظة', ''],
+      appts.map((a) => {
+        const twin = isBacklog ? matchFor(a) : null;
+        return [...(isBacklog ? [a.date] : []), a.time,
+          el('span', {},
+            a.traineeId
+              ? el('a', { href: '#/trainee/' + a.traineeId, style: 'color:var(--action);text-decoration:none' }, a.traineeName)
+              : el('span', {}, a.traineeName, ' ', el('span', { class: 'tag tag--neutral' }, 'زائر')),
+            // موعد عُلّم «منفذًا» يدويًا أيام اللبس — بلا حصة ولا خصم
+            a.traineeId && a.status === 'done' ? el('span', {}, ' ', el('span', { class: 'tag tag--info' }, 'معلَّم منفذًا بلا حصة')) : ''),
+          ...(showTrainer ? [trainerName(a.trainerId)] : []),
+          kindTag(a), a.note || '—',
+          el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+            /* زائر الـ Test لا اشتراك له ولا رصيد يُخصم منه — فالإجراء عليه
+               «تم الـ Test» أو تحويله لزبون، لا تسجيل حصة. */
+            a.traineeId
+              ? (twin
+                ? el('button', {
+                  class: 'btn btn--accent btn--sm',
+                  title: `للمتدرب حصة مسجلة يوم ${twin.date} الساعة ${twin.time} غير مربوطة بأي موعد — الأرجح أنها حصة هذا الموعد نفسها`,
+                  onclick: async () => {
+                    try {
+                      const r = await API.post('/api/sessions', {
+                        traineeId: a.traineeId, trainerId: twin.trainerId || a.trainerId,
+                        date: twin.date, time: twin.time, duration: twin.duration || 60, appointmentId: a.id,
+                      });
+                      toast(r.linked ? 'رُبط الموعد بالحصة المسجلة نفسها — دون أي خصم جديد.' : 'سُجّلت الحصة وخُصمت.');
+                      refresh();
+                    } catch (ex) { toast(ex.message, true); }
+                  },
+                }, `ربط بحصة ${twin.time} (بلا خصم)`)
+                : el('button', {
+                  class: 'btn btn--accent btn--sm',
+                  onclick: () => openLogSessionModal(refresh, {
+                    traineeId: a.traineeId, time: a.time, appointmentId: a.id,
+                    ...(isBacklog ? { date: a.date, duration: a.duration } : {}),
+                    kind: a.kind === 'test' ? 'makeup' : a.kind, trainerId: a.trainerId,
+                  }),
+                }, 'تسجيل الحصة'))
+              : el('button', {
+                class: 'btn btn--accent btn--sm', title: 'انتهى الـ Test — علّم الموعد منفَّذًا',
+                onclick: async () => {
+                  try { await API.put('/api/appointments/' + a.id, { status: 'done' }); toast('سُجّل تنفيذ الـ Test.'); refresh(); }
+                  catch (ex) { toast(ex.message, true); }
+                },
+              }, 'تم الـ Test'),
+            a.traineeId
+              ? el('button', {
+                class: 'btn btn--outline btn--sm', title: 'لم يحضر — تسجيل غياب (يُخصم من الرصيد)',
+                onclick: () => openLogSessionModal(refresh, {
+                  traineeId: a.traineeId, time: a.time, appointmentId: a.id, kind: 'absence', trainerId: a.trainerId,
+                  ...(isBacklog ? { date: a.date, duration: a.duration } : {}),
+                }),
+              }, 'غياب')
+              : el('button', {
+                class: 'btn btn--outline btn--sm', title: 'لم يحضر الـ Test',
+                onclick: async () => {
+                  try { await API.put('/api/appointments/' + a.id, { status: 'cancelled' }); toast('سُجّل عدم حضور الـ Test.'); refresh(); }
+                  catch (ex) { toast(ex.message, true); }
+                },
+              }, 'لم يحضر'),
+            el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openApptModal(refresh, trainers, trainees, a) }, 'تعديل'))];
+      }),
+      isBacklog ? 'لا مواعيد بلا تسوية — كل المواعيد السابقة سُوّيت ✓' : 'لا مواعيد لهذا اليوم.'));
   }
   await draw();
 }
@@ -493,7 +559,7 @@ async function openLogSessionModal(onDone, prefill = {}) {
   /* ساعة الحصة ظاهرة وقابلة للتعديل — كانت تؤخذ تلقائيًا وقت الحفظ فتُسجَّل
      بساعة الإدخال لا بساعة الحصة الفعلية (بطلب العميل أُعيدت للنموذج) */
   const timeIn = input({ type: 'time', value: prefill.time || new Date().toTimeString().slice(0, 5) });
-  const durIn = input({ type: 'number', value: 60, min: 15, step: 15 });
+  const durIn = input({ type: 'number', value: prefill.duration || 60, min: 15, step: 15 });
   const styleIn = input({ placeholder: 'مثال: قوة — دفع / HIIT / مرونة' });
   const weightIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
   const fatIn = input({ type: 'number', step: '0.1', placeholder: 'اختياري' });
@@ -560,6 +626,12 @@ async function openLogSessionModal(onDone, prefill = {}) {
             appointmentId: prefill.appointmentId || null,
           });
           close();
+          // الخادم وجد الحصة نفسها مسجلة بهذا الوقت فربط الموعد بها — لا خصم جديد
+          if (res.linked) {
+            toast('كانت الحصة مسجلة مسبقًا بهذا الوقت — رُبط الموعد بها دون أي خصم جديد.');
+            onDone && onDone();
+            return;
+          }
           toast(res.makeup
             ? (res.compensated
               ? `سُجّلت الحصة التعويضية عن غياب يوم ${res.absenceDate} — بلا خصم جديد (خُصمت يوم الغياب).`
@@ -1621,7 +1693,7 @@ function openFreezeSubModal(onDone, sub, traineeName) {
   ]);
 }
 
-/* تعديل حصة مسجلة — البيانات الوصفية، والإدارة تنقلها لمدرب آخر */
+/* تعديل حصة مسجلة — البيانات الوصفية والقياسات، والإدارة تنقلها لمدرب آخر */
 async function openSessionEditModal(onDone, s) {
   const dateIn = input({ type: 'date', value: s.date });
   const timeIn = input({ type: 'time', value: s.time });
@@ -1629,6 +1701,31 @@ async function openSessionEditModal(onDone, s) {
   const styleIn = input({ value: s.style || '' });
   const weightIn = input({ type: 'number', step: '0.1', value: s.weight ?? '' });
   const notesIn = textarea({ value: s.notes || '' });
+
+  /* القياس بعد الحصة (بطلب المدربين): المدرب قد يقيس بعد التسجيل لا قبله —
+     فالحقول كلها هنا أيضًا، معبأة من قراءة الحصة في سجل InBody إن وُجدت،
+     والحفظ يحدّث القراءة نفسها لا يكررها. */
+  const twin = (await API.get('/api/inbody?trainee=' + s.traineeId).catch(() => []))
+    .find((r) => r.date === s.date && (r.notes || '') === 'قياسات مسجلة مع الحصة') || {};
+  if (!weightIn.value && twin.weight) weightIn.value = twin.weight;
+  const fatIn = input({ type: 'number', step: '0.1', value: twin.bodyFatPct ?? '', placeholder: 'اختياري' });
+  const fatMassIn = input({ type: 'number', step: '0.1', value: twin.fatMass ?? '', placeholder: 'اختياري' });
+  const muscleIn = input({ type: 'number', step: '0.1', value: twin.muscleMass ?? '', placeholder: 'اختياري' });
+  const tape = {};
+  for (const k of ['waist', 'chest', 'arm', 'hips', 'leg']) tape[k] = input({ type: 'number', step: '0.5', value: twin[k] ?? '', placeholder: 'سم' });
+  const measureFields = [
+    field('الوزن (كغ)', weightIn),
+    field('نسبة الدهون %', fatIn),
+    field('كتلة الدهون (كغ)', fatMassIn),
+    field('كتلة العضلات (كغ)', muscleIn),
+    el('div', { class: 'span-2 sidebar__caption', style: 'padding:4px 0 0' }, 'قياسات شريط القياس (سم) — اختياري'),
+    el('div', { class: 'span-2', style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px' },
+      field('الخصر', tape.waist), field('الصدر', tape.chest), field('اليد', tape.arm),
+      field('الحوض', tape.hips), field('الرجل', tape.leg)),
+    el('div', { class: 'span-2', style: 'font-size:12px;color:var(--app-muted)' },
+      'أي قياس يُدخل أو يُعدَّل هنا يُحفظ في قراءة الحصة بسجل InBody — قِس قبل الحصة أو بعدها كما يناسبك.'),
+  ];
+
   /* التبديل بين الأنواع تصحيحُ توسيمٍ واحتسابِ حضور. والحصة التعويضية
      المرتبطة بغياب (بلا خصم) لا تُحوَّل — يرفضها الخادم وتُحذف وتُسجَّل
      من جديد. */
@@ -1639,9 +1736,13 @@ async function openSessionEditModal(onDone, s) {
   ], { value: ['makeup', 'absence'].includes(s.kind) ? s.kind : 'regular' });
   const absenceReasonIn = input({ value: s.absenceReason || '', placeholder: 'سبب الغياب (اختياري)' });
   const absenceField = el('div', { class: 'span-2' }, field('سبب الغياب', absenceReasonIn));
-  const syncKind = () => { absenceField.style.display = kindSel.value === 'absence' ? '' : 'none'; };
+  const syncKind = () => {
+    const absent = kindSel.value === 'absence';
+    absenceField.style.display = absent ? '' : 'none';
+    // لا قياسات في الغياب — تختفي بدل أن تُترك فارغة
+    measureFields.forEach((n) => { n.style.display = absent ? 'none' : ''; });
+  };
   kindSel.addEventListener('change', syncKind);
-  syncKind();
   /* الإدارة تنقل أي حصة لمدرب آخر — والمدرب ينقل حصته هو
      (سجّلها على برنامجه بينما درّبها زميله) */
   let trainerSel = null;
@@ -1655,14 +1756,23 @@ async function openSessionEditModal(onDone, s) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await API.put('/api/sessions/' + s.id, {
+          const absent = kindSel.value === 'absence';
+          const r = await API.put('/api/sessions/' + s.id, {
             date: dateIn.value, time: timeIn.value, duration: durIn.value,
-            style: styleIn.value, notes: notesIn.value, weight: weightIn.value || null,
+            style: styleIn.value, notes: notesIn.value, weight: absent ? null : (weightIn.value || null),
+            bodyFatPct: absent ? undefined : (fatIn.value || undefined),
+            fatMass: absent ? undefined : (fatMassIn.value || undefined),
+            muscleMass: absent ? undefined : (muscleIn.value || undefined),
+            waist: absent ? undefined : (tape.waist.value || undefined),
+            chest: absent ? undefined : (tape.chest.value || undefined),
+            arm: absent ? undefined : (tape.arm.value || undefined),
+            hips: absent ? undefined : (tape.hips.value || undefined),
+            leg: absent ? undefined : (tape.leg.value || undefined),
             trainerId: trainerSel ? Number(trainerSel.value) : undefined,
             kind: kindSel.value,
             absenceReason: kindSel.value === 'absence' ? absenceReasonIn.value : undefined,
           });
-          toast('حُفظت الحصة.');
+          toast(r && r.measured ? 'حُفظت الحصة — والقياسات في سجل InBody.' : 'حُفظت الحصة.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -1671,11 +1781,13 @@ async function openSessionEditModal(onDone, s) {
       el('div', { class: 'span-2' }, field('نوع الحصة', kindSel)),
       absenceField,
       field('التاريخ', dateIn), field('الساعة', timeIn),
-      field('المدة (دقيقة)', durIn), field('الوزن (كغ)', weightIn),
+      field('المدة (دقيقة)', durIn),
       el('div', { class: 'span-2' }, field('الأسلوب', styleIn)),
+      ...measureFields,
       el('div', { class: 'span-2' }, field('ملاحظات', notesIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ التعديلات'))),
   ]);
+  syncKind();
 }
 
 /* تعديل قراءة InBody */

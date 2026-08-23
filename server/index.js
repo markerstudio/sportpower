@@ -1527,6 +1527,20 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
      خصم حصة إضافية من رصيده بصمت. */
   const clash = (await Store.find('sessions', { traineeId: trainee.id, date, time }, { limit: 1 }))[0];
   if (clash) {
+    /* أيام اللبس بين الموعد والحصة سُجّل التدريب الواحد مرتين: حصةً من جهة،
+       وموعدًا بقي «بلا حصة» من جهة. فإن جاء التسجيل من موعد غير مربوط
+       والحصة المطابقة غير مربوطة بموعد آخر، نربطهما بدل الرفض —
+       تسوية للموعد دون أي خصم جديد. */
+    if (appointmentId) {
+      const appt = await Store.get('appointments', Number(appointmentId));
+      const owner = (await Store.find('appointments', { sessionId: clash.id }, { limit: 1 }))[0];
+      if (appt && !appt.sessionId && appt.traineeId === trainee.id && !owner) {
+        await Store.update('appointments', appt.id, {
+          status: clash.kind === 'absence' ? 'missed' : 'done', sessionId: clash.id,
+        });
+        return res.json({ linked: true, session: clash });
+      }
+    }
     return res.status(409).json({
       error: `لهذا المتدرب حصة مسجَّلة بالفعل يوم ${date} الساعة ${time} — لم تُسجَّل حصة ثانية ولم يُخصم رصيد إضافي.`
         + ' إن كانت حصةً مختلفة فعلًا فغيّر الساعة.',
@@ -1650,7 +1664,8 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
 /* قياسات الحصة (وزن/دهون %/كتلة دهون كغ/عضل + شريط القياس) تُحفظ تلقائيًا
    قراءةً في سجل InBody */
 const SESSION_MEASURE_KEYS = ['weight', 'bodyFatPct', 'muscleMass', 'fatMass', 'waist', 'chest', 'arm', 'hips', 'leg'];
-async function recordSessionMeasurements(traineeId, date, m, byId) {
+const SESSION_MEASURE_NOTE = 'قياسات مسجلة مع الحصة';
+async function recordSessionMeasurements(traineeId, date, m, byId, { upsert = false, prevDate = null } = {}) {
   const vals = {};
   let any = false;
   for (const k of SESSION_MEASURE_KEYS) {
@@ -1658,10 +1673,24 @@ async function recordSessionMeasurements(traineeId, date, m, byId) {
     if (vals[k]) any = true;
   }
   if (!any) return false;
+  /* قياس بعد الحصة (تعديلها): القراءة المرتبطة بالحصة تُحدَّث لا تُكرَّر —
+     يُملأ المرسَل فقط فلا يمحو تعديلٌ لاحق قياسًا سابقًا، ولا تُمسّ قراءة
+     أُدخلت يدويًا في اليوم نفسه (تُميَّز قراءة الحصة بملاحظتها). */
+  if (upsert) {
+    const dates = prevDate && prevDate !== date ? [date, prevDate] : [date];
+    const twin = (await Store.find('inbody', { traineeId, date: { in: dates } }))
+      .find((r) => (r.notes || '') === SESSION_MEASURE_NOTE);
+    if (twin) {
+      const patch = { date };
+      for (const k of SESSION_MEASURE_KEYS) if (vals[k]) patch[k] = vals[k];
+      await Store.update('inbody', twin.id, patch);
+      return true;
+    }
+  }
   await Store.insert('inbody', {
     traineeId, date, ...vals,
     water: null, bmi: null, score: null,
-    notes: 'قياسات مسجلة مع الحصة', createdBy: byId,
+    notes: SESSION_MEASURE_NOTE, createdBy: byId,
   });
   return true;
 }
@@ -1718,7 +1747,19 @@ app.put('/api/sessions/:id', auth, requireRole('admin', 'trainer'), h(async (req
     }
     patch.trainerId = newTrainer.id;
   }
-  res.json(await Store.update('sessions', session.id, patch));
+  const updated = await Store.update('sessions', session.id, patch);
+
+  /* القياس بعد الحصة: كانت القياسات تُدخل لحظة تسجيل الحصة فقط، والمدرب
+     قد يقيس بعدها — فتُقبل هنا أيضًا وتُحفظ قراءةً في سجل InBody كما عند
+     التسجيل (تحديثًا للقراءة المرتبطة بالحصة إن وُجدت، لا تكرارًا). */
+  let measured = false;
+  if ((patch.kind || session.kind) !== 'absence') {
+    const m = {};
+    for (const k of SESSION_MEASURE_KEYS) if (req.body[k] !== undefined) m[k] = req.body[k];
+    measured = await recordSessionMeasurements(session.traineeId, updated.date, m, req.user.id,
+      { upsert: true, prevDate: session.date });
+  }
+  res.json({ ...updated, measured });
 }));
 
 /* حذف حصة — الإدارة لأي حصة، والمدرب لحصصه هو (تصحيح إدخال خاطئ).
@@ -2033,6 +2074,21 @@ app.put('/api/appointments/:id', auth, requireRole('admin', 'accountant', 'train
     if (req.body[k] !== undefined) patch[k] = k === 'duration' ? Number(req.body[k]) : req.body[k];
   });
   if (req.body.kind !== undefined) patch.kind = apptKind(req.body.kind);
+  /* الفخ الذي أوقع المدربين في اللبس: تعليم الموعد «منفذًا» من القائمة لا
+     يسجّل حصة ولا يخصم من الرصيد — لكنه كان يبدو في التقويم كأن الحصة تمت.
+     التنفيذ الصحيح من زر «تسجيل الحصة»: يخصم ويربط الحصة ويعلّم الموعد
+     تلقائيًا. (موعد Test لزائر بلا حساب يبقى يُعلَّم يدويًا — لا رصيد له.)
+     يُمنع التحويل فقط، فتعديل موعد عُلّم قديمًا لا يُرفض. */
+  if (appt.traineeId && !appt.sessionId && patch.status === 'done' && appt.status !== 'done') {
+    return res.status(400).json({
+      error: 'تعليم الموعد «منفذًا» لا يسجّل حصة ولا يخصم من الرصيد. سجّل الحصة من زر «تسجيل الحصة» — تُخصم من الاشتراك ويُعلَّم الموعد منفذًا تلقائيًا.',
+    });
+  }
+  if (appt.traineeId && !appt.sessionId && patch.status === 'missed' && appt.status !== 'missed') {
+    return res.status(400).json({
+      error: 'الغياب يُسجَّل من زر «غياب» ليُخصم من الرصيد حسب سياسة النادي — ويُعلَّم الموعد فائتًا تلقائيًا.',
+    });
+  }
   // تصحيح اسم صاحب الـ Test أو جواله (زائر غير مسجّل)
   if (appt.traineeId == null) {
     if (req.body.prospectName !== undefined) patch.prospectName = String(req.body.prospectName || '').trim().slice(0, 100);
@@ -2844,6 +2900,30 @@ async function buildTraineeRoster({ branch, status }) {
   if (status === 'inactive') rows = rows.filter((r) => !r.subscription || r.subscription.status !== 'active');
   rows.sort((a, b) => a.branch.localeCompare(b.branch, 'ar') || a.name.localeCompare(b.name, 'ar'));
 
+  /* سجل الدفعات كاملًا — دفعة بسطر، الأحدث أولًا. كان التقرير يُخرج
+     «آخر دفعة» وحدها فيبدو عند التنزيل إلى Excel أن الدفعات ضاعت؛
+     المحاسبة تحتاج كل دفعة بتاريخها ومبلغها لمطابقة الصندوق. */
+  const inRoster = new Set(rows.map((r) => r.traineeId));
+  const subById = {};
+  subscriptions.forEach((s) => { subById[s.id] = s; });
+  const rowByTrainee = {};
+  rows.forEach((r) => { rowByTrainee[r.traineeId] = r; });
+  const paymentsLog = payments
+    .filter((p) => inRoster.has(p.traineeId))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+    .map((p) => {
+      const sub = p.subscriptionId != null ? subById[p.subscriptionId] : null;
+      const r = rowByTrainee[p.traineeId];
+      const bid = p.branchId != null ? p.branchId : r.branchId;
+      return {
+        traineeId: p.traineeId, name: r.name, branchId: bid, branch: branchName(bid),
+        date: p.date, amount: p.amount, method: p.method || '',
+        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة` : '',
+        subPeriod: sub ? `${sub.startDate} ← ${sub.endDate}` : '',
+        note: p.note || '',
+      };
+    });
+
   /* من أي المناطق يأتي المشتركون فعلًا — المنطقة الفارغة تُعرض صراحةً
      «غير محدد» حتى يظهر حجم النقص في الإدخال بدل أن يختفي. */
   const areaMap = {};
@@ -2868,6 +2948,7 @@ async function buildTraineeRoster({ branch, status }) {
   }
   return {
     rows, areas,
+    paymentsLog: paymentsLog.map((p) => ({ ...p, currency: cur.of(p.branchId) })),
     totals: {
       trainees: rows.length,
       active: rows.filter((r) => r.subscription && r.subscription.status === 'active').length,
@@ -2924,6 +3005,18 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   const curTotal = (m) => Object.entries(m || {}).map(([c, v]) => `${v} ${c}`).join(' / ') || '0';
   lines.push(`إجمالي المحصّل منهم,${curTotal(data.totals.paidTotal)}`);
   lines.push(`إجمالي المتبقي عليهم,${curTotal(data.totals.dueTotal)}`);
+
+  /* سجل الدفعات كاملًا — كان العمود «آخر دفعة» يوحي عند التنزيل أن باقي
+     الدفعات ضاعت؛ هنا كل دفعة بسطرها لمطابقة الصندوق في Excel. */
+  if (req.query.payments) {
+    lines.push('', `سجل الدفعات كاملًا — دفعة بسطر (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
+    lines.push('#,المتدرب,الفرع,التاريخ,المبلغ,العملة,طريقة الدفع,الباقة,فترة الاشتراك,ملاحظة');
+    data.paymentsLog.forEach((p, i) => lines.push(
+      `${i + 1},${cell(p.name)},${cell(p.branch)},${p.date},${p.amount},${p.currency},${cell(p.method)},${cell(p.packageName)},${cell(p.subPeriod)},${cell(p.note)}`));
+    const sums = {};
+    data.paymentsLog.forEach((p) => { sums[p.currency] = roundMoney((sums[p.currency] || 0) + p.amount, p.currency); });
+    lines.push(`إجمالي السجل,${curTotal(sums)}`);
+  }
 
   lines.push('', 'المنطقة (مكان السكن),عدد المتدربين,منهم فعّالون,التوزّع على الفروع');
   data.areas.forEach((a) => lines.push(

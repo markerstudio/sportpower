@@ -217,3 +217,171 @@ test('anonymize: admin-only, needs confirmation, scrubs identity but keeps finan
   const login10 = await login('ahmad', '123456');
   assert.ok(!login10.token, 'anonymized account can no longer log in');
 });
+
+/* ============================================================
+   الموعد ≠ الحصة: كان المدربون يعلّمون الموعد «منفذًا» ظنًا أنه يسجّل
+   الحصة — بلا خصم ولا سجل. الاختبارات تثبّت الصمّام والتسوية.
+   ============================================================ */
+test('appointment vs session: manual «done» is blocked; recording deducts, links, and settles', async () => {
+  // متدرب جديد باشتراك فعّال معزول عن بقية الاختبارات
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب التسوية', phone: '0599777001', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 10, price: 400, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const tid = ob.user.id;
+  const subId = ob.subscription.id;
+  const remaining = async () => {
+    const subs = (await req('GET', '/api/subscriptions?trainee=' + tid, { token: S.admin })).json;
+    return subs.find((s) => s.id === subId).remaining;
+  };
+  const getAppt = async (id, date) => {
+    const list = (await req('GET', `/api/appointments?from=${date}&to=${date}`, { token: S.admin })).json;
+    return list.find((a) => a.id === id);
+  };
+
+  // 1) موعد مجدول لا يخصم شيئًا، وتعليمه «منفذًا» يدويًا مرفوض
+  const a1 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-20', time: '10:00' } })).json;
+  assert.equal(await remaining(), 10, 'booking an appointment must not deduct');
+  const deny = await req('PUT', '/api/appointments/' + a1.id, { token: S.admin, body: { status: 'done' } });
+  assert.equal(deny.status, 400, 'manual «done» without a session must be rejected');
+  assert.equal((await req('PUT', '/api/appointments/' + a1.id, { token: S.admin, body: { status: 'missed' } })).status, 400,
+    'manual «missed» without a session must be rejected');
+
+  // 2) تسجيل الحصة من الموعد: يخصم ويربط ويعلّم الموعد منفذًا
+  const s1 = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-20', time: '10:00', duration: 60, appointmentId: a1.id,
+  } });
+  assert.equal(s1.status, 200);
+  assert.equal(await remaining(), 9, 'recording the session deducts exactly one');
+  const a1After = await getAppt(a1.id, '2026-08-20');
+  assert.equal(a1After.status, 'done');
+  assert.equal(a1After.sessionId, s1.json.session.id, 'appointment links to its session');
+
+  // 3) إدخال مزدوج قديم: حصة سُجّلت من غير الموعد — التسجيل من الموعد يربطها بلا خصم جديد
+  const a2 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-21', time: '17:00' } })).json;
+  await req('POST', '/api/sessions', { token: S.admin, body: { traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60 } });
+  assert.equal(await remaining(), 8, 'the standalone session deducted one');
+  const link = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60, appointmentId: a2.id,
+  } });
+  assert.equal(link.status, 200);
+  assert.equal(link.json.linked, true, 'duplicate from an unlinked appointment links instead of erroring');
+  assert.equal(await remaining(), 8, 'linking must not deduct a second session');
+  const a2After = await getAppt(a2.id, '2026-08-21');
+  assert.equal(a2After.status, 'done');
+  assert.equal(a2After.sessionId, link.json.session.id);
+
+  // 4) الحصة المربوطة بموعدٍ ما لا تُربط بموعد آخر — يبقى الرفض 409
+  const a3 = (await req('POST', '/api/appointments', { token: S.admin, body: { trainerId: 2, traineeId: tid, date: '2026-08-21', time: '17:30' } })).json;
+  const steal = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-21', time: '17:30', duration: 60, appointmentId: a3.id,
+  } });
+  assert.equal(steal.status, 409, 'a session already linked to another appointment is not re-linked');
+  assert.equal(steal.json.duplicate, true);
+
+  // 5) موعد Test لزائر بلا حساب: التعليم اليدوي «منفذ» يبقى مسموحًا (لا رصيد له)
+  const test1 = (await req('POST', '/api/appointments', { token: S.admin, body: {
+    trainerId: 2, kind: 'test', prospectName: 'زائر تجربة', date: '2026-08-22', time: '12:00',
+  } })).json;
+  assert.equal((await req('PUT', '/api/appointments/' + test1.id, { token: S.admin, body: { status: 'done' } })).status, 200,
+    'prospect Test appointments are still settled manually');
+
+  // 6) تعديل موعد قديم عُلّم «منفذًا» بلا حصة لا يُرفض (المنع على التحويل فقط)
+  const keep = await req('PUT', '/api/appointments/' + test1.id, { token: S.admin, body: { status: 'done', note: 'تصحيح ملاحظة' } });
+  assert.equal(keep.status, 200, 'saving an already-done appointment stays possible');
+});
+
+test('trainees report: payments=1 exports the FULL payments log, not only the last payment', async () => {
+  // متدرب باشتراك — عليه دفعتان بتاريخين مختلفين
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب الدفعات', phone: '0599777002', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 12, price: 600, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const subId = ob.subscription.id;
+  assert.equal((await req('POST', '/api/payments', { token: S.admin, body: { subscriptionId: subId, amount: 200, date: '2026-08-05', method: 'كاش' } })).status, 200);
+  assert.equal((await req('POST', '/api/payments', { token: S.admin, body: { subscriptionId: subId, amount: 150, date: '2026-08-18', method: 'تحويل' } })).status, 200);
+
+  const res = await fetch(base + '/api/reports/trainees.csv?payments=1', { headers: { Authorization: 'Bearer ' + S.admin } });
+  const text = await res.text();
+  assert.ok(text.includes('سجل الدفعات كاملًا'), 'the payments-log section must exist');
+  const logPart = text.slice(text.indexOf('سجل الدفعات كاملًا'));
+  const mine = logPart.split('\r\n').filter((l) => l.includes('متدرب الدفعات'));
+  assert.equal(mine.length, 2, 'both payments must appear, not only the last one');
+  assert.ok(mine.some((l) => l.includes('2026-08-05') && l.includes('200')), 'first payment present');
+  assert.ok(mine.some((l) => l.includes('2026-08-18') && l.includes('150')), 'second payment present');
+  // بدون payments=1 لا يظهر القسم — التقرير القديم كما هو
+  const res2 = await fetch(base + '/api/reports/trainees.csv', { headers: { Authorization: 'Bearer ' + S.admin } });
+  assert.ok(!(await res2.text()).includes('سجل الدفعات كاملًا'), 'section only appears when requested');
+});
+
+test('sessions: measurements can be added AFTER recording — saved to InBody, updated not duplicated', async () => {
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب القياسات', phone: '0599777003', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 10, price: 500, startDate: '2026-08-01', endDate: '2026-12-01' },
+  } })).json;
+  const tid = ob.user.id;
+
+  // حصة بلا أي قياسات وقت التسجيل
+  const s = (await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-08-19', time: '09:00', duration: 60,
+  } })).json.session;
+  const readings = async () => (await req('GET', '/api/inbody?trainee=' + tid, { token: S.admin })).json
+    .filter((r) => r.date === '2026-08-19');
+  assert.equal((await readings()).length, 0, 'no reading yet');
+
+  // القياس بعد الحصة: تعديلها بالقياسات يُنشئ قراءة InBody
+  const put1 = await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82.5, bodyFatPct: 21, waist: 90 } });
+  assert.equal(put1.status, 200);
+  assert.equal(put1.json.measured, true);
+  let rs = await readings();
+  assert.equal(rs.length, 1, 'one reading created after the fact');
+  assert.equal(rs[0].weight, 82.5);
+  assert.equal(rs[0].bodyFatPct, 21);
+
+  // تعديل ثانٍ يحدّث القراءة نفسها — لا يكررها ولا يمحو ما لم يُرسل
+  const put2 = await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82.5, bodyFatPct: 20.5 } });
+  assert.equal(put2.json.measured, true);
+  rs = await readings();
+  assert.equal(rs.length, 1, 'still a single session reading');
+  assert.equal(rs[0].bodyFatPct, 20.5, 'updated value');
+  assert.equal(rs[0].waist, 90, 'unsent field kept');
+
+  // قراءة يدوية بنفس اليوم لا تُمسّ
+  await req('POST', '/api/inbody', { token: S.admin, body: { traineeId: tid, date: '2026-08-19', weight: 83, notes: 'قياس يدوي' } });
+  await req('PUT', '/api/sessions/' + s.id, { token: S.admin, body: { weight: 82 } });
+  const all = await readings();
+  assert.equal(all.length, 2, 'manual reading coexists');
+  const manual = all.find((r) => r.notes === 'قياس يدوي');
+  assert.equal(manual.weight, 83, 'manual reading untouched');
+});
+
+test('targets: trainer-performance metrics become measurable goals (hours, office, stories, referred)', async () => {
+  const month = '2026-08';
+  // سجل يوم للمدرب عمر: حضور 5 ساعات + 4 ستوريات + 2 ريلز
+  assert.equal((await req('POST', '/api/trainer-logs', { token: S.admin, body: {
+    trainerId: 2, date: '2026-08-20', checkIn: '09:00', checkOut: '14:00', stories: 4, reels: 2,
+  } })).status, 200);
+  // زبون جاء عن طريق المدرب — Onboarding بمصدره
+  await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'زبون محال', phone: '0599777004', branchId: 1, goal: 'loss', sourceTrainerId: 2,
+    subscription: { totalSessions: 8, price: 300, startDate: '2026-08-01', endDate: '2026-11-01' },
+  } });
+  for (const [metric, value] of [['hours', 3], ['officeHours', 40], ['stories', 10], ['reels', 8], ['referred', 5]]) {
+    assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+      scope: 'trainer', refId: 2, metric, period: month, value,
+    } })).status, 200, metric + ' target accepted');
+  }
+  const targets = (await req('GET', '/api/targets', { token: S.admin })).json;
+  const of = (m) => targets.find((t) => t.scope === 'trainer' && t.refId === 2 && t.metric === m && t.period === month);
+  assert.equal(of('hours').metricLabel, 'ساعات التدريب');
+  assert.ok(of('hours').actual >= 1, 'hours computed from delivered sessions');
+  assert.ok(of('officeHours').actual >= 5, 'office hours include the check-in/out log');
+  assert.ok(of('stories').actual >= 4, 'stories include the day log');
+  assert.ok(of('reels').actual >= 2, 'reels include the day log');
+  assert.ok(of('referred').actual >= 1, 'referred counts sourced onboarding');
+
+  // KPI الشهري للمدرب يلتقط الأهداف الجديدة تلقائيًا
+  const kpis = (await req('GET', '/api/kpi?month=' + month, { token: S.admin })).json;
+  const k = kpis.find((x) => x.trainerId === 2);
+  assert.ok(k && k.targetsPct !== null, 'trainer KPI includes the new metric targets');
+});
