@@ -87,6 +87,26 @@ async function pgChecks() {
     const { max_id: maxId, seq } = rows[0];
     if (Number(maxId) > Number(seq)) out.push(`عدّاد ${t} (${seq}) خلف أكبر معرّف (${maxId}) — سيقع تصادم مفاتيح`);
   }
+  // أمن الواجهة العامة: RLS مفعّل على كل جداول public، ولا صلاحيات
+  // لدوري anon/authenticated (واجهة Supabase Data API غير المستخدمة)
+  const rls = await pool.query(`
+    SELECT c.relname AS t FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p') AND NOT c.relrowsecurity`);
+  if (rls.rows.length) {
+    out.push(`${rls.rows.length} جدولًا بلا Row-Level Security (${rls.rows.slice(0, 5).map((r) => r.t).join('، ')}${rls.rows.length > 5 ? '…' : ''}) — مكشوف لواجهة Data API إن كانت مفعّلة`);
+  }
+  const grants = await pool.query(`
+    SELECT DISTINCT pr.rolname AS r FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    CROSS JOIN LATERAL aclexplode(c.relacl) a
+    JOIN pg_roles pr ON pr.oid = a.grantee
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p') AND pr.rolname IN ('anon','authenticated')`);
+  if (grants.rows.length) {
+    out.push(`دور الواجهة العامة (${grants.rows.map((r) => r.r).join('، ')}) ما يزال يملك صلاحيات على جداول public`);
+  }
+  if (!rls.rows.length && !grants.rows.length) out.push('ℹ️ الواجهة العامة مقفلة: RLS مفعّل على كل الجداول ولا صلاحيات لأدوار anon/authenticated');
+
   // الترحيلات المطبَّقة
   const mig = await pool.query('SELECT id, name FROM schema_migrations ORDER BY id');
   out.push(`ℹ️ الترحيلات المطبّقة: ${mig.rows.map((r) => r.id + ':' + r.name).join('، ') || 'لا شيء'}`);

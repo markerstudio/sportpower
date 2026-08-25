@@ -287,6 +287,17 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    id: 4,
+    name: 'row-level-security',
+    async up(c, log) {
+      /* تنبيه Supabase الأمني (rls_disabled_in_public): جداول public
+         كانت مكشوفة لواجهة Data API المولَّدة تلقائيًا. التفصيل أعلى
+         secureTables — وهي تعمل بعد هذا الترحيل عند كل إقلاع أيضًا،
+         لكن الترحيل يرفع schemaVersion فيؤكد فحصُ ما بعد النشر تطبيقَه. */
+      await secureTables(c, log);
+    },
+  },
 ];
 
 /* مزامنة المخطط: تنشئ أي **مجموعة** جديدة أُضيفت إلى schema.js، وتضيف أي
@@ -327,6 +338,88 @@ async function syncSchema(c, log) {
   }
 }
 
+/* ============================================================
+   تأمين الجداول — Row-Level Security وصلاحيات أدوار الواجهة العامة
+
+   Supabase يفتح لكل مشروع واجهة REST مولَّدة تلقائيًا (Data API) تخدم
+   جداول مخطط public لكل حامل مفتاح anon — وهو مفتاح يُعامَل عندهم
+   كقيمة علنية. هذا النظام لا يستخدم تلك الواجهة إطلاقًا: الخادم وحده
+   يخاطب القاعدة عبر DATABASE_URL. فالصواب إقفالها بالكامل:
+
+   1) تفعيل RLS على كل جدول في public. بلا سياسات يعني منعًا تامًّا
+      لكل الأدوار — إلا مالك الجدول، واتصال الخادم هو المالك (هو من
+      أنشأها) فلا يتأثر عمل النظام في شيء.
+   2) سحب صلاحيات دوري anon وauthenticated (دفاع إضافي فوق RLS).
+      وجود الدورين علامة Supabase — على Postgres محلي أو مزوّد آخر
+      لا يوجدان فيُتخطى السحب.
+
+   تُستدعى ضمن الترحيل #4 وعند كل إقلاع بعده، فأي جدول جديد —
+   من syncSchema أو من لوحة المزوّد — يؤمَّن تلقائيًا.
+   ============================================================ */
+const API_ROLES = ['anon', 'authenticated'];
+const quoteIdent = (name) => '"' + String(name).replace(/"/g, '""') + '"';
+
+async function secureTables(c, log) {
+  /* 1) RLS على كل جدول أساس في public لم يُفعَّل عليه بعد — يشمل
+     schema_migrations والنسخ الاحتياطية _legacy_v1 وأي جدول مستقبلي.
+     نقتصر على الجداول التي نملك تعديلها (جداول الإضافات المملوكة
+     لغيرنا ليست شأننا)، وكل ALTER في نقطة حفظ حتى لا يُسقط تعثُّرُ
+     جدولٍ واحدٍ الإقلاعَ كله. */
+  const { rows: unprotected } = await c.query(`
+    SELECT c.relname AS name FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+      AND NOT c.relrowsecurity AND pg_has_role(c.relowner, 'USAGE')`);
+  let secured = 0;
+  for (const t of unprotected) {
+    await c.query('SAVEPOINT rls_one');
+    try {
+      await c.query(`ALTER TABLE public.${quoteIdent(t.name)} ENABLE ROW LEVEL SECURITY`);
+      await c.query('RELEASE SAVEPOINT rls_one');
+      secured++;
+    } catch (e) {
+      await c.query('ROLLBACK TO SAVEPOINT rls_one');
+      log(`  ⚠️ تعذّر تفعيل RLS على ${t.name}: ${e.message}`);
+    }
+  }
+  if (secured) log(`  🔒 فُعّل Row-Level Security على ${secured} جدولًا`);
+
+  /* 2) صلاحيات أدوار الواجهة العامة — الفحص وحده كل إقلاع (استعلام
+     نظام رخيص)، والسحب مرة واحدة حين توجد صلاحيات فعلًا */
+  const { rows: existing } = await c.query(
+    'SELECT rolname FROM pg_roles WHERE rolname = ANY($1) ORDER BY rolname', [API_ROLES]);
+  if (!existing.length) return; // ليس Supabase — لا شيء يُسحب
+  const names = existing.map((r) => r.rolname);
+  const { rows: [acl] } = await c.query(`
+    SELECT EXISTS (SELECT 1 FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+              AND a.grantee IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1))) AS granted
+    `, [names]);
+  if (!acl.granted) return;
+
+  /* نقطة حفظ: RLS أعلاه هو القفل الأساسي، فتعثُّر السحب لا يمنع الإقلاع */
+  const roles = names.map(quoteIdent).join(', ');
+  await c.query('SAVEPOINT revoke_api_roles');
+  try {
+    await c.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${roles}`);
+    await c.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${roles}`);
+    await c.query(`REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ${roles}`);
+    await c.query(`REVOKE ALL ON SCHEMA public FROM ${roles}`);
+    /* الصيغة العامة (بلا IN SCHEMA) عمدًا: منح Supabase الافتراضي عام،
+       والصيغة المقيّدة بمخطط لا تُبطله — فتعود الصلاحيات لكل جدول جديد */
+    await c.query(`ALTER DEFAULT PRIVILEGES REVOKE ALL ON TABLES FROM ${roles}`);
+    await c.query(`ALTER DEFAULT PRIVILEGES REVOKE ALL ON SEQUENCES FROM ${roles}`);
+    await c.query(`ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM ${roles}`);
+    await c.query('RELEASE SAVEPOINT revoke_api_roles');
+    log('  🔒 سُحبت صلاحيات anon/authenticated عن مخطط public (الواجهة العامة غير مستخدمة)');
+  } catch (e) {
+    await c.query('ROLLBACK TO SAVEPOINT revoke_api_roles');
+    log('  ⚠️ تعذّر سحب صلاحيات anon/authenticated: ' + e.message + ' — RLS يبقى القفل الفعلي');
+  }
+}
+
 async function runMigrations(pool, log) {
   const c = await pool.connect();
   try {
@@ -355,10 +448,12 @@ async function runMigrations(pool, log) {
         throw new Error(`فشل الترحيل #${m.id} (${m.name}): ${e.message}`);
       }
     }
-    // بعد الترحيلات: طابِق أي عمود/فهرس أُضيف للمخطط بلا ترحيل خاص
+    // بعد الترحيلات: طابِق أي عمود/فهرس أُضيف للمخطط بلا ترحيل خاص،
+    // وأمِّن أي جدول جديد (RLS) — انظر secureTables
     await c.query('BEGIN');
     try {
       await syncSchema(c, log);
+      await secureTables(c, log);
       await c.query('COMMIT');
     } catch (e) {
       await c.query('ROLLBACK');
@@ -590,4 +685,4 @@ class PgDriver {
   async end() { await this.pool.end(); }
 }
 
-module.exports = { PgDriver, runMigrations, toRow, fromRow, buildWhere, createTableSql, MIGRATIONS };
+module.exports = { PgDriver, runMigrations, secureTables, toRow, fromRow, buildWhere, createTableSql, MIGRATIONS };

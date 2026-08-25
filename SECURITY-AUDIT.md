@@ -132,3 +132,28 @@ I have reviewed the entire server request surface and independently tested the a
 Within the stated limitations — a code-level review against a local instance, not a live-production penetration test — **the SportPower application's security posture is appropriate for launch with real member health data, contingent on completing the production checklist in Section 6.**
 
 I did not, and will not, claim a system holding health data is "guaranteed secure." No one honestly can. What I can say is: the known application-layer weaknesses have been found and closed, the defenses are tested, and the remaining work is yours to complete in production and with a lawyer.
+
+---
+
+## 8. Addendum (25 Aug 2026) — Supabase `rls_disabled_in_public` advisory
+
+**Trigger.** Supabase's automated Security Advisor emailed the owner (23 Aug 2026): tables in the `public` schema are "publicly accessible" because Row-Level Security is not enabled — flagged Critical.
+
+**Analysis.** This is infrastructure configuration, explicitly outside the original audit's scope (§2, "I did not audit third-party infrastructure … beyond how your code uses it") — and it was real. Every Supabase project exposes an auto-generated REST API (`https://<project>.supabase.co/rest/v1/`, PostgREST) over all tables in `public`, gated only by the project's `anon` API key — a key Supabase itself treats as publishable. This system never uses that API: the browser talks only to the Express server, and the server talks to Postgres over `DATABASE_URL`. But the tables the server creates lived in `public` with RLS disabled and Supabase's default full grants to the `anon`/`authenticated` roles. **Anyone holding the anon key could read and write every table** through that endpoint — password hashes, TOTP secrets, session-token hashes, member health data, photo records, payments — including inserting an admin account of their own.
+
+**Practical exploitability.** The anon key appears nowhere in this codebase, nowhere in the entire git history (full-history scan), and in no client-side code — it never left the Supabase dashboard. So exploitation required a key that was never published. Residual likelihood is judged low; it is treated as exposed regardless, because the key is designed to be public and the door it opens was unlocked.
+
+**Fix (this change set).**
+- **Migration `#4 row-level-security`** enables RLS on *every* table in `public` (33 at present, `schema_migrations` and legacy backups included). No policies are defined: with RLS on and no policies, PostgreSQL denies all access to every role except the table owner — which is the server's own connection — so application behaviour is unchanged.
+- All privileges of the Supabase API roles `anon` and `authenticated` are **revoked** across the `public` schema, including default privileges for future objects (defense in depth above RLS; `service_role` grants are kept — that key is secret and server-side).
+- The routine **re-runs at every boot**: a table added later (schema sync, or by hand in the dashboard) is locked automatically, and re-granted privileges are re-revoked. On non-Supabase Postgres (local dev, Neon) the role revocation is skipped (roles absent) and RLS enabling is a no-op for the owner. Failures in the hardening path are savepoint-isolated so they can never block boot.
+- `npm run db:check` now verifies both properties against the live database and fails if any table is left open.
+- Regression test `test/rls.test.js` (opt-in via `TEST_DATABASE_URL`, local Postgres) simulates the Supabase grant layout end-to-end and asserts: RLS on all tables, zero API-role grants, `anon` sees **zero rows even when explicitly granted SELECT**, and the owner connection works unchanged.
+
+**Adversarial verification** (Postgres 16, Supabase-like role setup): without grants → `permission denied for table users`; with grants deliberately restored → 0 rows visible, inserts blocked; a stray table created outside the app was auto-locked on the next boot; repeated boots are idempotent and quiet.
+
+**Remaining actions for the owner (dashboard-only; the code-level lock does not depend on them):**
+- [ ] Disable the Data API wholesale: **Project Settings → Data API** off, or remove `public` from **Exposed schemas** — removes the attack surface entirely.
+- [ ] **Logs → API Gateway**: filter `/rest/v1` over the exposure window. Unrecognised requests bearing only the anon key would indicate actual access; none are expected given the key never shipped.
+- [ ] Optional but cheap here: rotate the project's API keys (Settings → API). Update `SUPABASE_SERVICE_ROLE_KEY` in Vercel in the same step or image storage breaks.
+- [ ] Redeploy, then confirm `/api/health` reports `schemaVersion: 4`, `npm run db:check` prints the "الواجهة العامة مقفلة" line, and the Security Advisor no longer lists `rls_disabled_in_public`. (An INFO-level "RLS enabled, no policy" note may remain — that is this design working as intended.)
