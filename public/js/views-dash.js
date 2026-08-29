@@ -170,11 +170,15 @@ function viewLogin(root) {
    لوحة الإدارة
    ============================================================ */
 async function viewAdminDash(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [data, branches] = await Promise.all([
@@ -464,7 +468,8 @@ async function renderTrainerSchedule(card, dashData, onDone) {
 
 /* حصص المدرب حسب اليوم — يراجع كل ما سجّله في أي يوم ويعدّله أو يحذفه */
 async function renderTrainerDaySessions(card, onDone) {
-  const state = { date: todayISO() };
+  // بادئة خاصة: بطاقة «سجل اليوم» في الصفحة نفسها تستعمل date أيضًا
+  const state = urlState({ date: todayISO() }, 'sess');
   const dateIn = input({
     type: 'date', value: state.date, style: 'width:150px',
     onchange: (e) => { state.date = e.target.value; draw(); },
@@ -491,6 +496,7 @@ async function renderTrainerDaySessions(card, onDone) {
     body);
 
   async function draw() {
+    state.sync();
     body.innerHTML = '';
     body.append(spinnerCard());
     let sessions = [];
@@ -665,11 +671,15 @@ async function openLogSessionModal(onDone, prefill = {}) {
    اللوحة المالية — المحاسب
    ============================================================ */
 async function viewAccountantDash(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [data, branches, expenses, targets, debts] = await Promise.all([

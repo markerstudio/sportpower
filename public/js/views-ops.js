@@ -84,12 +84,16 @@ function dailyByCurrency(data) {
    ============================================================ */
 async function viewDaily(root) {
   // «المتابعة اليومية اختار الفرع الي بدي اتابعه»
-  const state = { date: todayISO(), branch: '' };
+  const state = urlState({ date: todayISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const branchQ = state.branch ? '&branch=' + state.branch : '';
@@ -264,11 +268,15 @@ const ACQUISITION_LABELS = {
 };
 
 async function viewKpi(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [targets, kpis, branches, trainers, board, allUsers] = await Promise.all([
@@ -728,7 +736,7 @@ async function renderTrainerOps(container) {
   const myKpi = kpis[0];
 
   /* --- سجل اليوم — مع تنقّل بالتاريخ: المدرب يراجع ساعاته في أي يوم ويعدّلها --- */
-  const state = { date: todayISO() };
+  const state = urlState({ date: todayISO() }, 'log');
   const checkIn = input({ type: 'time' });
   const checkOut = input({ type: 'time' });
   const goals = input({ type: 'number', min: 0 });
@@ -749,6 +757,7 @@ async function renderTrainerOps(container) {
   }
 
   async function loadDay() {
+    state.sync();
     titleDate.textContent = `سجل اليوم — ${state.date}`;
     dateIn.value = state.date;
     const logs = await API.get('/api/trainer-logs?date=' + state.date).catch(() => []);

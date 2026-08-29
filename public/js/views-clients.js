@@ -26,7 +26,10 @@ async function viewPackages(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  // موضع الصفحة يبقى بعد كل حفظ باقة أو عقد — لا تُرمى للأعلى
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
     container.innerHTML = '';
     container.append(spinnerCard());
     const [packages, contracts, branches, settings] = await Promise.all([
@@ -517,7 +520,9 @@ async function viewRatings(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
     container.innerHTML = '';
     container.append(spinnerCard());
     const data = await API.get('/api/session-ratings');

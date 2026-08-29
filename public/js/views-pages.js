@@ -7,14 +7,18 @@ async function viewCalendar(root) {
   /* branchScope: المدرب يرى مواعيده وحده افتراضيًا، ويستطيع فتح برنامج
      الفرع كاملًا (كل المدربين) — بطلب العميل. */
   /* «انا اختار الفرع بعدين اختار المدرب حتى يكون اسهل للادارة» */
-  const state = { start: weekStart(new Date()), trainer: '', branch: '', branchScope: false };
+  const state = urlState({ start: weekStart(new Date()), trainer: '', branch: '', branchScope: false });
   const container = el('div', { class: 'content' });
   root.append(container);
   const allBranches = ['admin', 'accountant'].includes(API.user.role)
     ? await API.get('/api/branches').catch(() => [])
     : [];
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const from = iso(state.start);
@@ -531,10 +535,14 @@ async function openOnboardModal(onDone, prefill = {}) {
 async function viewSubscriptions(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
-  const state = { branch: '' };
+  const state = urlState({ branch: '' });
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     // القوائم الكبيرة تُحمَّل صفحةً صفحة من الخادم مع أسماء متدربيها —
     // ولا تُحمَّل قائمة المتدربين كاملة إلا عند فتح نافذة تحتاجها.
@@ -941,7 +949,20 @@ async function viewInbody(root) {
   container.append(spinnerCard());
 
   const trainees = API.user.role === 'trainee' ? [] : await API.get('/api/users?role=trainee');
-  const state = { trainee: API.user.role === 'trainee' ? API.user.id : (trainees[0] || {}).id };
+  /* المتدرب المعروض في العنوان: التحديث لا يعيدك لأول اسم في القائمة،
+     والرابط يُرسل لزميل فيفتح على القراءات نفسها. */
+  const urlTrainee = urlState({ trainee: '' });
+  const firstId = (trainees[0] || {}).id;
+  const known = (id) => trainees.some((t) => String(t.id) === String(id));
+  const state = {
+    trainee: API.user.role === 'trainee' ? API.user.id
+      : (known(urlTrainee.trainee) ? Number(urlTrainee.trainee) : firstId),
+  };
+  const syncTrainee = () => {
+    if (API.user.role === 'trainee') return;
+    urlTrainee.trainee = state.trainee && state.trainee !== firstId ? String(state.trainee) : '';
+    urlTrainee.sync();
+  };
   /* هدف المتدرب المعروض — يحدد قراءة اتجاه الوزن (زيادةٌ لبناء العضل تقدّم) */
   const currentGoal = () => (API.user.role === 'trainee'
     ? API.user.goal
@@ -964,7 +985,10 @@ async function viewInbody(root) {
   if (isStaff) head.append(el('button', { class: 'btn btn--accent', onclick: () => openInbodyModal(renderList, state.trainee, trainees) }, '+ رفع قراءة InBody'));
   container.append(head, listCard);
 
-  async function renderList() {
+  const renderList = (...a) => keepScroll(() => buildList(...a));
+
+  async function buildList() {
+    syncTrainee();
     listCard.innerHTML = '';
     listCard.append(spinnerCard());
     const url = API.user.role === 'trainee' ? '/api/inbody' : '/api/inbody?trainee=' + state.trainee;
@@ -1118,7 +1142,7 @@ function mealCard(meal, { slotLabel, actions } = {}) {
 
 async function viewMeals(root) {
   const isStaff = ['admin', 'trainer', 'nutritionist'].includes(API.user.role);
-  const state = { search: '', type: '', goal: '', maxCalories: '', minProtein: '' };
+  const state = urlState({ search: '', type: '', goal: '', maxCalories: '', minProtein: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
@@ -1138,7 +1162,11 @@ async function viewMeals(root) {
     field('حد السعرات الأقصى', calIn), field('حد البروتين الأدنى', protIn));
   if (isStaff) filterBar.append(el('button', { class: 'btn btn--accent', onclick: () => openMealModal(render) }, '+ وجبة جديدة'));
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     grid.innerHTML = '';
     grid.append(spinnerCard());
     const q = new URLSearchParams();
@@ -1241,12 +1269,17 @@ const ROSTER_COLUMNS = [
 ];
 
 async function viewTraineeRoster(root) {
-  const state = { branch: '', status: '', cols: new Set(['phone', 'residence']) };
+  /* الفرع والحالة في العنوان؛ أعمدة التصدير اختيارٌ لحظي يبقى في الذاكرة */
+  const state = urlState({ branch: '', status: '' });
+  state.cols = new Set(['phone', 'residence']);
   const container = el('div', { class: 'content' });
   root.append(container);
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const q = `?branch=${state.branch}&status=${state.status}`;
@@ -1368,11 +1401,15 @@ async function viewTraineeRoster(root) {
 }
 
 async function viewReports(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [report, branches, kpis, growthReport, health, allTargets, allTrainers] = await Promise.all([
@@ -1576,9 +1613,13 @@ function branchHealthCard(health, rows, { compact } = {}) {
 async function viewSettings(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
-  const state = { roleFilter: '', search: '' };
+  const state = urlState({ roleFilter: '', search: '' });
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [branches, users, cfg] = await Promise.all([
@@ -1898,7 +1939,7 @@ async function viewMyTrainees(root) {
     API.get('/api/branches'),
   ]);
   container.innerHTML = '';
-  const state = { branch: '' };
+  const state = urlState({ branch: '' });
   const listWrap = el('div');
   const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
     value: state.branch, onchange: (e) => { state.branch = e.target.value; renderList(); },

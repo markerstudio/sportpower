@@ -1,5 +1,77 @@
 /* هيكل التطبيق: التوجيه + الشريط الجانبي + الإشعارات */
 
+/* ============================================================
+   حالة الشاشة في العنوان — «الرفرش للصفحة»
+   كانت فلاتر كل شاشة (الشهر، الفرع، الأولوية…) متغيّراتٍ في الذاكرة:
+   يكفي تحديثُ الصفحة أو العودة بزرّ المتصفح ليعود كل شيء للبداية،
+   فيُعاد ضبط الشهر والفرع من جديد في كل مرة. الحالة الآن في العنوان
+   نفسه: #/kpi?month=2026-07&branch=2 — فتُستعاد الشاشة كما تُركت،
+   ويصحّ نسخ الرابط وإرساله لزميل فيرى ما تراه أنت.
+
+   تُكتب بـ replaceState لا بتغيير location.hash: تغييرُ الهاش يُطلق
+   hashchange فتُعاد بناء الصفحة كاملة عند كل ضغطة على قائمة فلتر.
+   ============================================================ */
+const routeOf = (hash) => String(hash || '').split('?')[0];
+const paramsOf = (hash) => new URLSearchParams(String(hash || '').split('?')[1] || '');
+
+/* حالةُ شاشةٍ مربوطة بالعنوان.
+   defaults: { month: thisMonthISO(), branch: '' }
+   prefix: بادئة لمفاتيح العنوان حين تتشارك بطاقتان في الصفحة اسمَ حقل
+           (بطاقتا «سجل اليوم» و«حصص اليوم» كلتاهما date).
+   تُقرأ القيم الأولية من العنوان، وكل إسناد يُحدّث العنوان بلا إعادة توجيه.
+   لا تُمسّ مفاتيحُ غير المعلَنة هنا — فبطاقتان في صفحة واحدة لا تمحو
+   إحداهما فلترَ الأخرى عند المزامنة. */
+function urlState(defaults, prefix = '') {
+  const key = (k) => prefix + k;
+  const params = paramsOf(location.hash);
+  const state = {};
+  for (const [k, v] of Object.entries(defaults)) {
+    const raw = params.get(key(k));
+    // القيم المنطقية تُخزَّن '1'/'0' كي تبقى قابلة للقراءة في العنوان
+    state[k] = raw === null ? v : (typeof v === 'boolean' ? raw === '1' : raw);
+  }
+  Object.defineProperty(state, 'sync', {
+    enumerable: false,
+    value() {
+      const next = paramsOf(location.hash);
+      for (const [k, v] of Object.entries(defaults)) {
+        const cur = state[k];
+        const isDefault = typeof v === 'boolean'
+          ? !cur
+          : (cur === null || cur === undefined || cur === '' || String(cur) === String(v ?? ''));
+        if (isDefault) next.delete(key(k));
+        else next.set(key(k), typeof v === 'boolean' ? '1' : cur);
+      }
+      const qs = next.toString();
+      const url = routeOf(location.hash) + (qs ? '?' + qs : '');
+      if (url !== location.hash) history.replaceState(null, '', url);
+    },
+  });
+  return state;
+}
+
+/* موضع الصفحة يبقى كما هو عبر إعادة البناء.
+   «اذا مثلا اعملت في مركز القرارات انو نفذت قرار ما يرجع للاول — اضل
+   وين انا واصل»: كل شاشة تُعيد بناء نفسها بعد كل حفظ، وكانت تقفز
+   لأعلى الصفحة فيضيع مكان القارئ في قائمة طويلة. */
+async function keepScroll(fn) {
+  // الجداول تُعاد بناؤها هنا — يبدأ عدّها من جديد فتُطابَق بذاكرة مواضعها
+  resetTableSeq();
+  const y = window.scrollY || document.documentElement.scrollTop || 0;
+  const out = await fn();
+  // بعد رسم الإطار التالي: العناصر الجديدة موضوعة وارتفاع الصفحة معروف
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo({ top: Math.min(y, max), behavior: 'auto' });
+  }));
+  return out;
+}
+
+/* المتصفح يستعيد موضع التمرير بنفسه على صفحةٍ تُبنى بعد التحميل،
+   فيقفز قفزةً خاطئة — نتولّاه نحن أعلاه. */
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+
 function homeRoute(role) {
   return { admin: '#/admin', trainer: '#/trainer', accountant: '#/accountant', trainee: '#/me', nutritionist: '#/meals' }[role] || '#/login';
 }
@@ -289,7 +361,8 @@ async function openNotifications() {
 
 /* ---------- الموجّه ---------- */
 async function route() {
-  const hash = location.hash || '#/login';
+  /* العنوان قد يحمل حالة الشاشة بعد ? — المسار وحده يحدد الصفحة */
+  const hash = routeOf(location.hash || '#/login');
   const app = document.getElementById('app');
   // نافذة مفتوحة أثناء التنقل (زر العودة مثلًا) كانت تترك غشاءها عالقًا فوق الصفحة الجديدة
   const modalRoot = document.getElementById('modal-root');
@@ -356,6 +429,8 @@ async function route() {
   }
 }
 
+/* كتابة الفلاتر تتم بـ replaceState فلا تُطلق hashchange — ولا تُعيد
+   بناء الشاشة. ما يصل هنا تنقّلٌ حقيقي: رابطٌ أو زرّ رجوع. */
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', () => {
   if (!location.hash) location.hash = API.token ? homeRoute(API.user.role) : '#/login';

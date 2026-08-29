@@ -256,11 +256,36 @@ const traineeOption = (t) => [t.id, t.phone ? `${t.name} — ${t.phone}` : `${t.
    - محلي: تُمرَّر البيانات كاملة (opts.searchText للبحث) — للقوائم الصغيرة.
    - من الخادم: opts.remote({ query, page, pageSize }) → { rows, total }
      فلا تُنقل إلى المتصفح إلا صفحة واحدة مهما كبر الجدول. */
+/* ------------------------------------------------------------
+   ذاكرة الجداول: الصفحة وكلمة البحث تبقيان عبر إعادة البناء
+   كل شاشة تُعيد بناء نفسها بعد كل حفظ، فينشأ جدول جديد بصفحته الأولى:
+   من كان في الصفحة الثالثة من سجل الإجراءات عاد للأولى بعد كل تنفيذ.
+   نُفهرس الجدول بمساره وترويسته وترتيبه في الصفحة، ونحفظ موضعه.
+   والذاكرة تُمسح عند تغيير الصفحة فلا تنمو بلا حد.
+   ------------------------------------------------------------ */
+const TABLE_STATE = new Map();
+let tableStateRoute = null;
+let tableSeq = new Map();
+/* يُستدعى مع كل إعادة بناء لشاشة — فيبدأ عدّ الجداول من جديد */
+function resetTableSeq() { tableSeq = new Map(); }
+
+function tableStateKey(headers) {
+  const route = typeof routeOf === 'function' ? routeOf(location.hash) : location.hash;
+  if (tableStateRoute !== route) { TABLE_STATE.clear(); tableStateRoute = route; }
+  const sig = route + '|' + headers.join('~');
+  const n = tableSeq.get(sig) || 0;
+  tableSeq.set(sig, n + 1);
+  return sig + '|' + n;
+}
+
 function pagedTable(headers, data, rowRender, opts = {}) {
   const pageSize = opts.pageSize || 15;
   const remote = opts.remote || null;
-  let page = 0;
-  let query = '';
+  const memKey = tableStateKey(headers);
+  const saved = TABLE_STATE.get(memKey) || { page: 0, query: '' };
+  let page = saved.page;
+  let query = saved.query;
+  const remember = () => TABLE_STATE.set(memKey, { page, query });
   let token = 0; // يتجاهل ردود الطلبات المتجاوَزة
   const wrap = el('div');
   const body = el('div');
@@ -271,8 +296,9 @@ function pagedTable(headers, data, rowRender, opts = {}) {
   let searchIn = null;
   if (opts.searchText || remote) {
     searchIn = input({
+      value: query,
       placeholder: opts.searchPlaceholder || 'بحث…',
-      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; draw(); }, 300),
+      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; remember(); draw(); }, 300),
     });
     wrap.append(el('div', { style: 'max-width:320px;margin-bottom:12px' }, searchIn));
   }
@@ -291,8 +317,8 @@ function pagedTable(headers, data, rowRender, opts = {}) {
     if (pages > 1) {
       nav.innerHTML = '';
       nav.append(
-        el('button', { class: 'btn btn--outline btn--sm', disabled: page === 0 || null, onclick: () => { page--; draw(); } }, 'السابق'),
-        el('button', { class: 'btn btn--outline btn--sm', disabled: page >= pages - 1 || null, onclick: () => { page++; draw(); } }, 'التالي'));
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page === 0 || null, onclick: () => { page--; remember(); draw(); } }, 'السابق'),
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page >= pages - 1 || null, onclick: () => { page++; remember(); draw(); } }, 'التالي'));
       bar.append(nav);
     }
   }
@@ -301,7 +327,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
     if (!remote) {
       const filtered = query ? data.filter((d) => (opts.searchText(d) || '').includes(query)) : data;
       const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-      if (page >= pages) page = pages - 1;
+      if (page >= pages) { page = pages - 1; remember(); }
       paint(filtered.slice(page * pageSize, (page + 1) * pageSize), filtered.length);
       return;
     }
@@ -311,7 +337,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
       const { rows, total } = await remote({ query, page, pageSize });
       if (mine !== token) return; // وصل ردّ أحدث
       const pages = Math.max(1, Math.ceil(total / pageSize));
-      if (page >= pages && page > 0) { page = pages - 1; return draw(); }
+      if (page >= pages && page > 0) { page = pages - 1; remember(); return draw(); }
       paint(rows, total);
     } catch (ex) {
       if (mine !== token) return;
@@ -321,7 +347,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
   }
 
   draw();
-  wrap.reload = () => { page = 0; draw(); };
+  wrap.reload = () => { page = 0; remember(); draw(); };
   return wrap;
 }
 

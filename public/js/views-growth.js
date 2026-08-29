@@ -14,11 +14,15 @@ const CANCEL_REASONS = ['السعر', 'السفر', 'الإصابة', 'عدم و
    متابعة المبيعات — ملف بكل رقم نتواصل معه + تحليل شهري
    ============================================================ */
 async function viewSales(root) {
-  const state = { month: thisMonthISO() };
+  const state = urlState({ month: thisMonthISO() });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [leads, summary, branches] = await Promise.all([
