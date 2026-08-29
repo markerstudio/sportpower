@@ -64,34 +64,120 @@ function isMissed(a, nowIso) {
   return a.status === 'scheduled' && (a.date + 'T' + a.time) < nowIso;
 }
 
-/* كل أعمدة جدول أداء المدربين في التقرير الشهري أهدافٌ تُضبط وتُقاس —
-   لا الحصص والتحصيل وحدها (بطلب العميل: «هذول كلهم لازم يكونوا أهداف») */
-const METRIC_LABELS = {
-  revenue: 'التحصيل',
-  sessions: 'عدد الحصص',
-  uniqueTrainees: 'متدربون فريدون',
-  newSubs: 'اشتراكات جديدة/تجديد',
-  activeTrainees: 'المتدربون الفعالون',
-  hours: 'ساعات التدريب',
-  officeHours: 'ساعات مكتبية',
-  stories: 'ستوريات منشورة',
-  reels: 'ريلز/فيديوهات',
-  results: 'نتائج مشتركين',
-  referred: 'زبائن عن طريقه',
+/* ============================================================
+   المؤشرات القابلة لأن تكون أهدافًا (Targets)
+   لم تعد أعمدةَ جدول المدربين وحدها: الهدف يُضبط لأي شخص «بنحسبه» —
+   المدرب والمحاسب والمبيعات — لا للشركة والفرع والمدرب فقط.
+
+   لكل مؤشر:
+     label — اسمه العربي كما يظهر في الشاشة
+     scopes — النطاقات التي يصحّ قياسه فيها
+     by — كيف يُنسب في نطاق «شخص»:
+          'person' = عملُه هو (حصصه، أرقامه، ما سجّله بيده)
+          'branch' = أرقام فروعه (المحاسبة تُقاس بفرعها لا بيدها)
+     pct — المؤشر نسبةٌ مئوية لا عدّ (نسبة الإغلاق مثلًا)
+     money — قيمة مالية تُعرض بالعملة
+   ============================================================ */
+const ALL_SCOPES = ['company', 'branch', 'trainer', 'user'];
+const TRAINER_SCOPES = ['company', 'branch', 'trainer', 'user'];
+const BRANCH_SCOPES = ['company', 'branch', 'user'];
+
+const METRICS = {
+  /* --- مال وتشغيل --- */
+  revenue: { label: 'التحصيل', scopes: BRANCH_SCOPES, by: 'branch', money: true },
+  sessions: { label: 'عدد الحصص', scopes: TRAINER_SCOPES, by: 'person' },
+  uniqueTrainees: { label: 'متدربون فريدون', scopes: TRAINER_SCOPES, by: 'person' },
+  hours: { label: 'ساعات التدريب', scopes: TRAINER_SCOPES, by: 'person' },
+  officeHours: { label: 'ساعات مكتبية', scopes: TRAINER_SCOPES, by: 'person' },
+  stories: { label: 'ستوريات منشورة', scopes: TRAINER_SCOPES, by: 'person' },
+  reels: { label: 'ريلز/فيديوهات', scopes: TRAINER_SCOPES, by: 'person' },
+
+  /* --- الاشتراكات: التجديد غير الاشتراك الجديد (بطلب العميل صراحةً:
+         «في فرق ما بين التجديد وما بين الاشتراكات الجديدة») --- */
+  newSubs: { label: 'اشتراكات جديدة + تجديد', scopes: BRANCH_SCOPES, by: 'branch' },
+  newOnly: { label: 'اشتراكات جديدة فقط', scopes: BRANCH_SCOPES, by: 'branch' },
+  renewals: { label: 'تجديد اشتراكات', scopes: BRANCH_SCOPES, by: 'branch' },
+  activeTrainees: { label: 'المتدربون الفعالون', scopes: BRANCH_SCOPES, by: 'branch' },
+  newTrainees: { label: 'مشتركون جدد (أشخاص)', scopes: BRANCH_SCOPES, by: 'branch' },
+
+  /* --- التجميد: سقفه يُضبط لكل فرع، وهدفه يُقاس هنا --- */
+  freezes: { label: 'عدد التجميد', scopes: BRANCH_SCOPES, by: 'branch' },
+  unfreezes: { label: 'عائد من التجميد', scopes: BRANCH_SCOPES, by: 'branch' },
+
+  /* --- النتائج والمشاكل --- */
+  results: { label: 'نتائج مشتركين', scopes: TRAINER_SCOPES, by: 'person' },
+  problems: { label: 'مشاكل مشتركين', scopes: TRAINER_SCOPES, by: 'person' },
+  referred: { label: 'زبائن عن طريقه', scopes: TRAINER_SCOPES, by: 'person' },
+
+  /* --- عمل المدرب مع مشتركيه --- */
+  traineeGoals: { label: 'أهداف تدريبية وُضعت', scopes: TRAINER_SCOPES, by: 'person' },
+  mealPlans: { label: 'برامج أكل', scopes: TRAINER_SCOPES, by: 'person' },
+
+  /* --- المبيعات --- */
+  leads: { label: 'أرقام جديدة (مبيعات)', scopes: BRANCH_SCOPES, by: 'person' },
+  tests: { label: 'حصص تجريبية (test)', scopes: BRANCH_SCOPES, by: 'person' },
+  closedLeads: { label: 'عملاء أُغلقوا (اشتركوا)', scopes: BRANCH_SCOPES, by: 'person' },
+  closingRate: { label: 'نسبة الإغلاق %', scopes: BRANCH_SCOPES, by: 'person', pct: true },
 };
 
+const METRIC_KEYS = Object.keys(METRICS);
+const METRIC_LABELS = Object.fromEntries(METRIC_KEYS.map((k) => [k, METRICS[k].label]));
+const metricAllowsScope = (metric, scope) => !!METRICS[metric] && METRICS[metric].scopes.includes(scope);
+
+/* نطاق فروع صاحب الهدف حين يكون النطاق «شخصًا»: المحاسبة تُقاس بفروعها
+   (branchIds إن وُجدت وإلا branchId)، والمدرب بفرعه. الفارغ = بلا تقييد. */
+function personBranches(u) {
+  if (!u) return null;
+  if (Array.isArray(u.branchIds) && u.branchIds.length) return u.branchIds.map(Number);
+  return u.branchId != null ? [Number(u.branchId)] : null;
+}
+
 /* القيمة الفعلية لهدفٍ ما. المجموعات غير المحمَّلة عند بعض المستدعين
-   تسقط إلى [] فيصفر مؤشرها بدل أن ينهار الحساب كله. */
+   تسقط إلى [] فيصفر مؤشرها بدل أن ينهار الحساب كله.
+
+   النطاقات: company (بلا تقييد) · branch (فرع بعينه) · trainer (مدرب)
+   · user (أي موظف — محاسب أو مبيعات أو مدرب). في نطاق «user» يقرأ كل
+   مؤشر انتماءه من جدول METRICS: ما كان by='person' يُنسب لعمل الشخص
+   نفسه (حصصه، أرقامه، ما سجّله بيده)، وما كان by='branch' يُقاس على
+   فروع ذلك الشخص — فالمحاسبة تُحاسَب بفرعها لا بما كتبته بيدها. */
 function computeActual(t, { payments, sessions, subscriptions, subEvents, subStatus,
-  trainerLogs = [], traineeFlags = [], users = [] }) {
-  const scopeBranch = (branchId) => t.scope !== 'branch' || branchId === t.refId;
-  const scopeTrainer = (trainerId) => t.scope !== 'trainer' || trainerId === t.refId;
+  trainerLogs = [], traineeFlags = [], users = [], traineeGoals = [], mealPlans = [], leads = [] }) {
+  const meta = METRICS[t.metric];
+  if (!meta) return null;
+
+  /* من هو صاحب الهدف حين يكون النطاق شخصًا، وما فروعه */
+  const person = t.scope === 'user' ? users.find((u) => u.id === t.refId) : null;
+  const personScope = t.scope === 'user' ? personBranches(person) : null;
+  // في نطاق «user» يقرر جدول المؤشرات: عملُ الشخص نفسه أم أرقام فروعه؟
+  const userByPerson = t.scope === 'user' && meta.by === 'person';
+  const userByBranch = t.scope === 'user' && meta.by === 'branch';
+
+  const scopeBranch = (branchId) => {
+    if (t.scope === 'branch') return Number(branchId) === Number(t.refId);
+    if (userByBranch) return !personScope || personScope.includes(Number(branchId));
+    return true;
+  };
+  /* تقييد بالشخص: نطاق «مدرب»، أو نطاق «user» لمؤشرٍ يُنسب لعمل صاحبه */
+  const scopePerson = (id) => {
+    if (t.scope === 'trainer' || userByPerson) return Number(id) === Number(t.refId);
+    return true;
+  };
+  const scopeTrainer = scopePerson;
+  const byPerson = t.scope === 'trainer' || userByPerson;
+
   // سجل اليوم والإحالة بلا فرع على الصف — فرع المدرب من حسابه
   const branchByTrainer = () => {
     const m = {};
     users.forEach((u) => { if (u.role === 'trainer') m[u.id] = u.branchId; });
     return m;
   };
+  const events = (types) => subEvents.filter((e) => types.includes(e.type)
+    && inPeriod(t.period, e.date) && scopeBranch(e.branchId));
+  /* أرقام المبيعات: العميل المحتمل يُنسب لمن سجّله (createdBy) في نطاق
+     الشخص، وبفرعه في نطاق الفرع. */
+  const myLeads = () => leads.filter((l) => inPeriod(t.period, l.contactDate)
+    && scopeBranch(l.branchId) && scopePerson(l.createdBy));
+
   switch (t.metric) {
     case 'revenue': {
       // الفرع محفوظ على الدفعة نفسها؛ الرجوع للاشتراك للبيانات القديمة فقط.
@@ -107,10 +193,20 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
     case 'uniqueTrainees':
       return new Set(sessions.filter(delivered).filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId))
         .map((s) => s.traineeId)).size;
-    case 'newSubs':
-      return subEvents.filter((e) => ['new', 'renewal'].includes(e.type) && inPeriod(t.period, e.date) && scopeBranch(e.branchId)).length;
+
+    /* الاشتراك الجديد والتجديد مؤشران منفصلان — ويبقى المجموع متاحًا
+       لمن ضبط هدفه عليه قبل الفصل. */
+    case 'newSubs': return events(['new', 'renewal']).length;
+    case 'newOnly': return events(['new']).length;
+    case 'renewals': return events(['renewal']).length;
+    case 'freezes': return events(['freeze']).length;
+    case 'unfreezes': return events(['unfreeze']).length;
+
     case 'activeTrainees':
       return new Set(subscriptions.filter((s) => subStatus(s) === 'active' && scopeBranch(s.branchId)).map((s) => s.traineeId)).size;
+    case 'newTrainees':
+      return users.filter((u) => u.role === 'trainee' && inPeriod(t.period, u.joinedAt || '')
+        && scopeBranch(u.branchId)).length;
     case 'hours':
       // الساعة المميزة لكل مدرب — كما يحسبها التقرير الشهري تمامًا
       return hoursOf(sessions.filter((s) => inPeriod(t.period, s.date) && scopeBranch(s.branchId) && scopeTrainer(s.trainerId)));
@@ -123,10 +219,13 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
       if (t.metric === 'officeHours') return Math.round(logs.reduce((s, l) => s + (Number(l.workHours) || 0), 0) * 10) / 10;
       return logs.reduce((s, l) => s + (Number(l[t.metric]) || 0), 0);
     }
-    case 'results': {
-      // نتيجة مشترك تُنسب للمدرب الذي درّبه في الفترة — كما في التقرير الشهري
-      const inP = traineeFlags.filter((f) => f.kind === 'result' && inPeriod(t.period, f.date));
-      if (t.scope === 'trainer') {
+    case 'results':
+    case 'problems': {
+      /* نتيجة المشترك (أو مشكلته) تُنسب للمدرب الذي درّبه في الفترة —
+         كما في التقرير الشهري تمامًا. */
+      const kind = t.metric === 'results' ? 'result' : 'problem';
+      const inP = traineeFlags.filter((f) => f.kind === kind && inPeriod(t.period, f.date));
+      if (byPerson) {
         const mine = new Set(sessions.filter(delivered)
           .filter((s) => inPeriod(t.period, s.date) && s.trainerId === t.refId).map((s) => s.traineeId));
         return inP.filter((f) => mine.has(f.traineeId)).length;
@@ -143,6 +242,24 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
         return ref && inPeriod(t.period, u.joinedAt || '')
           && scopeTrainer(ref) && scopeBranch(branchOf[ref]);
       }).length;
+    }
+    /* الهدف التدريبي يُنسب لواضعه (trainerId) وللفرع المسجَّل عليه */
+    case 'traineeGoals':
+      return traineeGoals.filter((g) => inPeriod(t.period, g.createdAt || g.startDate || '')
+        && scopePerson(g.trainerId) && scopeBranch(g.branchId)).length;
+    /* برنامج الأكل بلا فرع على صفّه — فرعُه فرعُ من ربطه */
+    case 'mealPlans': {
+      const branchOfUser = Object.fromEntries(users.map((u) => [u.id, u.branchId]));
+      return mealPlans.filter((m) => inPeriod(t.period, m.date || '')
+        && scopePerson(m.createdBy) && scopeBranch(branchOfUser[m.createdBy])).length;
+    }
+    case 'leads': return myLeads().length;
+    case 'tests': return myLeads().filter((l) => ['trial-booked', 'trial-attended'].includes(l.stage)).length;
+    case 'closedLeads': return myLeads().filter((l) => l.stage === 'subscribed').length;
+    case 'closingRate': {
+      const all = myLeads();
+      if (!all.length) return 0;
+      return Math.round((all.filter((l) => l.stage === 'subscribed').length / all.length) * 1000) / 10;
     }
     default: return null;
   }
@@ -258,40 +375,84 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   /* ============================================================
      الأهداف (Targets) — شهري / نصف سنوي / سنوي
      ============================================================ */
+  /* المجموعات التي تقرأ منها المؤشرات — واحدة لكل مستدعٍ فلا يختلف
+     رقم الهدف بين الشاشة التي عرضته والشاشة التي حسبته. */
+  const TARGET_SOURCES = ['targets', 'payments', 'sessions', 'subscriptions', 'subEvents',
+    'users', 'branches', 'trainerLogs', 'traineeFlags', 'traineeGoals', 'mealPlans', 'leads'];
+
+  /* اسم صاحب الهدف ودورُه — الشخص يظهر باسمه ودوره لا برقمه */
+  const ROLE_AR = { admin: 'إدارة', accountant: 'محاسبة', trainer: 'مدرب', nutritionist: 'تغذية' };
+  function decorateTarget(t, data) {
+    const actual = computeActual(t, { ...data, subStatus });
+    const effective = effectiveTarget(t, data.targets, data, subStatus);
+    const person = ['trainer', 'user'].includes(t.scope)
+      ? data.users.find((u) => u.id === t.refId) : null;
+    const refName = t.scope === 'branch'
+      ? (data.branches.find((b) => b.id === t.refId) || {}).name
+      : person
+        ? `${person.name}${t.scope === 'user' ? ` (${ROLE_AR[person.role] || person.role})` : ''}`
+        : t.scope === 'company' ? 'الشركة كاملة' : '—';
+    const meta = METRICS[t.metric] || {};
+    return {
+      ...t, actual,
+      effective, carried: effective - t.value, // المتبقي المرحَّل من الأشهر السابقة
+      pct: effective ? Math.round((actual / effective) * 100) : null,
+      refName, metricLabel: meta.label || t.metric,
+      money: !!meta.money, pctMetric: !!meta.pct,
+    };
+  }
+
   app.get('/api/targets', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    const data = await Store.load('targets', 'payments', 'sessions', 'subscriptions', 'subEvents', 'users', 'branches', 'trainerLogs', 'traineeFlags');
+    const data = await Store.load(...TARGET_SOURCES);
     let targets = data.targets;
     if (req.query.period) targets = targets.filter((t) => t.period === req.query.period);
-    // المحاسب المقيَّد يرى أهداف فروعه — لا أهداف الشركة ولا الفروع الأخرى
+    /* المحاسب المقيَّد يرى أهداف فروعه وأهدافه هو — لا أهداف الشركة
+       ولا الفروع الأخرى ولا أهداف زملائه. */
     const myBranches = scopedBranchIds(req);
-    if (myBranches) targets = targets.filter((t) => t.scope === 'branch' && inScopeList(myBranches, t.refId));
-    res.json(targets.map((t) => {
-      const actual = computeActual(t, { ...data, subStatus });
-      const effective = effectiveTarget(t, data.targets, data, subStatus);
-      const refName = t.scope === 'branch'
-        ? (data.branches.find((b) => b.id === t.refId) || {}).name
-        : t.scope === 'trainer'
-          ? (data.users.find((u) => u.id === t.refId) || {}).name
-          : 'الشركة كاملة';
-      return {
-        ...t, actual,
-        effective, carried: effective - t.value, // المتبقي المرحَّل من الأشهر السابقة
-        pct: effective ? Math.round((actual / effective) * 100) : null,
-        refName, metricLabel: METRIC_LABELS[t.metric] || t.metric,
-      };
-    }));
+    if (myBranches) {
+      targets = targets.filter((t) => (t.scope === 'branch' && inScopeList(myBranches, t.refId))
+        || (t.scope === 'user' && t.refId === req.user.id));
+    }
+    res.json(targets.map((t) => decorateTarget(t, data)));
   }));
+
+  /* قائمة المؤشرات ونطاقاتها — الواجهة تبنيها منها فلا تتفرّع النسختان */
+  app.get('/api/targets/metrics', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    res.json(METRIC_KEYS.map((k) => ({ key: k, ...METRICS[k] })));
+  }));
+
+  /* الأدوار التي يصحّ وضع هدف شخصي لها — المتدرب ليس موظفًا يُقاس */
+  const TARGETABLE_ROLES = ['admin', 'accountant', 'trainer', 'nutritionist'];
 
   app.post('/api/targets', auth, requireRole('admin'), h(async (req, res) => {
     const { scope, refId, metric, period, value } = req.body;
-    if (!['company', 'branch', 'trainer'].includes(scope)) return res.status(400).json({ error: 'نطاق غير صحيح.' });
-    if (!METRIC_LABELS[metric]) return res.status(400).json({ error: 'مؤشر غير مدعوم.' });
+    if (!ALL_SCOPES.includes(scope)) return res.status(400).json({ error: 'نطاق غير صحيح.' });
+    if (!METRICS[metric]) return res.status(400).json({ error: 'مؤشر غير مدعوم.' });
+    if (!metricAllowsScope(metric, scope)) {
+      return res.status(400).json({ error: `المؤشر «${METRIC_LABELS[metric]}» لا يُقاس على هذا النطاق.` });
+    }
     if (!/^\d{4}(-\d{2}|-H1|-H2)?$/.test(period || '')) return res.status(400).json({ error: 'صيغة الفترة: YYYY-MM أو YYYY-H1/H2 أو YYYY.' });
-    if (!value || Number(value) <= 0) return res.status(400).json({ error: 'قيمة الهدف مطلوبة.' });
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return res.status(400).json({ error: 'قيمة الهدف مطلوبة.' });
+    if (METRICS[metric].pct && num > 100) return res.status(400).json({ error: 'النسبة المئوية لا تتجاوز ١٠٠.' });
+
+    /* المرجع يجب أن يكون موجودًا فعلًا — هدفٌ على فرعٍ محذوف أو على رقمٍ
+       لا يقابله أحد يظهر أبدًا بنسبة صفر بلا سبب ظاهر. */
+    const ref = Number(refId);
+    if (scope !== 'company') {
+      if (!Number.isInteger(ref) || ref <= 0) return res.status(400).json({ error: 'اختر صاحب الهدف.' });
+      if (scope === 'branch') {
+        if (!(await Store.get('branches', ref))) return res.status(400).json({ error: 'الفرع غير موجود.' });
+      } else {
+        const u = await Store.get('users', ref);
+        if (!u || !TARGETABLE_ROLES.includes(u.role)) return res.status(400).json({ error: 'الموظف غير موجود.' });
+        if (scope === 'trainer' && u.role !== 'trainer') return res.status(400).json({ error: 'نطاق «مدرب» لحسابات المدربين وحدها.' });
+      }
+    }
 
     const all = await Store.all('targets');
-    const dup = all.find((t) => t.scope === scope && t.refId === (Number(refId) || null) && t.metric === metric && t.period === period);
-    const body = { scope, refId: scope === 'company' ? null : Number(refId), metric, period, value: Number(value) };
+    const body = { scope, refId: scope === 'company' ? null : ref, metric, period, value: num };
+    const dup = all.find((t) => t.scope === scope && t.refId === body.refId && t.metric === metric && t.period === period);
     const saved = dup ? await Store.update('targets', dup.id, body) : await Store.insert('targets', body);
     res.json(saved);
   }));
@@ -304,17 +465,27 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   /* ============================================================
      KPI — تلقائي لكل موظف: (المهام + الأهداف) والنتائج
      ============================================================ */
+  /* KPI لكل موظف يُقاس — لا المدربين وحدهم.
+     «الهدف الجديد لازم يشمل المحاسب والمبيعات وكل حدا بنحسب»: من كان له
+     هدفٌ شخصي (نطاق user) أو مهامٌ هذا الشهر يظهر هنا بنسبته، وأرقام
+     التدريب (حصص/ساعات) تبقى للمدربين وحدهم فهي ليست عمل المحاسبة. */
+  const KPI_ROLES = ['trainer', 'accountant', 'nutritionist', 'admin'];
+
   async function computeKpis(month) {
-    const data = await Store.load('users', 'tasks', 'targets', 'payments', 'sessions', 'subscriptions', 'subEvents', 'trainerLogs', 'traineeFlags');
-    const trainers = data.users.filter((u) => u.role === 'trainer' && u.active !== false);
-    return trainers.map((t) => {
+    const data = await Store.load('users', 'tasks', ...TARGET_SOURCES);
+    const staff = data.users.filter((u) => KPI_ROLES.includes(u.role) && u.active !== false);
+    return staff.map((t) => {
+      const isTrainer = t.role === 'trainer';
       const myTasks = data.tasks.filter((x) => x.trainerId === t.id
         && ((x.type === 'daily' && monthOf(x.date) === month) || (x.type === 'monthly' && x.month === month)));
       const tasksPct = myTasks.length ? Math.round((myTasks.filter((x) => x.status === 'done').length / myTasks.length) * 100) : null;
 
-      const myTargets = data.targets.filter((x) => x.scope === 'trainer' && x.refId === t.id && monthInPeriod(x.period, month));
+      /* أهداف هذا الشخص: نطاق «مدرب» للمدربين (كما كان) ونطاق «user»
+         لأي موظف — فيقرأ المحاسب والمبيعات نسبتهما من المكان نفسه. */
+      const myTargets = data.targets.filter((x) => monthInPeriod(x.period, month)
+        && x.refId === t.id && (x.scope === 'user' || (isTrainer && x.scope === 'trainer')));
       const targetPcts = myTargets.map((x) => {
-        const actual = computeActual(x, { ...data, subStatus });
+        const actual = computeActual(x, { ...data, subStatus }) || 0;
         return Math.min(Math.round((actual / x.value) * 100), 120);
       });
       const targetsPct = targetPcts.length ? Math.round(targetPcts.reduce((a, b) => a + b, 0) / targetPcts.length) : null;
@@ -325,10 +496,12 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       /* الغياب مخصوم من رصيد المتدرب لكنه ليس تدريبًا نفّذه المدرب —
          كان يُحتسب هنا حصةً ومتدربًا فريدًا فيرفع أرقام المدرب زورًا،
          بينما تستثنيه كل بقية التقارير (فتختلف الأرقام بين الشاشات). */
-      const monthAll = data.sessions.filter((s) => s.trainerId === t.id && monthOf(s.date) === month);
+      const monthAll = isTrainer
+        ? data.sessions.filter((s) => s.trainerId === t.id && monthOf(s.date) === month) : [];
       const monthSessions = monthAll.filter(delivered);
       return {
-        trainerId: t.id, name: t.name, branchId: t.branchId,
+        trainerId: t.id, name: t.name, branchId: t.branchId, role: t.role,
+        targetsCount: myTargets.length,
         tasksTotal: myTasks.length, tasksDone: myTasks.filter((x) => x.status === 'done').length,
         tasksPct, targetsPct, kpi,
         sessions: monthSessions.length,
@@ -336,15 +509,22 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         hours: hoursOf(monthSessions),
         uniqueTrainees: new Set(monthSessions.map((s) => s.traineeId)).size,
       };
-    });
+    /* موظفٌ بلا مهام ولا أهداف هذا الشهر لا صفَّ له — الجدول يعرض من يُقاس */
+    }).filter((k) => k.role === 'trainer' || k.tasksTotal || k.targetsCount);
   }
 
   app.get('/api/kpi', auth, h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
     const kpis = await computeKpis(month);
-    if (req.user.role === 'trainer') return res.json(kpis.filter((k) => k.trainerId === req.user.id));
+    // كلٌّ يرى مؤشره؛ والإدارة والمحاسبة ترى فريقها ضمن نطاق فروعها
+    if (['trainer', 'nutritionist'].includes(req.user.role)) {
+      return res.json(kpis.filter((k) => k.trainerId === req.user.id));
+    }
     if (!['admin', 'accountant'].includes(req.user.role)) return res.status(403).json({ error: 'ليست لديك صلاحية.' });
-    res.json(kpis.filter(scopeFilter(req)));
+    /* المحاسب المقيَّد: فريق فروعه + مؤشره هو (حسابه قد يكون بلا فرع
+       واحد فيسقط من تصفية الفرع ولا يرى هدفه الشخصي إطلاقًا). */
+    const inScope = scopeFilter(req);
+    res.json(kpis.filter((k) => k.trainerId === req.user.id || inScope(k)));
   }));
 
   /* ============================================================
@@ -378,17 +558,22 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const year = month.slice(0, 4);
     const wideTargets = targets.some((t) => /^\d{4}$/.test(t.period) || /^\d{4}-H[12]$/.test(t.period));
     const yearRange = { gte: year + '-01-01', lte: year + '-12-31' };
-    const [yearPayments, yearSessions, yearEvents, yearLogs, yearFlags] = wideTargets
+    const [yearPayments, yearSessions, yearEvents, yearLogs, yearFlags, yearLeads] = wideTargets
       ? await Promise.all([
         Store.find('payments', { date: yearRange }),
         Store.find('sessions', { date: yearRange }),
         Store.find('subEvents', { date: yearRange }),
         Store.find('trainerLogs', { date: yearRange }),
         Store.find('traineeFlags', { date: yearRange }),
+        // أهداف المبيعات النصف سنوية والسنوية تُقرأ من نافذة السنة كاملة
+        Store.find('leads', { contactDate: yearRange }),
       ])
-      : [payments, sessionsAll, subEvents, trainerLogs, flags];
+      : [payments, sessionsAll, subEvents, trainerLogs, flags, leads];
+    /* أهدافُ المشتركين وبرامجُ الأكل تدخل الحساب أيضًا — بعض المؤشرات
+       تُقرأ منها (أهداف تدريبية، برامج أكل). تُحمَّل كاملة لأن تصفيتها
+       بالفترة تجري داخل computeActual. */
     const periodData = { payments: yearPayments, sessions: yearSessions, subscriptions, subEvents: yearEvents,
-      trainerLogs: yearLogs, traineeFlags: yearFlags, users };
+      trainerLogs: yearLogs, traineeFlags: yearFlags, users, traineeGoals, mealPlans, leads: yearLeads };
 
     const inBranch = (x) => inScopeList(branch, x.branchId);
     const sessions = sessionsAll.filter(delivered).filter(inBranch);
@@ -434,7 +619,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
           .map((x) => {
             const wide = /^\d{4}$/.test(x.period) || /^\d{4}-H[12]$/.test(x.period);
             const src = wide ? periodData
-              : { payments, sessions: sessionsAll, subscriptions, subEvents, trainerLogs, traineeFlags: flags, users };
+              : { payments, sessions: sessionsAll, subscriptions, subEvents, trainerLogs,
+                traineeFlags: flags, users, traineeGoals, mealPlans, leads };
             return Math.min(Math.round(((computeActual(x, { ...src, subStatus }) || 0) / x.value) * 100), 120);
           });
 
@@ -530,7 +716,39 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       return acc;
     }, {});
 
-    return { month, branch: branch && branch.length === 1 ? branch[0] : null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition };
+    /* ---------- أهداف الأشخاص: المحاسبة والمبيعات وكل من يُقاس ----------
+       «الهدف الجديد لازم يشمل المحاسب والمبيعات وكل حدا بنحسب»: كل هدف
+       بنطاق «user» يُقاس هنا ويظهر باسم صاحبه ودوره — في اللوحة نفسها
+       التي تجمع بقية المؤشرات، لا في شاشة أخرى. */
+    const staffData = { payments: yearPayments, sessions: yearSessions, subscriptions,
+      subEvents: yearEvents, trainerLogs: yearLogs, traineeFlags: yearFlags,
+      users, traineeGoals, mealPlans, leads: yearLeads };
+    const ROLE_LABELS = { admin: 'إدارة', accountant: 'محاسبة', trainer: 'مدرب', nutritionist: 'تغذية' };
+    const staffTargets = targets
+      .filter((x) => x.scope === 'user' && monthInPeriod(x.period, month))
+      .map((x) => {
+        const u = users.find((p) => p.id === x.refId);
+        if (!u) return null;
+        // المحاسب المقيَّد لا يرى أهداف زملاء خارج فروعه
+        if (branch && u.role !== 'admin' && !inScopeList(branch, u.branchId)
+          && !(Array.isArray(u.branchIds) && u.branchIds.some((b) => inScopeList(branch, b)))) return null;
+        const actual = computeActual(x, { ...staffData, subStatus }) || 0;
+        const meta = METRICS[x.metric] || {};
+        return {
+          targetId: x.id, userId: u.id, name: u.name,
+          role: u.role, roleLabel: ROLE_LABELS[u.role] || u.role,
+          branch: (branches.find((b) => b.id === u.branchId) || {}).name || '—',
+          metric: x.metric, metricLabel: meta.label || x.metric,
+          money: !!meta.money, pctMetric: !!meta.pct,
+          period: x.period, target: x.value, actual,
+          pct: x.value ? Math.min(Math.round((actual / x.value) * 100), 120) : null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar')
+        || String(a.metricLabel).localeCompare(String(b.metricLabel), 'ar'));
+
+    return { month, branch: branch && branch.length === 1 ? branch[0] : null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition, staffTargets };
   }
 
   app.get('/api/kpi/board', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -834,3 +1052,4 @@ module.exports.monthInPeriod = monthInPeriod;
 module.exports.computeActual = computeActual;
 module.exports.effectiveTarget = effectiveTarget;
 module.exports.METRIC_LABELS = METRIC_LABELS;
+module.exports.METRICS = METRICS;
