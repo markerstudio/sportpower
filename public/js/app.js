@@ -247,28 +247,33 @@ async function renderShell(route, renderView) {
     el('div', { class: 'sidebar__logo' }, el('img', { src: logoSrc, alt: 'سبورت باور' })),
     el('div', { class: 'sidebar__caption' }, 'القائمة الرئيسية'),
     el('nav', { class: 'sidebar__nav' },
-      ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '', onclick: closeSidebar }, icon(ic), label))),
+      /* aria-current: قارئ الشاشة يعلن «الصفحة الحالية» — الصنف وحده لون */
+      ...nav.map(([href, label, ic]) => el('a', {
+        href, class: route === href ? 'active' : '',
+        'aria-current': route === href ? 'page' : null,
+        onclick: closeSidebar,
+      }, icon(ic), label))),
     el('div', { class: 'sidebar__foot' },
       el('b', {}, 'سبورت باور © 2026'),
       el('div', { class: 'sidebar__slogan' }, 'change your life'),
       'جسم أقوى. حياة أصحّ. نظام يبقى معك.'));
   const backdrop = el('div', { class: 'sidebar-backdrop', onclick: closeSidebar });
 
-  const bellBtn = el('button', { class: 'iconbtn', title: 'الإشعارات', onclick: openNotifications }, icon('bell'));
+  const bellBtn = el('button', { class: 'iconbtn', type: 'button', title: 'الإشعارات', 'aria-label': 'الإشعارات', onclick: openNotifications }, icon('bell'));
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
-      el('button', { class: 'iconbtn menu-btn', onclick: toggleSidebar }, icon('menu')),
-      el('button', { class: 'iconbtn', title: 'عودة للصفحة السابقة', onclick: () => history.back() }, icon('back')),
+      el('button', { class: 'iconbtn menu-btn', type: 'button', title: 'القائمة', 'aria-label': 'فتح القائمة الجانبية', onclick: toggleSidebar }, icon('menu')),
+      el('button', { class: 'iconbtn', title: 'عودة للصفحة السابقة', 'aria-label': 'عودة للصفحة السابقة', onclick: () => history.back() }, icon('back')),
       el('div', { class: 'topbar__title' }, TITLES[route] || (route.startsWith('#/trainee/') ? 'ملف المتدرب' : 'نظام سبورت باور')),
-      el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
+      el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', 'aria-label': 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,
-      el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
+      el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', 'aria-label': 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
       el('div', { class: 'topbar__user' },
         el('span', { class: 'topbar__avatar' }, (API.user.name || '؟').trim().slice(0, 1)),
         el('div', {},
           el('div', { style: 'font-weight:700;color:var(--app-ink);font-size:13px' }, API.user.name),
           el('div', { style: 'font-size:11px;color:var(--app-muted)' }, ROLE_LABELS[API.user.role] || API.user.role))),
-      el('button', { class: 'iconbtn', title: 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
+      el('button', { class: 'iconbtn', title: 'خروج', 'aria-label': 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
     el('div', { id: 'view' }));
 
   if (stale()) return;

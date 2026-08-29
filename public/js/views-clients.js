@@ -134,7 +134,7 @@ async function viewPackages(root) {
             c.submission ? c.submission.name : (c.prospectName || '—'),
             el('span', { class: 'tag ' + tone }, label),
             c.expiresAt || '—',
-            el('div', { style: 'display:flex;gap:5px;flex-wrap:wrap' },
+            el('div', { class: 'row-actions' },
               el('button', {
                 class: 'btn btn--outline btn--sm',
                 onclick: () => navigator.clipboard.writeText(url).then(() => toast('نُسخ رابط العقد.')),
@@ -146,7 +146,7 @@ async function viewPackages(root) {
                   c.prospectName),
               }, 'واتساب') : el('span'),
               el('a', { class: 'btn btn--ghost btn--sm', href: '#/contract/' + c.token, target: '_blank' }, 'معاينة')),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('div', { class: 'row-actions' },
               c.status === 'submitted'
                 ? el('button', { class: 'btn btn--accent btn--sm', onclick: () => convertContract(c, render) }, 'تحويله لمشترك')
                 : el('span'),
@@ -483,7 +483,7 @@ function traineeFlagsCard(data, traineeId, onDone) {
     el('div', {}, el('b', {}, f.title), f.note ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, f.note) : ''),
     f.date,
     f.status === 'closed' ? el('span', { class: 'tag tag--neutral' }, 'مغلق ' + (f.closedAt || '')) : el('span', { class: 'tag tag--warning' }, 'مفتوح'),
-    el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+    el('div', { class: 'row-actions' },
       f.status === 'closed'
         ? el('button', {
           class: 'btn btn--ghost btn--sm',

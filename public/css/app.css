@@ -732,8 +732,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 }
 .pkg-rail__item:hover { background: var(--app-hover); }
 .pkg-rail__item:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
-.pkg-rail__item--on { background: var(--app-hover); border-color: var(--accent); color: var(--accent-hover); }
-.pkg-rail__item--on .tag { background: var(--accent); color: #fff; }
+/* المختار يُقرأ بالتعبئة لا بالحدّ وحدها: في الوضع الليلي كانت خلفية
+   «المختار» مطابقةً لخلفية البطاقة فلا يُميَّز إلا بخيطٍ رفيع. */
+.pkg-rail__item--on {
+  background: var(--accent); border-color: var(--accent); color: var(--petrol-900);
+}
+.pkg-rail__item--on:hover { background: var(--accent-hover); }
+.pkg-rail__item--on .tag { background: rgba(255, 255, 255, .82); color: var(--petrol-900); }
 
 @media (max-width: 900px) {
   .pkg-layout { grid-template-columns: 1fr; }
@@ -744,3 +749,30 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
   .pkg-rail > .sidebar__caption { display: none; }
   .pkg-rail__item { width: auto; white-space: nowrap; border-color: var(--app-line); }
 }
+
+/* ------------------------------------------------------------
+   أزرار الصف داخل الجداول
+   كانت كل خلية أزرارٍ تحمل نمطًا مكتوبًا في مكانه (display:flex؛ gap؛
+   flex-wrap:wrap) — فتلتفّ الأزرار على سطرين في عمودٍ ضيق ويصير صفُّ
+   الجدول ضِعف ارتفاعه، ويختلف التباعد بين شاشة وأخرى. صنفٌ واحد:
+   لا التفاف، والجدول نفسه هو ما يُمرَّر أفقيًا (وهو محاطٌ بـ table-wrap).
+   وحجم اللمس لا ينزل عن 32px حتى في الزرّ الصغير.
+   ------------------------------------------------------------ */
+.row-actions {
+  display: flex; gap: 6px; align-items: center;
+  justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap;
+}
+.row-actions .btn { flex: none; }
+.tbl td:has(.row-actions) { white-space: nowrap; width: 1%; }
+
+/* حجم لمسٍ لائق: زرٌّ صغير بارتفاع 32px لا 26 — وأزرار الشريط 40 */
+.btn--sm { min-height: 32px; }
+.btn { min-height: 40px; }
+.btn--sm.btn--full, .btn--full { min-height: 44px; }
+
+/* الاسم في الجداول لا يُكسر على ثلاثة أسطر — الجدول يُمرَّر بدلًا منه.
+   روابط الخلايا أسماءُ أشخاصٍ ومراجع قصيرة، فكسرُها يضاعف ارتفاع الصف. */
+.tbl td .nowrap, .tbl .cell-name, .tbl td > a { white-space: nowrap; }
+
+/* الصفحة لا تُمرَّر خلف النافذة المنبثقة */
+body.modal-open { overflow: hidden; }

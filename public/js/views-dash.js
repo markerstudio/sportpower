@@ -410,7 +410,7 @@ async function renderTrainerSchedule(card, dashData, onDone) {
             a.traineeId && a.status === 'done' ? el('span', {}, ' ', el('span', { class: 'tag tag--info' }, 'معلَّم منفذًا بلا حصة')) : ''),
           ...(showTrainer ? [trainerName(a.trainerId)] : []),
           kindTag(a), a.note || '—',
-          el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+          el('div', { class: 'row-actions' },
             /* زائر الـ Test لا اشتراك له ولا رصيد يُخصم منه — فالإجراء عليه
                «تم الـ Test» أو تحويله لزبون، لا تسجيل حصة. */
             a.traineeId
@@ -520,7 +520,7 @@ async function renderTrainerDaySessions(card, onDone) {
         sessions.slice().sort((a, b) => (a.time || '').localeCompare(b.time || '')).map((s) => [s.time, sessionKindTag(s),
           el('a', { href: '#/trainee/' + s.traineeId, style: 'color:var(--action);text-decoration:none' }, nameOf(s.traineeId)),
           s.style || '—', s.duration + ' د',
-          el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openSessionEditModal(() => { draw(); onDone && onDone(); }, s) }, 'تعديل'),
             el('button', {
               class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -771,7 +771,7 @@ async function viewAccountantDash(root) {
             r.endDate || '—',
             r.legacy ? el('span', { class: 'tag tag--warning' }, 'دَين سابق للنظام')
               : r.old ? el('span', { class: 'tag tag--danger' }, 'دين سابق') : statusTag(r.status),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('div', { class: 'row-actions' },
               el('button', {
                 class: 'btn btn--outline btn--sm',
                 onclick: () => openDebtPaymentModal(render, r),
@@ -1257,7 +1257,7 @@ async function viewTraineePage(root, traineeId) {
         s.packageName || '—', String(s.totalSessions), String(s.usedSessions),
         ...(showPrices ? [fmtMoney(s.price)] : []),
         s.startDate, s.endDate, statusTag(s.status, s.expiring),
-        ...(canEditSubs ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+        ...(canEditSubs ? [el('div', { class: 'row-actions' },
           el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(refreshPage, s, t.name) }, 'تعديل'),
           el('button', {
             class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -1278,7 +1278,7 @@ async function viewTraineePage(root, traineeId) {
         data.payments.slice().reverse().map((p) => [p.date, fmtMoney(p.amount, p.branchId),
           p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
           p.note || '—',
-          ...(isMoneyStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+          ...(isMoneyStaff ? [el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(refreshPage, subsForPay, p) }, 'تعديل'),
             el('button', {
               class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -1323,7 +1323,7 @@ async function viewTraineePage(root, traineeId) {
             // مقارنة بالقراءة التي قبلها زمنيًا — الاتجاه يعكس الطلوع والنزول الفعلي
             changeArrow(r.weight, prev && prev.weight, { goodWhenUp: goodWhenUpForGoal(t.goal) }),
             r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.waist ?? '—', r.notes || '—',
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('div', { class: 'row-actions' },
               el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openInbodyEditModal(refreshPage, r) }, 'تعديل'),
               el('button', {
                 class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -1347,7 +1347,7 @@ async function viewTraineePage(root, traineeId) {
   const sessionActions = isStaff;
   const sessionRow = (s) => [s.date, s.time, sessionKindTag(s), s.duration + ' د', s.style || '—', s.weight ? s.weight + ' كغ' : '—',
     s.kind === 'absence' ? (s.absenceReason || s.notes || '—') : (s.notes || '—'),
-    ...(sessionActions ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+    ...(sessionActions ? [el('div', { class: 'row-actions' },
       canEditSession(s) ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openSessionEditModal(refreshPage, s) }, 'تعديل') : el('span'),
       canEditSession(s) ? el('button', {
         class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',

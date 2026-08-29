@@ -369,7 +369,9 @@ async function renderKpiBoard(container, b) {
       dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
         'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل',
         'أهداف وضعها', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج أكل', 'برامج تدريب', 'المهام'],
-        b.trainers.map((t) => [t.name, t.branch,
+        b.trainers.map((t) => [
+          el('span', { class: 'cell-name' }, t.name),
+          el('span', { class: 'cell-name' }, t.branch),
           num(t.officeHours), num(t.trainingHours), num(t.sessions),
           el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
           num(t.trainedPeople), fmtMoney(t.collected),
@@ -405,7 +407,7 @@ async function renderKpiBoard(container, b) {
     el('div', { style: 'overflow-x:auto' },
       dataTable(['الفرع', 'مشتركون جدد', 'تجديد', 'عائد من التجميد', 'تجميد الشهر', 'مجمّدون الآن', 'سقف التجميد',
         'التحصيل', 'الفعّالون', 'نسبة التجديد', 'حصص', 'نتائج', 'مشاكل'],
-        b.branches.map((x) => [x.branch,
+        b.branches.map((x) => [el('span', { class: 'cell-name' }, x.branch),
           num(x.newSubs), num(x.renewals), num(x.returnedFromFreeze), num(x.freezesMonth),
           el('span', {
             class: 'num',
@@ -675,7 +677,7 @@ async function viewFrozen(root) {
             catch (ex) { toast(ex.message, true); }
           },
         }),
-        el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+        el('div', { class: 'row-actions' },
           r.phone ? el('a', {
             class: 'btn btn--accent btn--sm', target: '_blank',
             href: waLink(r.phone, OPS_SETTINGS.waCountryCode, OPS_SETTINGS.frozenMessage, r.name),

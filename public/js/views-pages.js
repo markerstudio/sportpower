@@ -618,7 +618,7 @@ async function viewSubscriptions(root) {
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
             fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+            el('div', { class: 'row-actions' },
               // تعديل تواريخ الاشتراك وحصصه وقيمته — للإدارة والمحاسبة وحدهما
               canOnboard
                 ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(render, s, byName(s)) }, 'تعديل')
@@ -769,7 +769,7 @@ async function viewBranches(root) {
         (t) => [t.name, t.phone || '—',
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
             el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))],
         { pageSize: 15, searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' }));
@@ -1046,7 +1046,7 @@ async function viewInbody(root) {
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
           r.imageUrl ? el('a', { href: r.imageUrl, target: '_blank' }, 'عرض') : '—',
           // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟ وتصحيح أرقامها
-          ...(isStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+          ...(isStaff ? [el('div', { class: 'row-actions' },
             el('button', {
               class: 'btn btn--ghost btn--sm', title: 'رصد نتيجة من هذه القراءة',
               onclick: () => openFlagModal(renderList, r.traineeId, 'result', { inbodyId: r.id, date: r.date }),
@@ -1782,7 +1782,7 @@ async function viewSettings(root) {
           String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
           String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
           b.freezeLimit ? String(b.freezeLimit) : el('span', { class: 'tag tag--neutral' }, 'بلا سقف'),
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openBranchEditModal(render, b) }, 'تعديل'),
             el('button', {
               class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -1822,7 +1822,7 @@ async function viewSettings(root) {
              «افتح عند المدرب العقود مع الباقات مع الأسعار»، و«أعطِ طه
              ونور خاصية تجديد الاشتراك». */
           ['trainer', 'nutritionist'].includes(u.role)
-            ? el('div', { style: 'display:flex;gap:5px;flex-wrap:wrap' },
+            ? el('div', { class: 'row-actions' },
               ...TRAINER_PERMS.map(([key, on, off, ask]) => el('button', {
                 class: 'btn btn--sm ' + (u[key] ? 'btn--accent' : 'btn--ghost'),
                 title: ask(u.name, u[key]),
@@ -1836,7 +1836,7 @@ async function viewSettings(root) {
                 },
               }, u[key] ? on : off)))
             : el('span', { style: 'color:var(--app-muted)' }, '—'),
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => { openUserEditModal(render, u, branches).catch((ex) => toast(ex.message, true)); } }, 'تعديل'),
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
             // بيانات الدخول جاهزة على واتساب — بكلمة مرور مؤقتة جديدة

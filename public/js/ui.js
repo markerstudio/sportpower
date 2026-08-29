@@ -170,18 +170,68 @@ function toast(message, isError) {
   setTimeout(() => t.remove(), 4200);
 }
 
+/* ------------------------------------------------------------
+   نافذة منبثقة
+   كانت تُفتح بلا أيٍّ من سلوك النوافذ المتوقَّع: لا Escape يغلقها، ولا
+   تركيزَ يدخلها فيبقى المؤشر في الصفحة خلفها، ولا يعود التركيز لزرّ
+   الفتح عند الإغلاق، والصفحة خلفها تُمرَّر تحت الغشاء. والنظام إدخالُ
+   بياناتٍ طوال اليوم — فهذه نقراتٌ ضائعة في كل مرة.
+   ------------------------------------------------------------ */
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),'
+  + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 function modal(title, bodyNodes, { wide } = {}) {
   const root = document.getElementById('modal-root');
   root.innerHTML = '';
-  const close = () => { root.innerHTML = ''; };
-  const box = el('div', { class: 'modal', style: wide ? 'width:760px' : '' },
+  const opener = document.activeElement; // نعيد إليه التركيز عند الإغلاق
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey, true);
+    document.body.classList.remove('modal-open');
+    root.innerHTML = '';
+    // العودة لزرّ الفتح: من يتنقّل بلوحة المفاتيح لا يبدأ من أول الصفحة
+    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+  };
+
+  const box = el('div', {
+    class: 'modal', style: wide ? 'width:760px' : '',
+    role: 'dialog', 'aria-modal': 'true', 'aria-label': String(title || 'نافذة'),
+  },
     el('div', { class: 'modal__head' },
       el('img', { src: '/assets/mark-green.svg', alt: '' }),
       el('div', { class: 'modal__title' }, title),
-      el('button', { class: 'modal__close', onclick: close, 'aria-label': 'إغلاق' }, '✕')),
+      el('button', { class: 'modal__close', type: 'button', onclick: close, 'aria-label': 'إغلاق' }, '✕')),
     el('div', { class: 'modal__body' }, ...bodyNodes));
+
+  /* Escape يغلق، وTab يدور داخل النافذة ولا يخرج لعناصر الصفحة خلفها */
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const items = [...box.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null || n === document.activeElement);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+  document.addEventListener('keydown', onKey, true);
+
   const overlay = el('div', { class: 'modal-overlay', onclick: (e) => { if (e.target === overlay) close(); } }, box);
   root.append(overlay);
+  document.body.classList.add('modal-open'); // توقف تمرير الصفحة خلف الغشاء
+
+  /* التركيز على أول حقل قابل للكتابة — لا على زرّ الإغلاق:
+     من يفتح «دفعة جديدة» يريد الكتابة فورًا لا البحث عن الحقل. */
+  requestAnimationFrame(() => {
+    const body = box.querySelector('.modal__body');
+    const firstField = body && body.querySelector('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])');
+    (firstField || box.querySelector('.modal__close')).focus({ preventScroll: true });
+  });
+
   return close;
 }
 
@@ -357,7 +407,7 @@ function dataTable(headers, rows, emptyText) {
   if (!rows.length) return el('div', { class: 'empty' }, emptyText || 'لا توجد بيانات.');
   return el('div', { class: 'table-wrap' },
     el('table', { class: 'tbl' },
-      el('thead', {}, el('tr', {}, ...headers.map((h) => el('th', {}, h)))),
+      el('thead', {}, el('tr', {}, ...headers.map((h) => el('th', { scope: 'col' }, h)))),
       el('tbody', {}, ...rows.map((r) => el('tr', {}, ...r.map((c) => el('td', {}, c && c.nodeType ? c : String(c ?? '—'))))))));
 }
 
