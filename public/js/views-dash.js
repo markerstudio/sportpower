@@ -765,7 +765,12 @@ async function viewAccountantDash(root) {
         pagedTable(['المتدرب', 'الفرع', 'البند', 'القيمة', 'المدفوع', 'المتبقي', 'ينتهي', 'الحالة', ''],
           debts.rows,
           (r) => [
-            el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName),
+            /* غيرُ المسجَّل لا ملفَّ له — اسمُه نصٌّ لا رابط يقود لصفحة فارغة */
+            r.traineeId != null
+              ? el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName)
+              : el('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap' },
+                el('b', {}, r.traineeName),
+                el('span', { class: 'tag tag--neutral', title: 'دَينٌ على شخص ليس له حساب في النظام' }, 'غير مسجَّل')),
             r.branchName, r.packageName, fmtMoney(r.price, r.currency), fmtMoney(r.paid, r.currency),
             el('b', { style: 'color:var(--status-danger)' }, fmtMoney(r.remaining, r.currency)),
             r.endDate || '—',
@@ -808,12 +813,20 @@ async function viewAccountantDash(root) {
           data.payments,
           (p) => {
             const sub = data.subscriptions.find((s) => s.id === p.subscriptionId) || {};
-            return [sub.traineeName || '—', fmtMoney(p.amount, p.branchId), p.date,
-              p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, 'سداد دين')) : p.method,
-              el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(render, data.subscriptions, p) }, 'تعديل')];
+            const who = sub.traineeName || p.payerName || '—';
+            return [
+              p.unregistered
+                ? el('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap' },
+                  el('b', {}, who), el('span', { class: 'tag tag--neutral' }, 'غير مسجَّل'))
+                : who,
+              fmtMoney(p.amount, p.branchId), p.date,
+              p.debt ? el('span', {}, p.method + ' ', el('span', { class: 'tag tag--warning' }, p.legacy ? 'سداد دَين سابق' : 'سداد دين')) : p.method,
+              /* دفعةُ دَينٍ سابق تُعدَّل من قائمة الديون لا من هنا —
+                 نافذةُ التعديل مبنيّة على اشتراك، ولا اشتراك لها. */
+              p.legacy ? el('span') : el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openPaymentModal(render, data.subscriptions, p) }, 'تعديل')];
           },
           { pageSize: 10, emptyText: 'لا دفعات في هذا الشهر.',
-            searchText: (p) => ((data.subscriptions.find((s) => s.id === p.subscriptionId) || {}).traineeName || '') }))));
+            searchText: (p) => ((data.subscriptions.find((s) => s.id === p.subscriptionId) || {}).traineeName || p.payerName || '') }))));
 
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'الاشتراكات — الحالة المالية'),
@@ -996,25 +1009,79 @@ function openDebtPaymentModal(onDone, debtRow) {
    اشتراك، ثم يُسدَّد بدفعات كبقية الديون.
    ============================================================ */
 async function openLegacyDebtModal(onDone) {
-  const trainees = await API.get('/api/users?role=trainee').catch(() => []);
+  const [trainees, branches] = await Promise.all([
+    API.get('/api/users?role=trainee').catch(() => []),
+    API.get('/api/branches').catch(() => []),
+  ]);
+
+  /* صاحب الدَّين حالتان — «فيه خيارين»:
+     مشتركٌ مسجَّل عندنا فيُربط بحسابه، أو شخصٌ ليس في النظام فيكفي
+     اسمه («ما بدنا نسجّل الكل عشان نقبض دَينًا قديمًا»). */
+  const whoSel = select([
+    ['registered', 'مشترك مسجَّل في النظام'],
+    ['unregistered', 'شخص غير مسجَّل — يكفي اسمه'],
+  ], { value: 'registered' });
+
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: '' });
+  const nameIn = input({ placeholder: 'اسم صاحب الدَّين' });
+  const phoneIn = input({ placeholder: 'جواله (اختياري)', dir: 'ltr', style: 'text-align:end' });
+  const branchSel = select([['', 'بلا فرع'], ...branches.map((b) => [b.id, b.name])], { value: '' });
+
   const amountIn = input({ type: 'number', min: 1, step: 'any', placeholder: 'قيمة الدين' });
   const dateIn = input({ type: 'date', value: todayISO() });
   const reasonIn = input({ placeholder: 'مثال: متبقٍ من اشتراك ٢٠٢٥ قبل النظام' });
   const noteIn = input({ placeholder: 'ملاحظة (اختياري)' });
+
+  /* دفعةٌ مع التسجيل: تسجيلُ واحدٍ يدفع دَينه فعلٌ واحد لا فعلان.
+     تُترك فارغة إن كان الدَّين يُسجَّل الآن ويُسدَّد لاحقًا. */
+  const payIn = input({ type: 'number', min: 0, step: 'any', placeholder: 'اتركه فارغًا إن لم يدفع الآن' });
+  const payDateIn = input({ type: 'date', value: todayISO() });
+  const payMethodSel = select([['كاش', 'كاش'], ['بطاقة', 'بطاقة'], ['تحويل بنكي', 'تحويل بنكي']]);
+
+  const traineeField = field('المشترك', traineeSel);
+  const nameField = field('اسم صاحب الدَّين', nameIn);
+  const phoneField = field('الجوال (اختياري)', phoneIn);
+  const branchField = field('الفرع', branchSel);
+  const hint = el('div', { class: 'span-2 alert alert--info' });
+
+  const syncWho = () => {
+    const reg = whoSel.value === 'registered';
+    traineeField.style.display = reg ? '' : 'none';
+    nameField.style.display = reg ? 'none' : '';
+    phoneField.style.display = reg ? 'none' : '';
+    branchField.style.display = reg ? 'none' : '';
+    hint.textContent = reg
+      ? 'الدَّين يُربط بحساب المشترك ويظهر في ملفه، وفرعُه يُقرأ من حسابه.'
+      : 'لا يُفتح حساب لهذا الشخص — يُسجَّل اسمه فقط. الدَّين يدخل إجمالي الديون، '
+        + 'وسدادُه يدخل التحصيل وسجلَّ الدفعات كأي مبلغ آخر.';
+  };
+  whoSel.addEventListener('change', syncWho);
 
   const close = modal('تسجيل دَين سابق للنظام', [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
-        if (!traineeSel.value) { toast('اختر المتدرب.', true); return; }
+        const reg = whoSel.value === 'registered';
+        if (reg && !traineeSel.value) { toast('اختر المشترك.', true); return; }
+        if (!reg && !nameIn.value.trim()) { toast('اكتب اسم صاحب الدَّين.', true); return; }
         try {
-          await API.post('/api/legacy-debts', {
-            traineeId: Number(traineeSel.value), amount: amountIn.value,
-            date: dateIn.value, reason: reasonIn.value, note: noteIn.value,
-          });
-          toast('سُجّل الدين — ويظهر الآن في قائمة الديون المستحقة.');
+          const body = {
+            amount: amountIn.value, date: dateIn.value,
+            reason: reasonIn.value, note: noteIn.value,
+            payAmount: payIn.value || undefined,
+            payDate: payDateIn.value, payMethod: payMethodSel.value,
+          };
+          if (reg) body.traineeId = Number(traineeSel.value);
+          else {
+            body.personName = nameIn.value.trim();
+            body.personPhone = phoneIn.value.trim();
+            body.branchId = branchSel.value ? Number(branchSel.value) : null;
+          }
+          const r = await API.post('/api/legacy-debts', body);
+          toast(r && r.payment
+            ? 'سُجّل الدَّين ومعه دفعته — ودخلت التحصيل.'
+            : 'سُجّل الدين — ويظهر الآن في قائمة الديون المستحقة.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -1022,12 +1089,21 @@ async function openLegacyDebtModal(onDone) {
       el('div', { class: 'span-2' }, el('div', { class: 'alert alert--info' },
         'للمتأخرات التي نشأت قبل تشغيل النظام فلا اشتراك لها هنا. '
         + 'تُسجَّل على الشخص، وتدخل إجمالي الديون، وتُسدَّد بدفعات كبقية الديون.')),
-      el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
+      el('div', { class: 'span-2' }, field('صاحب الدَّين', whoSel)),
+      hint,
+      el('div', { class: 'span-2' }, traineeField),
+      nameField, phoneField,
+      el('div', { class: 'span-2' }, branchField),
       field('قيمة الدين', amountIn), field('تاريخ نشوء الدين', dateIn),
       el('div', { class: 'span-2' }, field('سبب الدين / وصفه', reasonIn)),
       el('div', { class: 'span-2' }, field('ملاحظة', noteIn)),
-      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الدين'))),
-  ]);
+      el('div', { class: 'span-2 sidebar__caption', style: 'padding:6px 0 0' },
+        'دفع الآن؟ (اختياري — تُسجَّل الدفعة مع الدَّين في خطوة واحدة)'),
+      field('المبلغ المدفوع الآن', payIn), field('تاريخ الدفعة', payDateIn),
+      el('div', { class: 'span-2' }, field('طريقة الدفع', payMethodSel)),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ'))),
+  ], { wide: true });
+  syncWho();
 }
 
 /* ============================================================

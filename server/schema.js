@@ -111,7 +111,13 @@ const SCHEMA = {
      ============================================================ */
   legacyDebts: {
     columns: {
-      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      /* صاحب الدَّين: مشتركٌ مسجَّل، أو شخصٌ ليس في النظام أصلًا.
+         «ما بدنا نسجّل الكل عشان نقبض دَينًا قديمًا»: من دفع متأخراته
+         ثم انصرف لا حاجة لفتح حساب له — يكفي اسمه. لذلك traineeId
+         اختياري، ومقابله personName. أحدهما مطلوب دائمًا. */
+      traineeId: col('int', { ref: ref('users', 'setnull') }),
+      personName: col('text'),
+      personPhone: col('text'),
       branchId: col('int', { ref: ref('branches', 'setnull') }),
       amount: col('num', { notNull: true }),
       /* سبب الدين ووصفه — «اشتراك ٢٠٢٥ قبل النظام»، «حصص خاصة»… */

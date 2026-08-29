@@ -664,3 +664,104 @@ test('security: a trainee sees only their own records, whatever id they ask for'
   assert.equal((await req('POST', '/api/inbody', { token: tok, body: { traineeId: b.id, date: '2026-08-01', weight: 70 } })).status, 403);
   assert.equal((await req('PUT', '/api/users/' + b.id, { token: tok, body: { name: 'x' } })).status, 403);
 });
+
+test('legacy debts: a debt can belong to someone with no account at all', async () => {
+  /* «ما بدنا نسجّل الكل عشان نقبض دَينًا قديمًا»: من يدفع متأخراته ثم
+     ينصرف لا حاجة لفتح حساب باسمه — يكفي اسمه، والمال يدخل التحصيل. */
+  const created = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    personName: 'زائر قديم', personPhone: '0599777060', branchId: 1,
+    amount: 300, date: '2025-10-01', reason: 'متبقٍ قديم بلا حساب',
+  } });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+  assert.equal(created.json.traineeId, null, 'no account is created for them');
+  assert.equal(created.json.personName, 'زائر قديم');
+  const debtId = created.json.id;
+
+  // ولا يُنشأ لهم مستخدم في النظام
+  const trainees = (await req('GET', '/api/users?role=trainee', { token: S.admin })).json;
+  assert.ok(!trainees.some((u) => u.name === 'زائر قديم'), 'no member record was created');
+
+  // يظهر في مصدر الديون باسمه، وموسومًا بأنه غير مسجَّل
+  const debts = (await req('GET', '/api/debts', { token: S.admin })).json;
+  const row = debts.rows.find((r) => r.legacyDebtId === debtId);
+  assert.ok(row, 'it appears in /api/debts');
+  assert.equal(row.traineeName, 'زائر قديم', 'named from the debt itself');
+  assert.equal(row.traineeId, null);
+  assert.equal(row.registered, false);
+
+  // ويُسدَّد كأي دَين
+  const pay = await req('POST', '/api/payments', { token: S.admin, body: {
+    legacyDebtId: debtId, amount: 100, date: '2026-08-22', method: 'كاش',
+  } });
+  assert.equal(pay.status, 200);
+  assert.equal(pay.json.traineeId, null);
+
+  const after = (await req('GET', '/api/debts', { token: S.admin })).json;
+  assert.equal(after.rows.find((r) => r.legacyDebtId === debtId).remaining, 200);
+});
+
+test('legacy debts: name is required when there is no account, and the debt can be paid in one step', async () => {
+  // بلا مشترك وبلا اسم = لا صاحب للدَّين
+  const nameless = await req('POST', '/api/legacy-debts', { token: S.admin, body: { amount: 50 } });
+  assert.equal(nameless.status, 400, 'a debt with no owner at all is refused');
+
+  // دَينٌ ودفعتُه في خطوة واحدة — «نسجّل واحدًا يدفع دَينه» فعلٌ واحد
+  const oneStep = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    personName: 'دافع فورًا', branchId: 1, amount: 250,
+    payAmount: 250, payDate: '2026-08-22', payMethod: 'كاش',
+  } });
+  assert.equal(oneStep.status, 200);
+  assert.ok(oneStep.json.payment, 'the payment was recorded with the debt');
+  assert.equal(oneStep.json.payment.amount, 250);
+
+  // ودَينٌ سُدِّد بالكامل يخرج من قائمة المستحقات
+  const debts = (await req('GET', '/api/debts', { token: S.admin })).json;
+  assert.ok(!debts.rows.some((r) => r.legacyDebtId === oneStep.json.id), 'a fully settled debt is not outstanding');
+
+  // ولا تُقبل دفعةٌ أكبر من الدَّين نفسه
+  const over = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    personName: 'دفعة زائدة', branchId: 1, amount: 100, payAmount: 500,
+  } });
+  assert.equal(over.status, 400, 'paying more than the debt is refused');
+
+  // والمال المحصَّل من غير المسجَّلين يظهر في سجل الدفعات لمطابقة الصندوق
+  const csv = await fetch(base + '/api/reports/trainees.csv?payments=1&month=2026-08', {
+    headers: { Authorization: 'Bearer ' + S.admin },
+  });
+  const text = await csv.text();
+  assert.ok(text.includes('دافع فورًا'), 'an unregistered payer appears in the payments log');
+  assert.ok(text.includes('غير مسجَّل'), 'and is marked as unregistered');
+});
+
+test('legacy debts: a scoped accountant cannot book one onto another branch', async () => {
+  /* الفرع هنا يأتي من الطلب (لا حساب يُقرأ منه) — فهو المكان الذي
+     يجب أن يُتحقَّق فيه، وإلا سجّل محاسبٌ مقيَّد دَينًا خارج نطاقه. */
+  const branches = (await req('GET', '/api/branches', { token: S.admin })).json;
+  assert.ok(branches.length >= 2, 'at least two branches exist');
+  const [mine, other] = branches;
+
+  const acc = await req('POST', '/api/users', { token: S.admin, body: {
+    username: 'scopeddebt1', password: 'temp-pass-123', name: 'محاسبة مقيَّدة',
+    role: 'accountant', branchId: mine.id,
+  } });
+  await req('PUT', '/api/users/' + acc.json.id, { token: S.admin, body: { branchIds: [mine.id] } });
+  const temp = await login('scopeddebt1', 'temp-pass-123');
+  await req('POST', '/api/me/password', { token: temp.token, body: { current: 'temp-pass-123', next: 'scoped-own-pass-1' } });
+  const tok = (await login('scopeddebt1', 'scoped-own-pass-1')).token;
+
+  const inScope = await req('POST', '/api/legacy-debts', { token: tok, body: {
+    personName: 'ضمن النطاق', branchId: mine.id, amount: 100,
+  } });
+  assert.equal(inScope.status, 200, 'their own branch is allowed');
+
+  const outOfScope = await req('POST', '/api/legacy-debts', { token: tok, body: {
+    personName: 'خارج النطاق', branchId: other.id, amount: 100,
+  } });
+  assert.equal(outOfScope.status, 403, 'another branch is refused');
+
+  // وفرعٌ لا وجود له يُرفض بدل أن يُخزَّن مرجعًا معلّقًا
+  const ghost = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    personName: 'فرع وهمي', branchId: 999999, amount: 100,
+  } });
+  assert.equal(ghost.status, 400, 'a non-existent branch is refused');
+});
