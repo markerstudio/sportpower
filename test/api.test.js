@@ -765,3 +765,62 @@ test('legacy debts: a scoped accountant cannot book one onto another branch', as
   } });
   assert.equal(ghost.status, 400, 'a non-existent branch is refused');
 });
+
+test('targets: «فعّالون خلال الفترة» follows the chosen period, not today', async () => {
+  /* كان هذا المؤشر وحده لقطةً للحظة القراءة: هدفُ شهرٍ ماضٍ يُقرأ برقم
+     اليوم. الآن يُحسب من تقاطع مدة الاشتراك مع الفترة. */
+  const actualOf = async (period) => {
+    await req('POST', '/api/targets', { token: S.admin, body: {
+      scope: 'branch', refId: 1, metric: 'activeTrainees', period, value: 100,
+    } });
+    const targets = (await req('GET', '/api/targets', { token: S.admin })).json;
+    return targets.find((t) => t.scope === 'branch' && t.refId === 1
+      && t.metric === 'activeTrainees' && t.period === period).actual;
+  };
+
+  const aprBefore = await actualOf('2026-04');
+  const janBefore = await actualOf('2026-01');
+
+  // مشترك اشتراكه امتدّ من آذار إلى أيار — فهو فعّال في نيسان لا في كانون الثاني
+  const ob = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'فعّال في نيسان', phone: '0599777070', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 12, price: 600, startDate: '2026-03-01', endDate: '2026-05-01' },
+  } });
+  assert.equal(ob.status, 200, JSON.stringify(ob.json));
+
+  assert.equal(await actualOf('2026-04'), aprBefore + 1, 'counted in a month his subscription covered');
+  assert.equal(await actualOf('2026-01'), janBefore, 'not counted in a month before it started');
+});
+
+test('targets: the metric list is grouped, and the combined metric is retired from the picker', async () => {
+  const r = await req('GET', '/api/targets/metrics', { token: S.admin });
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.json.groups) && r.json.groups.length, 'groups are returned for the picker');
+  assert.ok(Array.isArray(r.json.metrics), 'metrics are returned');
+  assert.ok(r.json.metrics.every((m) => m.group), 'every metric belongs to a group');
+  assert.ok(r.json.groups.every((g) => r.json.metrics.some((m) => m.group === g.key)),
+    'no empty group is offered');
+
+  // «اشتراكات جديدة + تجديد» مجموعُ غيره — يخرج من قائمة الاختيار
+  const combined = r.json.metrics.find((m) => m.key === 'newSubs');
+  assert.ok(combined && combined.deprecated === true, 'the combined metric is marked retired');
+  assert.ok(!r.json.metrics.find((m) => m.key === 'newOnly').deprecated);
+  assert.ok(!r.json.metrics.find((m) => m.key === 'renewals').deprecated);
+
+  // لكنه يبقى محسوبًا لهدفٍ ضُبط عليه قبل الفصل — ولا ينقلب معناه
+  const month = '2026-08';
+  assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'branch', refId: 1, metric: 'newSubs', period: month, value: 5,
+  } })).status, 200, 'an existing target on it can still be saved');
+  const targets = (await req('GET', '/api/targets', { token: S.admin })).json;
+  const of = (m) => targets.find((t) => t.scope === 'branch' && t.refId === 1 && t.metric === m && t.period === month);
+
+  for (const m of ['newOnly', 'renewals']) {
+    await req('POST', '/api/targets', { token: S.admin, body: { scope: 'branch', refId: 1, metric: m, period: month, value: 5 } });
+  }
+  const fresh = (await req('GET', '/api/targets', { token: S.admin })).json;
+  const val = (m) => fresh.find((t) => t.scope === 'branch' && t.refId === 1 && t.metric === m && t.period === month).actual;
+  assert.equal(val('newSubs'), val('newOnly') + val('renewals'),
+    'and it still equals exactly the sum of the two that replaced it');
+  assert.ok(of('newSubs').deprecated, 'existing targets on it are flagged so they can be migrated');
+});
