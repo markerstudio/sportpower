@@ -192,7 +192,7 @@ This system was itself built with AI assistance, so the category applies to it d
 
 ### 9.3 Findings from this pass, and their fixes
 
-All five arose from — or were exposed by — the capability expansion delivered alongside this scan. None was reachable by an unprivileged user today; each was fixed because it becomes reachable the moment a role's scope changes.
+All six arose from — or were exposed by — the capability expansion delivered alongside this scan. None was reachable by an unprivileged user today; each was fixed because it becomes reachable the moment a role's scope changes.
 
 | Severity | Finding | Fix |
 |---|---|---|
@@ -200,6 +200,7 @@ All five arose from — or were exposed by — the capability expansion delivere
 | Medium | Health records (InBody readings, progress photos, meal plans) carry no `branchId` of their own, and branch restriction is built on `branchId` — so **editing or deleting** one bypassed the branch check entirely. Not exploitable today (those routes are open only to admins and trainers, neither of whom is branch-restricted), but it fails the moment any role there is scoped. | The owning member's branch is now resolved and checked before every edit or delete on those records. |
 | Low | Subscriptions recorded **no author**. With renewal now possible from three different roles, a money-bearing record had no reviewable trail. | `createdBy` added to the schema and written on both creation paths. |
 | Low | Deleting a meal plan did not verify the plan existed, so a wrong id returned success. | Returns `404` for a missing plan. |
+| Low | `vercel.json` sends its own CSP for non-API paths, and it had **drifted** from the one the server sends — the four directives hardened in this pass were missing from it. Not a hole (both headers reach the browser and it enforces the intersection, so the stricter server policy still applied), but two copies of one policy will diverge again. | The edge policy now matches the server's, directive for directive. |
 | Low | The Excel importer answered a **missing optional dependency with `500`**, and a corrupt or non-Excel file with the generic server-error message — both of them the user's own configuration or file, reported as a server fault. | `503` with an actionable message for the missing parser; `400` naming the file problem for an unreadable upload. |
 
 ### 9.4 What guards this now
