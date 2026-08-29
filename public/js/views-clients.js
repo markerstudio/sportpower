@@ -360,7 +360,10 @@ function traineePackagesCard(data, traineeId, onDone) {
         statusTag(sub.status, sub.expiring)))
     : el('div', { class: 'alert alert--warning' }, 'لا اشتراك فعّال حاليًا — اختر باقة للتجديد.');
 
-  const grid = el('div', { class: 'meals-grid' });
+  /* بطاقات الباقات تُبنى مرة وتُعرض داخل اللوح الجانبي عند الطلب —
+     كانت مفرودةً في الصفحة فتبتلع «صفحتي» كلها تحت الاشتراك الحالي،
+     والمشترك يفتح صفحته ليرى رصيده لا ليتصفّح المعروضات. */
+  const grid = el('div', { class: 'pkg-drawer-list' });
   (data.packages || []).forEach((p) => {
     const isCurrent = sub && sub.packageId === p.id;
     grid.append(el('div', { class: 'card meal-card pkg-card' + (isCurrent ? ' pkg-card--current' : '') },
@@ -382,14 +385,23 @@ function traineePackagesCard(data, traineeId, onDone) {
         : el('span')));
   });
 
+  const count = (data.packages || []).length;
+  const openPackages = () => modal(`الباقات المتاحة (${count})`, [
+    el('div', { class: 'sidebar__caption', style: 'padding:0 0 4px' },
+      'للتجديد أو الترقية' + (showPrices ? '' : ' — الأسعار متاحة للإدارة والمحاسب فقط')),
+    grid,
+  ], { drawer: true });
+
   return el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'الاشتراك والباقات',
       !showPrices ? el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' }, 'الأسعار متاحة للإدارة والمحاسب فقط') : ''),
     currentBox,
-    (data.packages || []).length
-      ? el('div', {},
-        el('div', { class: 'sidebar__caption', style: 'padding:14px 0 8px' }, 'الباقات المتاحة للتجديد أو الترقية'),
-        grid)
+    count
+      ? el('button', {
+        class: 'btn btn--outline', type: 'button',
+        style: 'margin-top:14px;align-self:flex-start',
+        onclick: openPackages,
+      }, `عرض الباقات المتاحة (${count}) ←`)
       : '');
 }
 

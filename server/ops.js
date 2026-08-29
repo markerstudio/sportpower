@@ -19,6 +19,16 @@ function inPeriod(period, dateStr) {
   return false;
 }
 
+/* حدود الفترة كتاريخين — لقياس ما كان قائمًا خلالها لا ما جرى فيها.
+   الاشتراك مدةٌ ممتدة لا حدثٌ في يوم، فلا يكفي inPeriod لقياسه. */
+function periodRange(period) {
+  if (/^\d{4}-\d{2}$/.test(period)) return { from: period + '-01', to: period + '-31' };
+  if (/^\d{4}-H1$/.test(period)) return { from: period.slice(0, 4) + '-01-01', to: period.slice(0, 4) + '-06-31' };
+  if (/^\d{4}-H2$/.test(period)) return { from: period.slice(0, 4) + '-07-01', to: period.slice(0, 4) + '-12-31' };
+  if (/^\d{4}$/.test(period)) return { from: period + '-01-01', to: period + '-12-31' };
+  return null;
+}
+
 /* هل الشهر مشمول بالفترة؟ (لاحتساب KPI الشهري من أهداف نصف سنوية/سنوية) */
 function monthInPeriod(period, month) {
   return inPeriod(period, month + '-15');
@@ -82,42 +92,60 @@ const ALL_SCOPES = ['company', 'branch', 'trainer', 'user'];
 const TRAINER_SCOPES = ['company', 'branch', 'trainer', 'user'];
 const BRANCH_SCOPES = ['company', 'branch', 'user'];
 
+/* المجموعات: القائمة بلغت ثلاثة وعشرين مؤشرًا، وقائمةٌ مسطّحة بهذا
+   الطول تُقرأ كأنها مكرَّرة — فتُعرض مقسَّمة بعناوينها. */
+const METRIC_GROUPS = [
+  ['money', 'مال وتحصيل'],
+  ['training', 'تدريب'],
+  ['subs', 'اشتراكات'],
+  ['freeze', 'تجميد'],
+  ['outcomes', 'نتائج ومتابعة'],
+  ['sales', 'مبيعات'],
+];
+
 const METRICS = {
   /* --- مال وتشغيل --- */
-  revenue: { label: 'التحصيل', scopes: BRANCH_SCOPES, by: 'branch', money: true },
-  sessions: { label: 'عدد الحصص', scopes: TRAINER_SCOPES, by: 'person' },
-  uniqueTrainees: { label: 'متدربون فريدون', scopes: TRAINER_SCOPES, by: 'person' },
-  hours: { label: 'ساعات التدريب', scopes: TRAINER_SCOPES, by: 'person' },
-  officeHours: { label: 'ساعات مكتبية', scopes: TRAINER_SCOPES, by: 'person' },
-  stories: { label: 'ستوريات منشورة', scopes: TRAINER_SCOPES, by: 'person' },
-  reels: { label: 'ريلز/فيديوهات', scopes: TRAINER_SCOPES, by: 'person' },
+  revenue: { label: 'التحصيل', group: 'money', scopes: BRANCH_SCOPES, by: 'branch', money: true },
+  sessions: { label: 'عدد الحصص', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
+  uniqueTrainees: { label: 'متدربون فريدون', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
+  hours: { label: 'ساعات التدريب', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
+  officeHours: { label: 'ساعات مكتبية', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
+  stories: { label: 'ستوريات منشورة', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
+  reels: { label: 'ريلز/فيديوهات', group: 'training', scopes: TRAINER_SCOPES, by: 'person' },
 
   /* --- الاشتراكات: التجديد غير الاشتراك الجديد (بطلب العميل صراحةً:
          «في فرق ما بين التجديد وما بين الاشتراكات الجديدة») --- */
-  newSubs: { label: 'اشتراكات جديدة + تجديد', scopes: BRANCH_SCOPES, by: 'branch' },
-  newOnly: { label: 'اشتراكات جديدة فقط', scopes: BRANCH_SCOPES, by: 'branch' },
-  renewals: { label: 'تجديد اشتراكات', scopes: BRANCH_SCOPES, by: 'branch' },
-  activeTrainees: { label: 'المتدربون الفعالون', scopes: BRANCH_SCOPES, by: 'branch' },
-  newTrainees: { label: 'مشتركون جدد (أشخاص)', scopes: BRANCH_SCOPES, by: 'branch' },
+  newOnly: { label: 'اشتراكات جديدة فقط', group: 'subs', scopes: BRANCH_SCOPES, by: 'branch' },
+  renewals: { label: 'تجديد اشتراكات', group: 'subs', scopes: BRANCH_SCOPES, by: 'branch' },
+  /* مجموعُ الاثنين أعلاه حسابيًّا. لم يعد يُعرض في قائمة الاختيار —
+     قراءتُه بجانبهما توحي بتكرارٍ لا بمعنى — لكنه يبقى محسوبًا لأي هدف
+     ضُبط عليه قبل الفصل، فلا ينقلب معناه على أحد. */
+  newSubs: { label: 'اشتراكات جديدة + تجديد', group: 'subs', scopes: BRANCH_SCOPES, by: 'branch', deprecated: true },
+  /* «كان مشتركًا فعّالًا خلال الفترة» لا «فعّالٌ الآن»: بقية المؤشرات
+     كلها تقيس ما جرى في الفترة المختارة، وهذا وحده كان لقطةً للحظة
+     القراءة — فهدفُ شهرٍ ماضٍ يُقرأ برقم اليوم. والاسم يقول ذلك صراحةً
+     كي لا يُخلط برقم «الفعّالون الآن» في لوحة KPI. */
+  activeTrainees: { label: 'مشتركون فعّالون خلال الفترة', group: 'subs', scopes: BRANCH_SCOPES, by: 'branch' },
+  newTrainees: { label: 'مشتركون جدد (أشخاص)', group: 'subs', scopes: BRANCH_SCOPES, by: 'branch' },
 
   /* --- التجميد: سقفه يُضبط لكل فرع، وهدفه يُقاس هنا --- */
-  freezes: { label: 'عدد التجميد', scopes: BRANCH_SCOPES, by: 'branch' },
-  unfreezes: { label: 'عائد من التجميد', scopes: BRANCH_SCOPES, by: 'branch' },
+  freezes: { label: 'عدد التجميد', group: 'freeze', scopes: BRANCH_SCOPES, by: 'branch' },
+  unfreezes: { label: 'عائد من التجميد', group: 'freeze', scopes: BRANCH_SCOPES, by: 'branch' },
 
   /* --- النتائج والمشاكل --- */
-  results: { label: 'نتائج مشتركين', scopes: TRAINER_SCOPES, by: 'person' },
-  problems: { label: 'مشاكل مشتركين', scopes: TRAINER_SCOPES, by: 'person' },
-  referred: { label: 'زبائن عن طريقه', scopes: TRAINER_SCOPES, by: 'person' },
+  results: { label: 'نتائج مشتركين', group: 'outcomes', scopes: TRAINER_SCOPES, by: 'person' },
+  problems: { label: 'مشاكل مشتركين', group: 'outcomes', scopes: TRAINER_SCOPES, by: 'person' },
+  referred: { label: 'زبائن عن طريقه', group: 'outcomes', scopes: TRAINER_SCOPES, by: 'person' },
 
   /* --- عمل المدرب مع مشتركيه --- */
-  traineeGoals: { label: 'أهداف تدريبية وُضعت', scopes: TRAINER_SCOPES, by: 'person' },
-  mealPlans: { label: 'برامج أكل', scopes: TRAINER_SCOPES, by: 'person' },
+  traineeGoals: { label: 'أهداف تدريبية وُضعت', group: 'outcomes', scopes: TRAINER_SCOPES, by: 'person' },
+  mealPlans: { label: 'برامج أكل', group: 'outcomes', scopes: TRAINER_SCOPES, by: 'person' },
 
   /* --- المبيعات --- */
-  leads: { label: 'أرقام جديدة (مبيعات)', scopes: BRANCH_SCOPES, by: 'person' },
-  tests: { label: 'حصص تجريبية (test)', scopes: BRANCH_SCOPES, by: 'person' },
-  closedLeads: { label: 'عملاء أُغلقوا (اشتركوا)', scopes: BRANCH_SCOPES, by: 'person' },
-  closingRate: { label: 'نسبة الإغلاق %', scopes: BRANCH_SCOPES, by: 'person', pct: true },
+  leads: { label: 'أرقام جديدة (مبيعات)', group: 'sales', scopes: BRANCH_SCOPES, by: 'person' },
+  tests: { label: 'حصص تجريبية (test)', group: 'sales', scopes: BRANCH_SCOPES, by: 'person' },
+  closedLeads: { label: 'عملاء أُغلقوا (اشتركوا)', group: 'sales', scopes: BRANCH_SCOPES, by: 'person' },
+  closingRate: { label: 'نسبة الإغلاق %', group: 'sales', scopes: BRANCH_SCOPES, by: 'person', pct: true },
 };
 
 const METRIC_KEYS = Object.keys(METRICS);
@@ -202,8 +230,18 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
     case 'freezes': return events(['freeze']).length;
     case 'unfreezes': return events(['unfreeze']).length;
 
-    case 'activeTrainees':
-      return new Set(subscriptions.filter((s) => subStatus(s) === 'active' && scopeBranch(s.branchId)).map((s) => s.traineeId)).size;
+    /* من كان مشتركًا فعّالًا خلال الفترة: اشتراكٌ غير ملغى تتقاطع مدتُه
+       معها. كان الحساب لقطةً للحظة القراءة (فعّالٌ الآن) بلا نظرٍ إلى
+       الفترة أصلًا — فهدفُ شهرٍ ماضٍ يُقرأ برقم اليوم، وهو المؤشر
+       الوحيد الذي كان يشذّ عن بقية المؤشرات في هذا. */
+    case 'activeTrainees': {
+      const range = periodRange(t.period);
+      const live = subscriptions.filter((s) => s.status !== 'cancelled' && scopeBranch(s.branchId));
+      if (!range) return new Set(live.filter((s) => subStatus(s) === 'active').map((s) => s.traineeId)).size;
+      return new Set(live
+        .filter((s) => (s.startDate || '') <= range.to && (s.endDate || '') >= range.from)
+        .map((s) => s.traineeId)).size;
+    }
     case 'newTrainees':
       return users.filter((u) => u.role === 'trainee' && inPeriod(t.period, u.joinedAt || '')
         && scopeBranch(u.branchId)).length;
@@ -399,6 +437,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       pct: effective ? Math.round((actual / effective) * 100) : null,
       refName, metricLabel: meta.label || t.metric,
       money: !!meta.money, pctMetric: !!meta.pct,
+      // مؤشرٌ لم يعد يُعرض في قائمة الاختيار — يُوسَم ليُستبدل بمرور الوقت
+      deprecated: !!meta.deprecated,
     };
   }
 
@@ -418,7 +458,10 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
   /* قائمة المؤشرات ونطاقاتها — الواجهة تبنيها منها فلا تتفرّع النسختان */
   app.get('/api/targets/metrics', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-    res.json(METRIC_KEYS.map((k) => ({ key: k, ...METRICS[k] })));
+    res.json({
+      groups: METRIC_GROUPS.map(([key, label]) => ({ key, label })),
+      metrics: METRIC_KEYS.map((k) => ({ key: k, ...METRICS[k] })),
+    });
   }));
 
   /* الأدوار التي يصحّ وضع هدف شخصي لها — المتدرب ليس موظفًا يُقاس */
@@ -1068,3 +1111,5 @@ module.exports.computeActual = computeActual;
 module.exports.effectiveTarget = effectiveTarget;
 module.exports.METRIC_LABELS = METRIC_LABELS;
 module.exports.METRICS = METRICS;
+module.exports.METRIC_GROUPS = METRIC_GROUPS;
+module.exports.periodRange = periodRange;

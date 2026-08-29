@@ -8,16 +8,24 @@ const FROZEN_STATUS_LABELS = {
    تتفرّع نسختان تختلفان: هناك يُحسب المؤشر وهنا يُعرض. تُجلب مرة واحدة
    لكل جلسة، وهذه نسخة احتياطية إن تعذّر الجلب. */
 let METRICS_CACHE = null;
-const METRICS_FALLBACK = [
-  { key: 'revenue', label: 'التحصيل', scopes: ['company', 'branch', 'user'], money: true },
-  { key: 'sessions', label: 'عدد الحصص', scopes: ['company', 'branch', 'trainer', 'user'] },
-];
+const METRICS_FALLBACK = {
+  groups: [{ key: 'money', label: 'مال وتحصيل' }, { key: 'training', label: 'تدريب' }],
+  metrics: [
+    { key: 'revenue', label: 'التحصيل', group: 'money', scopes: ['company', 'branch', 'user'], money: true },
+    { key: 'sessions', label: 'عدد الحصص', group: 'training', scopes: ['company', 'branch', 'trainer', 'user'] },
+  ],
+};
 async function loadMetrics() {
   if (METRICS_CACHE) return METRICS_CACHE;
-  try { METRICS_CACHE = await API.get('/api/targets/metrics'); }
-  catch (e) { METRICS_CACHE = METRICS_FALLBACK; }
+  try {
+    const r = await API.get('/api/targets/metrics');
+    // توافقٌ مع نسخة أقدم من الخادم كانت تُعيد مصفوفة لا كائنًا
+    METRICS_CACHE = Array.isArray(r) ? { groups: [], metrics: r } : r;
+  } catch (e) { METRICS_CACHE = METRICS_FALLBACK; }
   return METRICS_CACHE;
 }
+/* اسمُ مؤشرٍ أيًّا كان — بما فيه المؤشرات المتوقّفة عن العرض */
+const metricMeta = (key) => ((METRICS_CACHE && METRICS_CACHE.metrics) || []).find((m) => m.key === key) || null;
 
 const SCOPE_LABELS = {
   company: 'الشركة كاملة', branch: 'فرع', trainer: 'مدرب', user: 'موظف (محاسبة/مبيعات/…)',
@@ -311,7 +319,17 @@ async function viewKpi(root) {
       el('h3', { class: 'card__title' }, 'الأهداف — مقارنة الفعلي بالمستهدف'),
       pagedTable(['النطاق', 'المؤشر', 'الفترة', 'الهدف', 'المحقق', 'نسبة الإنجاز', ''],
         targets.sort((a, b) => (a.period < b.period ? 1 : -1)),
-        (x) => [x.refName || '—', x.metricLabel, periodLabel(x.period),
+        (x) => [x.refName || '—',
+          /* مؤشرٌ متوقّف عن العرض: يبقى محسوبًا، ويُوسَم كي يُستبدل */
+          x.deprecated
+            ? el('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap' }, x.metricLabel,
+              el('span', {
+                class: 'tag tag--warning',
+                title: 'هذا المؤشر مجموعُ «اشتراكات جديدة فقط» و«تجديد اشتراكات» — '
+                  + 'يبقى محسوبًا لهذا الهدف، والأهداف الجديدة تُضبط على أحدهما.',
+              }, 'مؤشر قديم'))
+            : x.metricLabel,
+          periodLabel(x.period),
           targetValueText(x, x.value), targetValueText(x, x.actual),
           progressBar(x.pct),
           API.user.role === 'admin' ? el('button', {
@@ -491,7 +509,7 @@ function periodLabel(p) {
 }
 
 async function openTargetModal(onDone, branches, trainers, staff) {
-  const metrics = await loadMetrics();
+  const { groups, metrics } = await loadMetrics();
   /* «كل حدا بنحسب»: الهدف يُضبط للشركة أو لفرع أو لمدرب — أو لأي موظف
      (محاسبة، مبيعات، تغذية) بنطاق «موظف». */
   const scopeSel = select([['company', SCOPE_LABELS.company], ['branch', SCOPE_LABELS.branch],
@@ -515,12 +533,26 @@ async function openTargetModal(onDone, branches, trainers, staff) {
 
   /* المؤشر يتبع النطاق: «ساعات التدريب» بلا معنى على المحاسبة، و«نسبة
      الإغلاق» بلا معنى على مدرب — فلا تُعرض أصلًا بدل أن يرفضها الخادم. */
+  /* المؤشر يتبع النطاق، ويُعرض مقسَّمًا بمجموعاته: قائمةٌ مسطّحة بثلاثة
+     وعشرين بندًا تُقرأ كأنها مكرَّرة. والمؤشر المتوقّف عن العرض
+     (مجموعُ غيره) لا يظهر هنا — ويبقى محسوبًا لأهدافٍ ضُبطت عليه. */
   function syncMetrics() {
     const scope = scopeSel.value;
-    const allowed = metrics.filter((m) => m.scopes.includes(scope));
+    const allowed = metrics.filter((m) => !m.deprecated && m.scopes.includes(scope));
     const keep = metricSel.value;
     metricSel.innerHTML = '';
-    allowed.forEach((m) => metricSel.append(el('option', { value: m.key }, m.label)));
+    const shown = (groups && groups.length ? groups : [{ key: null, label: '' }]);
+    shown.forEach((g) => {
+      const list = allowed.filter((m) => (g.key ? m.group === g.key : true));
+      if (!list.length) return;
+      const box = g.key ? el('optgroup', { label: g.label }) : metricSel;
+      list.forEach((m) => box.append(el('option', { value: m.key }, m.label)));
+      if (box !== metricSel) metricSel.append(box);
+    });
+    // مؤشراتٌ بلا مجموعة معروفة لا تسقط من القائمة
+    const placed = new Set([...metricSel.querySelectorAll('option')].map((o) => o.value));
+    allowed.filter((m) => !placed.has(m.key))
+      .forEach((m) => metricSel.append(el('option', { value: m.key }, m.label)));
     if (allowed.some((m) => m.key === keep)) metricSel.value = keep;
     syncHint();
   }
