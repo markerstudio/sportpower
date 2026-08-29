@@ -180,7 +180,10 @@ function toast(message, isError) {
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),'
   + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-function modal(title, bodyNodes, { wide } = {}) {
+/* drawer: لوحٌ جانبي بكامل الارتفاع بدل صندوقٍ في الوسط — لقوائم
+   يُطّلع عليها ثم تُغلق (الباقات مثلًا). هو النافذة نفسها بهندسةٍ
+   أخرى، فيرث حصرَ التركيز وEscape وتجميدَ الصفحة بلا تكرارِ أيٍّ منها. */
+function modal(title, bodyNodes, { wide, drawer } = {}) {
   const root = document.getElementById('modal-root');
   root.innerHTML = '';
   const opener = document.activeElement; // نعيد إليه التركيز عند الإغلاق
@@ -197,7 +200,8 @@ function modal(title, bodyNodes, { wide } = {}) {
   };
 
   const box = el('div', {
-    class: 'modal', style: wide ? 'width:760px' : '',
+    class: 'modal' + (drawer ? ' modal--drawer' : ''),
+    style: wide && !drawer ? 'width:760px' : '',
     role: 'dialog', 'aria-modal': 'true', 'aria-label': String(title || 'نافذة'),
   },
     el('div', { class: 'modal__head' },
@@ -220,7 +224,10 @@ function modal(title, bodyNodes, { wide } = {}) {
   }
   document.addEventListener('keydown', onKey, true);
 
-  const overlay = el('div', { class: 'modal-overlay', onclick: (e) => { if (e.target === overlay) close(); } }, box);
+  const overlay = el('div', {
+    class: 'modal-overlay' + (drawer ? ' modal-overlay--drawer' : ''),
+    onclick: (e) => { if (e.target === overlay) close(); },
+  }, box);
   root.append(overlay);
   document.body.classList.add('modal-open'); // توقف تمرير الصفحة خلف الغشاء
 
@@ -228,7 +235,8 @@ function modal(title, bodyNodes, { wide } = {}) {
      من يفتح «دفعة جديدة» يريد الكتابة فورًا لا البحث عن الحقل. */
   requestAnimationFrame(() => {
     const body = box.querySelector('.modal__body');
-    const firstField = body && body.querySelector('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])');
+    const firstField = drawer ? null
+      : body && body.querySelector('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])');
     (firstField || box.querySelector('.modal__close')).focus({ preventScroll: true });
   });
 

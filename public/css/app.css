@@ -776,3 +776,27 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
 
 /* الصفحة لا تُمرَّر خلف النافذة المنبثقة */
 body.modal-open { overflow: hidden; }
+
+/* ------------------------------------------------------------
+   لوح جانبي (drawer) — نافذةٌ بهندسةٍ أخرى
+   لقوائم يُطّلع عليها ثم تُغلق: تُفتح بالضغط ولا تشغل الصفحة كلها.
+   يقف عند الحافة المقابلة للقائمة الجانبية (منطقيًّا لا يمينًا/يسارًا،
+   فيصحّ في الاتجاهين)، وعلى الموبايل يأخذ العرض كاملًا.
+   ------------------------------------------------------------ */
+.modal-overlay--drawer { align-items: stretch; justify-content: flex-start; padding: 0; }
+.modal--drawer {
+  width: min(480px, 100%); max-width: 100%;
+  height: 100dvh; max-height: 100dvh;
+  margin-inline-start: auto; border-radius: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal--drawer .modal__body { flex: 1; overflow-y: auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .modal--drawer { animation: drawer-in var(--dur-med, .22s) var(--ease-out, ease-out); }
+  @keyframes drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+}
+@media (max-width: 560px) { .modal--drawer { width: 100%; } }
+
+/* بطاقات الباقات داخل اللوح الجانبي — عمودٌ واحد، فعرض اللوح لا يتسع لشبكة */
+.pkg-drawer-list { display: flex; flex-direction: column; gap: 14px; }
+.pkg-drawer-list .pkg-card { width: 100%; }
