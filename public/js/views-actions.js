@@ -38,13 +38,20 @@ const THRESHOLD_FIELDS = [
 ];
 
 async function viewActionCenter(root) {
-  const state = { branch: '', showHandled: false, priority: '' };
+  /* الفلاتر في العنوان: التحديث أو زرّ الرجوع لا يُعيدانك للبداية،
+     والرابط يُنسخ لزميل فيرى القائمة نفسها. */
+  const state = urlState({ branch: '', showHandled: false, priority: '' });
   /* المدرب نطاقه متدربوه لا فرعٌ يختاره — فلا منتقي فرع ولا عتبات */
   const isTrainer = API.user.role === 'trainer';
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* بعد تنفيذ إجراء تُعاد البطاقات كلها — ومكان القارئ في القائمة يبقى
+     كما هو («ما يرجع للاول — اضل وين انا واصل»). */
+  const render = (...args) => keepScroll(() => build(...args));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard('جارٍ تحليل بيانات النظام واستخراج الإجراءات المطلوبة…'));
     const [data, branches, log] = await Promise.all([

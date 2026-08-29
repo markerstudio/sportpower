@@ -330,7 +330,8 @@ function initOnce() {
 async function load(...cols) {
   await initOnce();
   const out = {};
-  await Promise.all(cols.map(async (c) => { out[c] = await driver.all(c); }));
+  // مجموعةٌ مكررة في الاستدعاء تُحمَّل مرة واحدة لا مرتين
+  await Promise.all([...new Set(cols)].map(async (c) => { out[c] = await driver.all(c); }));
   return out;
 }
 

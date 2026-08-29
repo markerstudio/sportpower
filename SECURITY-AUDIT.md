@@ -157,3 +157,61 @@ I did not, and will not, claim a system holding health data is "guaranteed secur
 - [ ] **Logs → API Gateway**: filter `/rest/v1` over the exposure window. Unrecognised requests bearing only the anon key would indicate actual access; none are expected given the key never shipped.
 - [ ] Optional but cheap here: rotate the project's API keys (Settings → API). Update `SUPABASE_SERVICE_ROLE_KEY` in Vercel in the same step or image storage breaks.
 - [ ] Redeploy, then confirm `/api/health` reports `schemaVersion: 4`, `npm run db:check` prints the "الواجهة العامة مقفلة" line, and the Security Advisor no longer lists `rls_disabled_in_public`. (An INFO-level "RLS enabled, no policy" note may remain — that is this design working as intended.)
+
+---
+
+## 9. Addendum (29 Aug 2026) — Scan against the known failure modes of AI-generated code
+
+**Why this pass.** The owner asked for a sweep specifically against "the mistakes AI and vibe coding make." That is a real and measurable category, not a figure of speech: current industry measurement puts OWASP Top-10 flaws in roughly **45% of AI-generated code samples**, reports that ~**92%** of AI-built codebases carry at least one critical finding (average ~8.3 exploitable findings per vibe-coded app), and finds ~**86%** of samples failing to defend against XSS and ~**20%** referencing packages that do not exist — the "slopsquatting" hallucination surface. The recurring root cause reported across these studies is the same: the model optimises for *making it work*, mirrors insecure patterns from its training data, and skips the checks nobody asked for out loud.
+
+This system was itself built with AI assistance, so the category applies to it directly. What follows is the checklist those studies converge on, each item run against this codebase — live where a probe was possible, by reading where it was not. Findings are separated from clean results honestly; most of this list came back clean because earlier passes (§3, §8) had already closed it.
+
+### 9.1 Method
+
+- **Live authorization matrix** — every read endpoint (49 paths) × every role (admin, trainer, accountant, trainee, nutritionist), recording the actual status code rather than the intended one.
+- **Live BOLA/IDOR probe** — logged in as one member, then requested every record type belonging to another member, both implicitly (list endpoints) and explicitly (`?trainee=<other id>`, `/api/trainee/<other id>/overview`), plus write attempts against another member's records.
+- **Live tampering probe** — smuggled fields in request bodies (`id`, `branchId`, `createdBy`, permission flags), `__proto__` and `constructor.prototype` payloads, self-service role escalation, malformed JSON, oversized query values, and login brute force.
+- **Static reading** — secrets, injection sinks, regex construction, dependency pinning, error paths, concurrency around money.
+
+### 9.2 Results by failure mode
+
+| # | Known AI/vibe-coding failure mode | Result here |
+|---|---|---|
+| 1 | **Hardcoded secrets / keys in client code** | **Clean.** No key material in the repo or in `public/`; every secret is read from the environment. The one long literal in the codebase is a demo contract token in seed data. The upload-signing secret is generated at runtime and stored in the database, not committed. |
+| 2 | **Broken access control / IDOR** | **Clean, verified live.** The 49×5 matrix showed no unintended `200`. A member asking for another member's InBody readings, meal plans, photos, sessions or subscriptions by id receives *their own* rows, never the other person's; `/api/trainee/<other>/overview` and the internal results/problems log return `403`. All six write attempts against another member returned `403`. |
+| 3 | **Injection (SQL / command / XSS)** | **Clean.** All SQL goes through one parameterised builder; the only interpolated fragments are column names resolved from the schema map, and JSON field names with quotes escaped. No `eval`, `new Function`, or `child_process` anywhere. Every regex built at runtime is assembled from code-controlled labels and escaped first. The DOM is built with `createElement`/`textContent`; the three `innerHTML` uses carry static markup or a locally generated QR SVG, and CSP is `script-src 'self'` with no inline scripts. |
+| 4 | **Mass assignment (copying the request body into the row)** | **Clean, verified live.** Every stored row is built field by field with named keys. A forced `id`, a forced `branchId`, an unknown `evil` field and smuggled permission flags were all discarded — the branch is read from the record's owner, never from the body. Now covered by a regression test. |
+| 5 | **Prototype pollution** | **Clean, verified live.** `__proto__` and `constructor.prototype` payloads were accepted as ordinary JSON and dropped by the named-field construction above; `Object.prototype` stayed clean. Also asserted in the test suite. |
+| 6 | **Hallucinated / unpinned dependencies (slopsquatting)** | **Clean.** Four dependencies, all real, all exact-pinned in the lockfile with SHA-512 integrity hashes; no `latest` or `*` ranges; 97 transitive packages, every one hashed. *Operational note:* `xlsx` installs from SheetJS's own CDN rather than npm (the npm package is abandoned — this is the vendor's documented route), so `npm ci` fails on networks that allow only `registry.npmjs.org`. It is an optional dependency loaded lazily, and the system runs fully without it. |
+| 7 | **Missing security headers / permissive CORS** | **Clean.** No CORS layer at all — same-origin only. CSP, HSTS, `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` and `Cache-Control: no-store` on every API response, `x-powered-by` disabled. **Hardened in this pass:** `object-src`, `frame-src`, `worker-src` and `manifest-src` are now stated explicitly rather than inherited from `default-src`. |
+| 8 | **No rate limiting on auth** | **Clean, verified live.** Twelve wrong passwords produced eight `401`s then `429`. The counter lives in the database, not process memory, so it survives the multi-instance serverless deployment. |
+| 9 | **Verbose errors leaking internals** | **Clean.** One error handler: 5xx bodies are a fixed Arabic sentence, parser errors are translated, and no stack or driver message reaches the client. |
+| 10 | **Race conditions on money/stock** | **Clean.** Payments and session deduction run inside a transaction with `SELECT … FOR UPDATE` on the parent row, so two concurrent requests cannot both pass the ceiling check. The legacy-debt payment path added this week uses the same lock. Duplicate-submit guards exist on both client and server. |
+| 11 | **Unbounded reads / DoS** | **Acceptable, bounded.** Page size is capped at 1000; the Excel import caps at 5000 rows; image uploads are magic-byte checked and capped at 4 MB, with the 15 MB body limit confined to the five paths that need it (login and everything else parse at 128 KB, before any authentication work). The dedupe mode added this week reads the whole subscriptions table before grouping — correct for one gym's data volume, and it is the same pattern the dashboards already use. |
+| 12 | **Weak session handling** | **Clean.** 256-bit random tokens, stored only as SHA-256 hashes, 12-hour expiry with sliding renewal, and every other session terminated on password change. Bearer tokens in headers, so CSRF does not apply. |
+
+### 9.3 Findings from this pass, and their fixes
+
+All six arose from — or were exposed by — the capability expansion delivered alongside this scan. None was reachable by an unprivileged user today; each was fixed because it becomes reachable the moment a role's scope changes.
+
+| Severity | Finding | Fix |
+|---|---|---|
+| Medium | A trainer granted the new renewal permission whose account had **no branch assigned** could renew for members of *every* branch — in the scoping helpers, "no branch" means "unrestricted", so a permission granted to cover one branch silently covered all of them. | The renewal is refused until the account has a branch assigned, with a message naming the missing setup. |
+| Medium | Health records (InBody readings, progress photos, meal plans) carry no `branchId` of their own, and branch restriction is built on `branchId` — so **editing or deleting** one bypassed the branch check entirely. Not exploitable today (those routes are open only to admins and trainers, neither of whom is branch-restricted), but it fails the moment any role there is scoped. | The owning member's branch is now resolved and checked before every edit or delete on those records. |
+| Low | Subscriptions recorded **no author**. With renewal now possible from three different roles, a money-bearing record had no reviewable trail. | `createdBy` added to the schema and written on both creation paths. |
+| Low | Deleting a meal plan did not verify the plan existed, so a wrong id returned success. | Returns `404` for a missing plan. |
+| Low | `vercel.json` sends its own CSP for non-API paths, and it had **drifted** from the one the server sends — the four directives hardened in this pass were missing from it. Not a hole (both headers reach the browser and it enforces the intersection, so the stricter server policy still applied), but two copies of one policy will diverge again. | The edge policy now matches the server's, directive for directive. |
+| Low | The Excel importer answered a **missing optional dependency with `500`**, and a corrupt or non-Excel file with the generic server-error message — both of them the user's own configuration or file, reported as a server fault. | `503` with an actionable message for the missing parser; `400` naming the file problem for an unreadable upload. |
+
+### 9.4 What guards this now
+
+Two regression tests were added alongside the fixes, so the two most commonly regressed properties fail loudly rather than silently:
+
+- **No field smuggling** — a forced id, a forced branch, unknown keys and permission flags in the request body are all rejected or ignored, and `Object.prototype` stays clean after a `__proto__` payload.
+- **No cross-member access** — a member requesting another member's records, by any id and on any route, receives only their own; the internal results/problems log stays closed to members entirely; every write against another member is refused.
+
+Total suite: **31 tests**, 30 passing and 1 skipped (the Postgres RLS test, which needs `TEST_DATABASE_URL`).
+
+### 9.5 Honest limits of this pass
+
+This was a scan against a known checklist, not a full re-audit or a penetration test. It did not cover: infrastructure beyond how the code uses it (§2 and §8 still stand), the Supabase dashboard actions still open in §8's checklist, denial-of-service under real load, or the business-rule correctness of the new KPI metrics — those are checked by the test suite and by reading, not by adversarial probing. The permission model expanded this week (trainers who may see prices and renew subscriptions); permissions are the part of any system most likely to drift, and they deserve re-reading whenever a role's duties change.

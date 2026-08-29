@@ -1,5 +1,77 @@
 /* هيكل التطبيق: التوجيه + الشريط الجانبي + الإشعارات */
 
+/* ============================================================
+   حالة الشاشة في العنوان — «الرفرش للصفحة»
+   كانت فلاتر كل شاشة (الشهر، الفرع، الأولوية…) متغيّراتٍ في الذاكرة:
+   يكفي تحديثُ الصفحة أو العودة بزرّ المتصفح ليعود كل شيء للبداية،
+   فيُعاد ضبط الشهر والفرع من جديد في كل مرة. الحالة الآن في العنوان
+   نفسه: #/kpi?month=2026-07&branch=2 — فتُستعاد الشاشة كما تُركت،
+   ويصحّ نسخ الرابط وإرساله لزميل فيرى ما تراه أنت.
+
+   تُكتب بـ replaceState لا بتغيير location.hash: تغييرُ الهاش يُطلق
+   hashchange فتُعاد بناء الصفحة كاملة عند كل ضغطة على قائمة فلتر.
+   ============================================================ */
+const routeOf = (hash) => String(hash || '').split('?')[0];
+const paramsOf = (hash) => new URLSearchParams(String(hash || '').split('?')[1] || '');
+
+/* حالةُ شاشةٍ مربوطة بالعنوان.
+   defaults: { month: thisMonthISO(), branch: '' }
+   prefix: بادئة لمفاتيح العنوان حين تتشارك بطاقتان في الصفحة اسمَ حقل
+           (بطاقتا «سجل اليوم» و«حصص اليوم» كلتاهما date).
+   تُقرأ القيم الأولية من العنوان، وكل إسناد يُحدّث العنوان بلا إعادة توجيه.
+   لا تُمسّ مفاتيحُ غير المعلَنة هنا — فبطاقتان في صفحة واحدة لا تمحو
+   إحداهما فلترَ الأخرى عند المزامنة. */
+function urlState(defaults, prefix = '') {
+  const key = (k) => prefix + k;
+  const params = paramsOf(location.hash);
+  const state = {};
+  for (const [k, v] of Object.entries(defaults)) {
+    const raw = params.get(key(k));
+    // القيم المنطقية تُخزَّن '1'/'0' كي تبقى قابلة للقراءة في العنوان
+    state[k] = raw === null ? v : (typeof v === 'boolean' ? raw === '1' : raw);
+  }
+  Object.defineProperty(state, 'sync', {
+    enumerable: false,
+    value() {
+      const next = paramsOf(location.hash);
+      for (const [k, v] of Object.entries(defaults)) {
+        const cur = state[k];
+        const isDefault = typeof v === 'boolean'
+          ? !cur
+          : (cur === null || cur === undefined || cur === '' || String(cur) === String(v ?? ''));
+        if (isDefault) next.delete(key(k));
+        else next.set(key(k), typeof v === 'boolean' ? '1' : cur);
+      }
+      const qs = next.toString();
+      const url = routeOf(location.hash) + (qs ? '?' + qs : '');
+      if (url !== location.hash) history.replaceState(null, '', url);
+    },
+  });
+  return state;
+}
+
+/* موضع الصفحة يبقى كما هو عبر إعادة البناء.
+   «اذا مثلا اعملت في مركز القرارات انو نفذت قرار ما يرجع للاول — اضل
+   وين انا واصل»: كل شاشة تُعيد بناء نفسها بعد كل حفظ، وكانت تقفز
+   لأعلى الصفحة فيضيع مكان القارئ في قائمة طويلة. */
+async function keepScroll(fn) {
+  // الجداول تُعاد بناؤها هنا — يبدأ عدّها من جديد فتُطابَق بذاكرة مواضعها
+  resetTableSeq();
+  const y = window.scrollY || document.documentElement.scrollTop || 0;
+  const out = await fn();
+  // بعد رسم الإطار التالي: العناصر الجديدة موضوعة وارتفاع الصفحة معروف
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo({ top: Math.min(y, max), behavior: 'auto' });
+  }));
+  return out;
+}
+
+/* المتصفح يستعيد موضع التمرير بنفسه على صفحةٍ تُبنى بعد التحميل،
+   فيقفز قفزةً خاطئة — نتولّاه نحن أعلاه. */
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+
 function homeRoute(role) {
   return { admin: '#/admin', trainer: '#/trainer', accountant: '#/accountant', trainee: '#/me', nutritionist: '#/meals' }[role] || '#/login';
 }
@@ -58,6 +130,16 @@ const NAV = {
   ],
 };
 
+/* صفحات يفتحها المدرب المخوَّل وحده — لا كل المدربين.
+   «افتح عند المدرب العقود مع الباقات مع الأسعار» و«أعطِ طه ونور خاصية
+   تجديد الاشتراك»: صلاحيتان تُمنحان بالاسم من صفحة المستخدمين. */
+const PERMISSION_NAV = [
+  ['#/packages', 'الباقات والعقود', 'tag', (u) => u.canSeePrices || u.canRenew],
+  ['#/subscriptions', 'الاشتراكات والتجديد', 'card', (u) => u.canRenew],
+];
+const grantedNav = (u) => PERMISSION_NAV.filter(([, , , ok]) => ok(u)).map(([h, l, i]) => [h, l, i]);
+const hasGrant = (u, hash) => PERMISSION_NAV.some(([h, , , ok]) => h === hash && ok(u));
+
 /* من يفتح أي صفحة — مصدرٌ واحد يستعمله الموجّه وأزرارُ مركز القرارات،
    فلا يُعرض للمدرب زرٌّ يقوده إلى «ليست لديك صلاحية». */
 const ROUTE_ROLES = {
@@ -91,7 +173,9 @@ function canOpenRoute(hash, role) {
   if (/^#\/trainee\/\d+$/.test(h)) return ['admin', 'accountant', 'trainer', 'nutritionist', 'trainee'].includes(role);
   if (!(h in ROUTE_ROLES)) return false;
   const allowed = ROUTE_ROLES[h];
-  return !allowed || allowed.includes(role);
+  if (!allowed || allowed.includes(role)) return true;
+  // صلاحيةٌ مُنحت لهذا الحساب بعينه تفتح صفحةً ليست لدوره
+  return !!(API.user && API.user.role === role && hasGrant(API.user, h));
 }
 
 const TITLES = {
@@ -148,7 +232,10 @@ async function renderShell(route, renderView) {
     } catch (e) { /* الافتراضي */ }
   }
 
-  const nav = NAV[API.user.role] || [];
+  /* قائمة الدور + ما مُنح لهذا الحساب بعينه (الأسعار/التجديد) */
+  const baseNav = NAV[API.user.role] || [];
+  const extra = grantedNav(API.user).filter(([h]) => !baseNav.some(([b]) => b === h));
+  const nav = [...baseNav, ...extra];
   const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
   // على الموبايل: القائمة تنزلق فوق المحتوى مع خلفية معتمة، وتُغلق بالنقر خارجها أو باختيار صفحة
   const closeSidebar = () => { sidebar.classList.remove('open'); backdrop.classList.remove('show'); };
@@ -160,28 +247,33 @@ async function renderShell(route, renderView) {
     el('div', { class: 'sidebar__logo' }, el('img', { src: logoSrc, alt: 'سبورت باور' })),
     el('div', { class: 'sidebar__caption' }, 'القائمة الرئيسية'),
     el('nav', { class: 'sidebar__nav' },
-      ...nav.map(([href, label, ic]) => el('a', { href, class: route === href ? 'active' : '', onclick: closeSidebar }, icon(ic), label))),
+      /* aria-current: قارئ الشاشة يعلن «الصفحة الحالية» — الصنف وحده لون */
+      ...nav.map(([href, label, ic]) => el('a', {
+        href, class: route === href ? 'active' : '',
+        'aria-current': route === href ? 'page' : null,
+        onclick: closeSidebar,
+      }, icon(ic), label))),
     el('div', { class: 'sidebar__foot' },
       el('b', {}, 'سبورت باور © 2026'),
       el('div', { class: 'sidebar__slogan' }, 'change your life'),
       'جسم أقوى. حياة أصحّ. نظام يبقى معك.'));
   const backdrop = el('div', { class: 'sidebar-backdrop', onclick: closeSidebar });
 
-  const bellBtn = el('button', { class: 'iconbtn', title: 'الإشعارات', onclick: openNotifications }, icon('bell'));
+  const bellBtn = el('button', { class: 'iconbtn', type: 'button', title: 'الإشعارات', 'aria-label': 'الإشعارات', onclick: openNotifications }, icon('bell'));
   const main = el('div', { class: 'main' },
     el('header', { class: 'topbar' },
-      el('button', { class: 'iconbtn menu-btn', onclick: toggleSidebar }, icon('menu')),
-      el('button', { class: 'iconbtn', title: 'عودة للصفحة السابقة', onclick: () => history.back() }, icon('back')),
+      el('button', { class: 'iconbtn menu-btn', type: 'button', title: 'القائمة', 'aria-label': 'فتح القائمة الجانبية', onclick: toggleSidebar }, icon('menu')),
+      el('button', { class: 'iconbtn', title: 'عودة للصفحة السابقة', 'aria-label': 'عودة للصفحة السابقة', onclick: () => history.back() }, icon('back')),
       el('div', { class: 'topbar__title' }, TITLES[route] || (route.startsWith('#/trainee/') ? 'ملف المتدرب' : 'نظام سبورت باور')),
-      el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
+      el('button', { class: 'iconbtn', title: 'الوضع الليلي / النهاري', 'aria-label': 'الوضع الليلي / النهاري', onclick: toggleTheme }, icon('moon')),
       bellBtn,
-      el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
+      el('button', { class: 'iconbtn', title: 'تغيير كلمة المرور', 'aria-label': 'تغيير كلمة المرور', onclick: openPasswordModal }, icon('key')),
       el('div', { class: 'topbar__user' },
         el('span', { class: 'topbar__avatar' }, (API.user.name || '؟').trim().slice(0, 1)),
         el('div', {},
           el('div', { style: 'font-weight:700;color:var(--app-ink);font-size:13px' }, API.user.name),
           el('div', { style: 'font-size:11px;color:var(--app-muted)' }, ROLE_LABELS[API.user.role] || API.user.role))),
-      el('button', { class: 'iconbtn', title: 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
+      el('button', { class: 'iconbtn', title: 'خروج', 'aria-label': 'خروج', onclick: async () => { await API.logout(); location.hash = '#/login'; } }, icon('logout'))),
     el('div', { id: 'view' }));
 
   if (stale()) return;
@@ -289,7 +381,8 @@ async function openNotifications() {
 
 /* ---------- الموجّه ---------- */
 async function route() {
-  const hash = location.hash || '#/login';
+  /* العنوان قد يحمل حالة الشاشة بعد ? — المسار وحده يحدد الصفحة */
+  const hash = routeOf(location.hash || '#/login');
   const app = document.getElementById('app');
   // نافذة مفتوحة أثناء التنقل (زر العودة مثلًا) كانت تترك غشاءها عالقًا فوق الصفحة الجديدة
   const modalRoot = document.getElementById('modal-root');
@@ -310,7 +403,10 @@ async function route() {
     return;
   }
 
-  const guard = (roles, fn) => (roles.includes(API.user.role) ? fn : (r) => { r.append(el('div', { class: 'content' }, el('div', { class: 'alert alert--warning' }, 'ليست لديك صلاحية لهذه الصفحة.'))); });
+  /* الحارس يقرأ من canOpenRoute نفسه الذي تقرأ منه القائمة وأزرار
+     مركز القرارات — فلا تُعرض صفحة في القائمة ثم يرفضها الموجّه. */
+  const guard = (hash, fn) => (canOpenRoute(hash, API.user.role) ? fn
+    : (r) => { r.append(el('div', { class: 'content' }, el('div', { class: 'alert alert--warning' }, 'ليست لديك صلاحية لهذه الصفحة.'))); });
 
   const traineeMatch = hash.match(/^#\/trainee\/(\d+)$/);
   if (traineeMatch) {
@@ -342,9 +438,7 @@ async function route() {
     '#/packages': viewPackages,
     '#/ratings': viewRatings,
   };
-  const routes = Object.fromEntries(Object.entries(VIEWS)
-    // null في ROUTE_ROLES = مفتوحة لكل الأدوار
-    .map(([h, fn]) => [h, guard(ROUTE_ROLES[h] || Object.keys(NAV), fn)]));
+  const routes = Object.fromEntries(Object.entries(VIEWS).map(([h, fn]) => [h, guard(h, fn)]));
 
   const view = routes[hash];
   if (!view) { location.hash = homeRoute(API.user.role); return; }
@@ -356,6 +450,8 @@ async function route() {
   }
 }
 
+/* كتابة الفلاتر تتم بـ replaceState فلا تُطلق hashchange — ولا تُعيد
+   بناء الشاشة. ما يصل هنا تنقّلٌ حقيقي: رابطٌ أو زرّ رجوع. */
 window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', () => {
   if (!location.hash) location.hash = API.token ? homeRoute(API.user.role) : '#/login';

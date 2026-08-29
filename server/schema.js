@@ -62,6 +62,12 @@ const SCHEMA = {
       sourceType: col('text'),
       sourceRefId: col('int'),
       sourceName: col('text'),
+      /* صلاحيتان تُمنحان لمدربٍ بعينه (بطلب العميل: «افتح عند المدرب
+         العقود مع الباقات مع الأسعار» و«أعطِ طه ونور خاصية تجديد
+         الاشتراك»). تُمنح بالاسم من صفحة المستخدمين لا لكل المدربين:
+         الأسعار سرّ تجاري يبقى مغلقًا افتراضيًا. */
+      canSeePrices: col('bool'),
+      canRenew: col('bool'),
       mfaSecret: col('text'),
       mfaEnrolledAt: col('text'),
       mfaExempt: col('bool'),
@@ -90,8 +96,32 @@ const SCHEMA = {
       /* لحظة الإنشاء (ISO) — يكشف بها الخادم الإدخال المكرر خلال ثوانٍ
          (ضغطة مزدوجة أو إعادة إرسال) فلا يُنشأ اشتراكان بدل واحد */
       createdAt: col('text'),
+      /* من أنشأ الاشتراك — صار للتجديد أكثرُ من مصدر (الإدارة، المحاسبة،
+         ومدرّبٌ مُنح صلاحية التجديد)، فلا بدّ من أثرٍ يُراجَع. */
+      createdBy: col('int'),
     },
     indexes: [['traineeId'], ['branchId'], ['status'], ['endDate'], ['branchId', 'status']],
+  },
+
+  /* ============================================================
+     ديون سابقة للنظام — «الديون مش لازم يكون في مدخل سابق لاشتراك عشان
+     يدخلها لانو في ديون سابقة بحكم انو النظام جديد».
+     دَينٌ يُسجَّل على شخص مباشرةً بلا اشتراك يقابله، ويُسدَّد بدفعات
+     كبقية الديون، ويظهر مع ديون الاشتراكات في مصدر واحد.
+     ============================================================ */
+  legacyDebts: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
+      amount: col('num', { notNull: true }),
+      /* سبب الدين ووصفه — «اشتراك ٢٠٢٥ قبل النظام»، «حصص خاصة»… */
+      reason: col('text'),
+      date: col('text'),           // تاريخ نشوء الدين
+      note: col('text'),
+      createdBy: col('int'),
+      createdAt: col('text'),
+    },
+    indexes: [['traineeId'], ['branchId'], ['date']],
   },
 
   payments: {
@@ -108,10 +138,13 @@ const SCHEMA = {
       createdBy: col('int'),
       /* سداد دين على اشتراك سابق — يُميَّز في السجل ولا يخلط بتحصيل الاشتراك الحالي */
       debt: col('bool', { default: 'false' }),
+      /* دفعة على دَينٍ قديم لا اشتراك له في النظام (legacyDebts) — النظام
+         جديد وعلى بعض المشتركين متأخرات من قبله، فلا اشتراك تُعلَّق عليه. */
+      legacyDebtId: col('int', { ref: ref('legacyDebts', 'setnull') }),
       /* لحظة الإنشاء (ISO) — تكشف الدفعة المكررة خلال ثوانٍ فلا تُسجَّل مرتين */
       createdAt: col('text'),
     },
-    indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date']],
+    indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date'], ['legacyDebtId']],
   },
 
   sessions: {
@@ -548,7 +581,8 @@ const SCHEMA = {
 /* ترتيب الإنشاء: الجداول المرجعية أولًا حتى تصحّ المفاتيح الأجنبية */
 const CREATE_ORDER = [
   'branches', 'users', 'packages', 'meals', 'rewards', 'settings',
-  'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
+  // legacyDebts قبل payments: الدفعة تشير إليه بمفتاح أجنبي
+  'subscriptions', 'legacyDebts', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'rateLimits', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',

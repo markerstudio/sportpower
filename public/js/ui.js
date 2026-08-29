@@ -170,18 +170,68 @@ function toast(message, isError) {
   setTimeout(() => t.remove(), 4200);
 }
 
+/* ------------------------------------------------------------
+   نافذة منبثقة
+   كانت تُفتح بلا أيٍّ من سلوك النوافذ المتوقَّع: لا Escape يغلقها، ولا
+   تركيزَ يدخلها فيبقى المؤشر في الصفحة خلفها، ولا يعود التركيز لزرّ
+   الفتح عند الإغلاق، والصفحة خلفها تُمرَّر تحت الغشاء. والنظام إدخالُ
+   بياناتٍ طوال اليوم — فهذه نقراتٌ ضائعة في كل مرة.
+   ------------------------------------------------------------ */
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),'
+  + 'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 function modal(title, bodyNodes, { wide } = {}) {
   const root = document.getElementById('modal-root');
   root.innerHTML = '';
-  const close = () => { root.innerHTML = ''; };
-  const box = el('div', { class: 'modal', style: wide ? 'width:760px' : '' },
+  const opener = document.activeElement; // نعيد إليه التركيز عند الإغلاق
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey, true);
+    document.body.classList.remove('modal-open');
+    root.innerHTML = '';
+    // العودة لزرّ الفتح: من يتنقّل بلوحة المفاتيح لا يبدأ من أول الصفحة
+    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+  };
+
+  const box = el('div', {
+    class: 'modal', style: wide ? 'width:760px' : '',
+    role: 'dialog', 'aria-modal': 'true', 'aria-label': String(title || 'نافذة'),
+  },
     el('div', { class: 'modal__head' },
       el('img', { src: '/assets/mark-green.svg', alt: '' }),
       el('div', { class: 'modal__title' }, title),
-      el('button', { class: 'modal__close', onclick: close, 'aria-label': 'إغلاق' }, '✕')),
+      el('button', { class: 'modal__close', type: 'button', onclick: close, 'aria-label': 'إغلاق' }, '✕')),
     el('div', { class: 'modal__body' }, ...bodyNodes));
+
+  /* Escape يغلق، وTab يدور داخل النافذة ولا يخرج لعناصر الصفحة خلفها */
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const items = [...box.querySelectorAll(FOCUSABLE)].filter((n) => n.offsetParent !== null || n === document.activeElement);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+  document.addEventListener('keydown', onKey, true);
+
   const overlay = el('div', { class: 'modal-overlay', onclick: (e) => { if (e.target === overlay) close(); } }, box);
   root.append(overlay);
+  document.body.classList.add('modal-open'); // توقف تمرير الصفحة خلف الغشاء
+
+  /* التركيز على أول حقل قابل للكتابة — لا على زرّ الإغلاق:
+     من يفتح «دفعة جديدة» يريد الكتابة فورًا لا البحث عن الحقل. */
+  requestAnimationFrame(() => {
+    const body = box.querySelector('.modal__body');
+    const firstField = body && body.querySelector('input:not([type=hidden]):not([disabled]),select:not([disabled]),textarea:not([disabled])');
+    (firstField || box.querySelector('.modal__close')).focus({ preventScroll: true });
+  });
+
   return close;
 }
 
@@ -256,11 +306,36 @@ const traineeOption = (t) => [t.id, t.phone ? `${t.name} — ${t.phone}` : `${t.
    - محلي: تُمرَّر البيانات كاملة (opts.searchText للبحث) — للقوائم الصغيرة.
    - من الخادم: opts.remote({ query, page, pageSize }) → { rows, total }
      فلا تُنقل إلى المتصفح إلا صفحة واحدة مهما كبر الجدول. */
+/* ------------------------------------------------------------
+   ذاكرة الجداول: الصفحة وكلمة البحث تبقيان عبر إعادة البناء
+   كل شاشة تُعيد بناء نفسها بعد كل حفظ، فينشأ جدول جديد بصفحته الأولى:
+   من كان في الصفحة الثالثة من سجل الإجراءات عاد للأولى بعد كل تنفيذ.
+   نُفهرس الجدول بمساره وترويسته وترتيبه في الصفحة، ونحفظ موضعه.
+   والذاكرة تُمسح عند تغيير الصفحة فلا تنمو بلا حد.
+   ------------------------------------------------------------ */
+const TABLE_STATE = new Map();
+let tableStateRoute = null;
+let tableSeq = new Map();
+/* يُستدعى مع كل إعادة بناء لشاشة — فيبدأ عدّ الجداول من جديد */
+function resetTableSeq() { tableSeq = new Map(); }
+
+function tableStateKey(headers) {
+  const route = typeof routeOf === 'function' ? routeOf(location.hash) : location.hash;
+  if (tableStateRoute !== route) { TABLE_STATE.clear(); tableStateRoute = route; }
+  const sig = route + '|' + headers.join('~');
+  const n = tableSeq.get(sig) || 0;
+  tableSeq.set(sig, n + 1);
+  return sig + '|' + n;
+}
+
 function pagedTable(headers, data, rowRender, opts = {}) {
   const pageSize = opts.pageSize || 15;
   const remote = opts.remote || null;
-  let page = 0;
-  let query = '';
+  const memKey = tableStateKey(headers);
+  const saved = TABLE_STATE.get(memKey) || { page: 0, query: '' };
+  let page = saved.page;
+  let query = saved.query;
+  const remember = () => TABLE_STATE.set(memKey, { page, query });
   let token = 0; // يتجاهل ردود الطلبات المتجاوَزة
   const wrap = el('div');
   const body = el('div');
@@ -271,8 +346,9 @@ function pagedTable(headers, data, rowRender, opts = {}) {
   let searchIn = null;
   if (opts.searchText || remote) {
     searchIn = input({
+      value: query,
       placeholder: opts.searchPlaceholder || 'بحث…',
-      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; draw(); }, 300),
+      oninput: debounce(() => { query = searchIn.value.trim(); page = 0; remember(); draw(); }, 300),
     });
     wrap.append(el('div', { style: 'max-width:320px;margin-bottom:12px' }, searchIn));
   }
@@ -291,8 +367,8 @@ function pagedTable(headers, data, rowRender, opts = {}) {
     if (pages > 1) {
       nav.innerHTML = '';
       nav.append(
-        el('button', { class: 'btn btn--outline btn--sm', disabled: page === 0 || null, onclick: () => { page--; draw(); } }, 'السابق'),
-        el('button', { class: 'btn btn--outline btn--sm', disabled: page >= pages - 1 || null, onclick: () => { page++; draw(); } }, 'التالي'));
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page === 0 || null, onclick: () => { page--; remember(); draw(); } }, 'السابق'),
+        el('button', { class: 'btn btn--outline btn--sm', disabled: page >= pages - 1 || null, onclick: () => { page++; remember(); draw(); } }, 'التالي'));
       bar.append(nav);
     }
   }
@@ -301,7 +377,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
     if (!remote) {
       const filtered = query ? data.filter((d) => (opts.searchText(d) || '').includes(query)) : data;
       const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-      if (page >= pages) page = pages - 1;
+      if (page >= pages) { page = pages - 1; remember(); }
       paint(filtered.slice(page * pageSize, (page + 1) * pageSize), filtered.length);
       return;
     }
@@ -311,7 +387,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
       const { rows, total } = await remote({ query, page, pageSize });
       if (mine !== token) return; // وصل ردّ أحدث
       const pages = Math.max(1, Math.ceil(total / pageSize));
-      if (page >= pages && page > 0) { page = pages - 1; return draw(); }
+      if (page >= pages && page > 0) { page = pages - 1; remember(); return draw(); }
       paint(rows, total);
     } catch (ex) {
       if (mine !== token) return;
@@ -321,7 +397,7 @@ function pagedTable(headers, data, rowRender, opts = {}) {
   }
 
   draw();
-  wrap.reload = () => { page = 0; draw(); };
+  wrap.reload = () => { page = 0; remember(); draw(); };
   return wrap;
 }
 
@@ -331,7 +407,7 @@ function dataTable(headers, rows, emptyText) {
   if (!rows.length) return el('div', { class: 'empty' }, emptyText || 'لا توجد بيانات.');
   return el('div', { class: 'table-wrap' },
     el('table', { class: 'tbl' },
-      el('thead', {}, el('tr', {}, ...headers.map((h) => el('th', {}, h)))),
+      el('thead', {}, el('tr', {}, ...headers.map((h) => el('th', { scope: 'col' }, h)))),
       el('tbody', {}, ...rows.map((r) => el('tr', {}, ...r.map((c) => el('td', {}, c && c.nodeType ? c : String(c ?? '—'))))))));
 }
 

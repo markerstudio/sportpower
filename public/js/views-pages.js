@@ -3,18 +3,35 @@
 /* ============================================================
    Calendar — أسبوعي مشترك
    ============================================================ */
+/* «كيف وصلنا هذا المتدرب؟» — قائمة واحدة تُستعمل عند التسجيل وعند
+   التصحيح لاحقًا («هاي القائمة اذا ادخلت الشخص وكان غلط بهدول كيف
+   اعدل»)، فلا تختلف الخياراتُ بين الشاشتين. */
+const SOURCE_OPTIONS = [
+  ['new', 'زبون جديد — جاء مباشرة'],
+  ['social', 'سوشال ميديا'],
+  ['trainee', 'عن طريق متدرب عندنا'],
+  ['friend', 'عن طريق صديق'],
+  ['returned', 'عائد من التجميد'],
+  ['trainer', 'عن طريق مدرب'],
+];
+const SOURCE_LABELS_AR = Object.fromEntries(SOURCE_OPTIONS);
+
 async function viewCalendar(root) {
   /* branchScope: المدرب يرى مواعيده وحده افتراضيًا، ويستطيع فتح برنامج
      الفرع كاملًا (كل المدربين) — بطلب العميل. */
   /* «انا اختار الفرع بعدين اختار المدرب حتى يكون اسهل للادارة» */
-  const state = { start: weekStart(new Date()), trainer: '', branch: '', branchScope: false };
+  const state = urlState({ start: weekStart(new Date()), trainer: '', branch: '', branchScope: false });
   const container = el('div', { class: 'content' });
   root.append(container);
   const allBranches = ['admin', 'accountant'].includes(API.user.role)
     ? await API.get('/api/branches').catch(() => [])
     : [];
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const from = iso(state.start);
@@ -380,14 +397,7 @@ async function openOnboardModal(onDone, prefill = {}) {
   /* كيف وصلنا هذا المتدرب؟ — يظهر في KPI المبيعات وفي «كيف وصلنا المشتركون» */
   const trainees = await API.get('/api/users?role=trainee').catch(() => []);
   const activeTrainees = trainees.filter((t) => t.active !== false);
-  const sourceTypeSel = select([
-    ['new', 'زبون جديد — جاء مباشرة'],
-    ['social', 'سوشال ميديا'],
-    ['trainee', 'عن طريق متدرب عندنا'],
-    ['friend', 'عن طريق صديق'],
-    ['returned', 'عائد من التجميد'],
-    ['trainer', 'عن طريق مدرب'],
-  ], { value: prefill.sourceType || 'new' });
+  const sourceTypeSel = select(SOURCE_OPTIONS, { value: prefill.sourceType || 'new' });
   const sourcePersonSel = searchSelect(activeTrainees.map(traineeOption), { placeholder: 'اكتب اسم المتدرب…' });
   const sourceNameIn = input({ placeholder: 'اسم الصديق إن لم يكن مشتركًا عندنا' });
   const sourcePersonField = field('اسم المتدرب المُحيل', sourcePersonSel);
@@ -531,35 +541,59 @@ async function openOnboardModal(onDone, prefill = {}) {
 async function viewSubscriptions(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
-  const state = { branch: '' };
+  /* latest افتراضيًا: «البحث يبطلع الاسم مره وحده والاشتراك الاخير» */
+  const state = urlState({ branch: '', all: false });
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     // القوائم الكبيرة تُحمَّل صفحةً صفحة من الخادم مع أسماء متدربيها —
     // ولا تُحمَّل قائمة المتدربين كاملة إلا عند فتح نافذة تحتاجها.
     const byName = (s) => s.traineeName || '#' + s.traineeId;
-    const pageQuery = ({ query, page, pageSize }) =>
+    const pageQuery = ({ query, page, pageSize }, extra = '') =>
       `limit=${pageSize}&offset=${page * pageSize}` + (query ? '&search=' + encodeURIComponent(query) : '')
-      + (state.branch ? `&branch=${state.branch}` : '');
+      + (state.branch ? `&branch=${state.branch}` : '') + extra;
     const loadTrainees = () => API.get('/api/users?role=trainee');
 
     const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
       value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
     });
+    /* المدرب المخوَّل بالتجديد يفتح هذه الصفحة للتجديد وحده: فتحُ زبون
+       جديد وتسجيلُ الحصص من هنا ليسا من صلاحيته، فلا يُعرض له زرّهما. */
+    const canOnboard = ['admin', 'accountant'].includes(API.user.role);
     const bar = el('div', { class: 'card filters' },
       field('الفرع', branchSel),
       el('div', { style: 'flex:1' }),
-      el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)'),
+      canOnboard
+        ? el('button', { class: 'btn btn--accent', onclick: () => openOnboardModal(render) }, '+ زبون جديد (Onboarding)')
+        : el('span'),
       el('button', { class: 'btn btn--outline', onclick: async () => openSubModal(render, await loadTrainees()) }, 'تجديد اشتراك لمتدرب حالي'));
     // تسجيل الحصص للمدرب/الإدارة — وليس المحاسب
     if (API.user.role === 'admin') {
       bar.append(el('button', { class: 'btn btn--outline', onclick: () => openLogSessionModal(render) }, '+ تسجيل حصة'));
     }
+    if (API.user.role === 'trainer') {
+      container.append(el('div', { class: 'alert alert--info' },
+        'مُنحت صلاحية تجديد الاشتراكات: تُجدِّد لمشترك سابق في فرعك من زرّ «تجديد اشتراك لمتدرب حالي». '
+        + 'فتحُ زبون جديد وتسجيلُ الدفعات يبقيان للإدارة والمحاسبة.'));
+    }
     container.append(bar);
 
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, 'كل الاشتراكات'),
+      el('h3', { class: 'card__title' },
+        state.all ? 'كل الاشتراكات — كل تجديد بسطره' : 'المشتركون — كل اسم مرة واحدة باشتراكه الأخير',
+        el('button', {
+          class: 'btn btn--outline btn--sm',
+          onclick: () => { state.all = !state.all; render(); },
+        }, state.all ? 'اعرض الاشتراك الأخير لكل شخص' : 'اعرض كل الاشتراكات (كل تجديد بسطره)')),
+      el('div', { class: 'sidebar__caption', style: 'padding:0 0 10px' },
+        state.all
+          ? 'من جدّد خمس مرات يظهر بخمسة أسطر — للمراجعة المحاسبية والتاريخ الكامل.'
+          : 'من جدّد خمس مرات يظهر مرة واحدة باشتراكه الحالي، ومعه عدد اشتراكاته السابقة.'),
       pagedTable(['المتدرب', 'الحصص', 'المستخدم', 'المتبقي', 'القيمة', 'من', 'إلى', 'الحالة', ''],
         null,
         (s) => {
@@ -574,21 +608,30 @@ async function viewSubscriptions(root) {
             if (!confirm(`${label} اشتراك ${byName(s)}؟`)) return;
             doIt();
           };
-          return [nameLink,
+          /* عدد اشتراكاته السابقة بجانب اسمه في وضع «اسم مرة واحدة» */
+          const nameCell = s.subsCount > 1
+            ? el('span', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap' }, nameLink,
+              el('span', { class: 'tag tag--neutral', title: 'عدد اشتراكاته منذ انضمامه' }, `${s.subsCount} اشتراكات`))
+            : nameLink;
+          return [nameCell,
             el('span', { class: 'num' }, String(s.totalSessions)),
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
             fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
-              // تعديل تواريخ الاشتراك وحصصه وقيمته — بطلب العميل من هذه الصفحة مباشرة
-              el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(render, s, byName(s)) }, 'تعديل'),
-              s.status === 'frozen'
-                ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('unfreeze', 'فك تجميد') }, 'فك التجميد')
-                : s.status === 'active' ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('freeze', 'تجميد') }, 'تجميد') : el('span'),
-              ['active', 'frozen'].includes(s.status)
+            el('div', { class: 'row-actions' },
+              // تعديل تواريخ الاشتراك وحصصه وقيمته — للإدارة والمحاسبة وحدهما
+              canOnboard
+                ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(render, s, byName(s)) }, 'تعديل')
+                : el('span'),
+              // التجميد والإلغاء قرارٌ إداري/محاسبي — لا يظهران للمدرب المخوَّل بالتجديد
+              !canOnboard ? el('span')
+                : s.status === 'frozen'
+                  ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('unfreeze', 'فك تجميد') }, 'فك التجميد')
+                  : s.status === 'active' ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => act('freeze', 'تجميد') }, 'تجميد') : el('span'),
+              canOnboard && ['active', 'frozen'].includes(s.status)
                 ? el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: () => act('cancel', 'إلغاء') }, 'إلغاء')
                 : el('span'),
-              el('button', {
+              !canOnboard ? el('span') : el('button', {
                 class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
                 onclick: async () => {
                   if (!confirm(`حذف اشتراك ${byName(s)} نهائيًا؟\nتُحذف دفعاته وأحداثه معه، وتبقى حصصه في سجل المتدرب دون ارتباط باشتراك. للحالات المدخلة بالخطأ فقط.`)) return;
@@ -604,7 +647,7 @@ async function viewSubscriptions(root) {
           pageSize: 15,
           searchPlaceholder: 'ابحث باسم المتدرب…',
           remote: async (q) => {
-            const r = await API.get('/api/subscriptions?' + pageQuery(q));
+            const r = await API.get('/api/subscriptions?' + pageQuery(q, state.all ? '' : '&latest=1'));
             // المنتهية أخيرًا داخل الصفحة نفسها
             r.rows.sort((a, b) => (a.status === 'expired') - (b.status === 'expired'));
             return r;
@@ -726,7 +769,7 @@ async function viewBranches(root) {
         (t) => [t.name, t.phone || '—',
           (branches.find((b) => b.id === t.branchId) || {}).name || '—',
           GOAL_LABELS[t.goal] || '—',
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openEditTraineeModal(render, t, users, branches) }, 'تعديل'),
             el('a', { class: 'btn btn--ghost btn--sm', href: '#/trainee/' + t.id }, 'الملف ←'))],
         { pageSize: 15, searchText: (t) => `${t.name} ${t.phone || ''}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…' }));
@@ -941,7 +984,20 @@ async function viewInbody(root) {
   container.append(spinnerCard());
 
   const trainees = API.user.role === 'trainee' ? [] : await API.get('/api/users?role=trainee');
-  const state = { trainee: API.user.role === 'trainee' ? API.user.id : (trainees[0] || {}).id };
+  /* المتدرب المعروض في العنوان: التحديث لا يعيدك لأول اسم في القائمة،
+     والرابط يُرسل لزميل فيفتح على القراءات نفسها. */
+  const urlTrainee = urlState({ trainee: '' });
+  const firstId = (trainees[0] || {}).id;
+  const known = (id) => trainees.some((t) => String(t.id) === String(id));
+  const state = {
+    trainee: API.user.role === 'trainee' ? API.user.id
+      : (known(urlTrainee.trainee) ? Number(urlTrainee.trainee) : firstId),
+  };
+  const syncTrainee = () => {
+    if (API.user.role === 'trainee') return;
+    urlTrainee.trainee = state.trainee && state.trainee !== firstId ? String(state.trainee) : '';
+    urlTrainee.sync();
+  };
   /* هدف المتدرب المعروض — يحدد قراءة اتجاه الوزن (زيادةٌ لبناء العضل تقدّم) */
   const currentGoal = () => (API.user.role === 'trainee'
     ? API.user.goal
@@ -964,7 +1020,10 @@ async function viewInbody(root) {
   if (isStaff) head.append(el('button', { class: 'btn btn--accent', onclick: () => openInbodyModal(renderList, state.trainee, trainees) }, '+ رفع قراءة InBody'));
   container.append(head, listCard);
 
-  async function renderList() {
+  const renderList = (...a) => keepScroll(() => buildList(...a));
+
+  async function buildList() {
+    syncTrainee();
     listCard.innerHTML = '';
     listCard.append(spinnerCard());
     const url = API.user.role === 'trainee' ? '/api/inbody' : '/api/inbody?trainee=' + state.trainee;
@@ -986,8 +1045,8 @@ async function viewInbody(root) {
           r.bodyFatPct ?? '—', r.muscleMass ?? '—', r.fatMass ?? '—',
           r.water ?? '—', r.bmi ?? '—', r.score ?? '—',
           r.imageUrl ? el('a', { href: r.imageUrl, target: '_blank' }, 'عرض') : '—',
-          // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟
-          ...(isStaff ? [el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+          // من القراءة نفسها: هل وصل لنتيجة أم ظهرت عنده مشكلة؟ وتصحيح أرقامها
+          ...(isStaff ? [el('div', { class: 'row-actions' },
             el('button', {
               class: 'btn btn--ghost btn--sm', title: 'رصد نتيجة من هذه القراءة',
               onclick: () => openFlagModal(renderList, r.traineeId, 'result', { inbodyId: r.id, date: r.date }),
@@ -995,7 +1054,23 @@ async function viewInbody(root) {
             el('button', {
               class: 'btn btn--ghost btn--sm', title: 'رصد مشكلة من هذه القراءة',
               onclick: () => openFlagModal(renderList, r.traineeId, 'problem', { inbodyId: r.id, date: r.date }),
-            }, '⚠️ مشكلة'))] : [])])),
+            }, '⚠️ مشكلة'),
+            /* «التعديل ع inbody بادخال الارقام اذا صار في خربطة»: القراءة
+               تُدخل يدويًا أو بـ OCR، والرقم الخاطئ كان يبقى إلى الأبد
+               ويجرّ معه اتجاه الرسم وحكم «هل تقدّم؟» في مركز القرارات. */
+            el('button', {
+              class: 'btn btn--outline btn--sm', title: 'تصحيح أرقام هذه القراءة',
+              onclick: () => openInbodyModal(renderList, r.traineeId, trainees, r),
+            }, 'تعديل'),
+            el('button', {
+              class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+              title: 'حذف القراءة نهائيًا',
+              onclick: async () => {
+                if (!confirm(`حذف قراءة ${r.date} نهائيًا؟\nتُحذف من الرسم البياني ومن المقارنة ومن حساب التقدّم.`)) return;
+                try { await API.del('/api/inbody/' + r.id); toast('حُذفت القراءة.'); renderList(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'حذف'))] : [])])),
       el('h3', { class: 'card__title', style: 'margin-top:18px' }, 'مقارنة أول قراءة بآخر قراءة'),
       inbodyComparisonTable(readings, currentGoal()));
   }
@@ -1003,9 +1078,10 @@ async function viewInbody(root) {
   await renderList();
 }
 
-function openInbodyModal(onDone, traineeId, trainees) {
-  const traineeSel = searchSelect(trainees.map(traineeOption), { value: traineeId });
-  const dateIn = input({ type: 'date', value: todayISO() });
+function openInbodyModal(onDone, traineeId, trainees, existing) {
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: existing ? existing.traineeId : traineeId });
+  if (existing) traineeSel.disabled = true; // القراءة تخصّ صاحبها — لا تُنقل لغيره
+  const dateIn = input({ type: 'date', value: existing ? existing.date : todayISO() });
   const fileIn = input({ type: 'file', accept: 'image/*' });
   const preview = el('div', { style: 'display:none;text-align:center' });
   const ocrStatus = el('div', { style: 'font-size:12px;color:var(--text-muted);min-height:16px' });
@@ -1023,8 +1099,14 @@ function openInbodyModal(onDone, traineeId, trainees) {
     hips: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
     leg: input({ type: 'number', step: '0.5', placeholder: 'سم' }),
   };
-  const notesIn = input({ placeholder: 'اختياري' });
+  const notesIn = input({ placeholder: 'اختياري', value: existing ? (existing.notes || '') : '' });
   let imageBase64 = null;
+  // عند التصحيح تُملأ الخانات بالقيم المحفوظة ليُعدَّل الخطأ وحده
+  if (existing) {
+    Object.entries(fields).forEach(([k, inp]) => {
+      if (existing[k] !== null && existing[k] !== undefined) inp.value = existing[k];
+    });
+  }
 
   fileIn.addEventListener('change', () => {
     const f = fileIn.files[0];
@@ -1064,22 +1146,37 @@ function openInbodyModal(onDone, traineeId, trainees) {
     reader.readAsDataURL(f);
   });
 
-  const close = modal('رفع قراءة InBody', [
+  const close = modal(existing ? `تصحيح قراءة InBody — ${existing.date}` : 'رفع قراءة InBody', [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
-        if (!traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
+        if (!existing && !traineeSel.value) { toast('اختر المتدرب من القائمة.', true); return; }
         try {
-          const body = { traineeId: Number(traineeSel.value), date: dateIn.value, notes: notesIn.value, imageBase64 };
+          const body = { date: dateIn.value, notes: notesIn.value };
+          /* الخانة الفارغة عند التصحيح تعني «امسح هذه القيمة» — تُرسل
+             صراحةً كي لا تبقى قيمة خاطئة محفوظة لأنها لم تُذكر. */
           for (const [k, inp] of Object.entries(fields)) body[k] = inp.value;
-          await API.post('/api/inbody', body);
-          toast('تم حفظ القراءة في صفحة المتدرب.'); close(); onDone && onDone();
+          if (existing) {
+            await API.put('/api/inbody/' + existing.id, body);
+            toast('صُحّحت القراءة — وتحدّث معها الرسم والمقارنة وحساب التقدّم.');
+          } else {
+            body.traineeId = Number(traineeSel.value);
+            body.imageBase64 = imageBase64;
+            await API.post('/api/inbody', body);
+            toast('تم حفظ القراءة في صفحة المتدرب.');
+          }
+          close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('المتدرب', traineeSel), field('تاريخ القراءة', dateIn),
-      el('div', { class: 'span-2' }, field('صورة ورقة InBody', fileIn), preview, ocrStatus),
+      // صورة الورقة تُرفع مع القراءة الأولى — التصحيح للأرقام لا للصورة
+      existing ? el('div', { class: 'span-2' },
+        el('div', { class: 'alert alert--info' },
+          'صحّح الرقم الخاطئ واترك البقية كما هي. القيمة التي تُفرَّغ تُمحى من القراءة. '
+          + 'صورة الورقة الأصلية تبقى كما هي.'))
+        : el('div', { class: 'span-2' }, field('صورة ورقة InBody', fileIn), preview, ocrStatus),
       field('الوزن *', fields.weight), field('نسبة الدهون %', fields.bodyFatPct),
       field('كتلة العضلات', fields.muscleMass), field('دهون الجسم', fields.fatMass),
       field('الماء', fields.water), field('BMI', fields.bmi),
@@ -1118,7 +1215,7 @@ function mealCard(meal, { slotLabel, actions } = {}) {
 
 async function viewMeals(root) {
   const isStaff = ['admin', 'trainer', 'nutritionist'].includes(API.user.role);
-  const state = { search: '', type: '', goal: '', maxCalories: '', minProtein: '' };
+  const state = urlState({ search: '', type: '', goal: '', maxCalories: '', minProtein: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
@@ -1138,7 +1235,11 @@ async function viewMeals(root) {
     field('حد السعرات الأقصى', calIn), field('حد البروتين الأدنى', protIn));
   if (isStaff) filterBar.append(el('button', { class: 'btn btn--accent', onclick: () => openMealModal(render) }, '+ وجبة جديدة'));
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     grid.innerHTML = '';
     grid.append(spinnerCard());
     const q = new URLSearchParams();
@@ -1241,15 +1342,23 @@ const ROSTER_COLUMNS = [
 ];
 
 async function viewTraineeRoster(root) {
-  const state = { branch: '', status: '', cols: new Set(['phone', 'residence']) };
+  /* الفرع والحالة في العنوان؛ أعمدة التصدير اختيارٌ لحظي يبقى في الذاكرة */
+  /* month + lastPayment: «التقارير الشهرية يطلعلي … الدفعات بالشهر واقدر
+     ابحث من خلال الشهر ولي اخر دفعه فقط» */
+  const state = urlState({ branch: '', status: '', month: '', lastPayment: false });
+  state.cols = new Set(['phone', 'residence']);
   const container = el('div', { class: 'content' });
   root.append(container);
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
-    const q = `?branch=${state.branch}&status=${state.status}`;
+    const q = `?branch=${state.branch}&status=${state.status}`
+      + (state.month ? `&month=${state.month}` : '') + (state.lastPayment ? '&lastPayment=1' : '');
     const data = await API.get('/api/reports/trainees' + q);
     container.innerHTML = '';
 
@@ -1259,6 +1368,11 @@ async function viewTraineeRoster(root) {
     const statusSel = select([['', 'الكل'], ['active', 'باشتراك فعّال فقط'], ['inactive', 'بلا اشتراك فعّال']], {
       value: state.status, onchange: (e) => { state.status = e.target.value; render(); },
     });
+    /* شهر الدفعات: يُصفّي السجل ويضيف عمود «كم دفع في هذا الشهر» */
+    const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
+    const lastPayChk = input({ type: 'checkbox' });
+    lastPayChk.checked = !!state.lastPayment;
+    lastPayChk.addEventListener('change', () => { state.lastPayment = lastPayChk.checked; render(); });
     const colsBox = el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap;align-items:center' },
       el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'أعمدة إضافية:'),
       ...ROSTER_COLUMNS.map(([key, label]) => {
@@ -1280,9 +1394,12 @@ async function viewTraineeRoster(root) {
     container.append(el('div', { class: 'card' },
       el('div', { class: 'filters' },
         field('الفرع', branchSel), field('الحالة', statusSel),
+        field('شهر الدفعات (اختياري)', monthIn),
         el('div', { style: 'flex:1' }),
         el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
-          payLogChk, 'مع سجل الدفعات كاملًا (كل دفعة بسطر)'),
+          lastPayChk, 'آخر دفعة لكل شخص فقط'),
+        el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
+          payLogChk, 'مع سجل الدفعات في الملف'),
         el('button', {
           class: 'btn btn--accent',
           onclick: () => API.download(
@@ -1308,7 +1425,25 @@ async function viewTraineeRoster(root) {
     const tableWrap = el('div');
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'المتدربون بالأسماء — الاشتراك والدفعات'),
+      state.month
+        ? el('div', { class: 'sidebar__caption', style: 'padding:0 0 8px' },
+          `عمودا «دفع في ${state.month}» يعرضان تحصيل ذلك الشهر وحده — وبقية الأعمدة على كامل تاريخه.`)
+        : el('span'),
       tableWrap));
+
+    /* سجل الدفعات المعروض على الشاشة — لا في الملف وحده */
+    const log = data.paymentsLog || [];
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' },
+        (state.lastPayment ? 'آخر دفعة لكل شخص' : 'سجل الدفعات')
+        + (state.month ? ` — شهر ${state.month}` : '') + ` (${log.length})`),
+      pagedTable(['التاريخ', 'المتدرب', 'الفرع', 'المبلغ', 'الطريقة', 'البند', 'ملاحظة'],
+        log,
+        (pmt) => [pmt.date, pmt.name, pmt.branch, fmtMoney(pmt.amount, pmt.currency),
+          pmt.method || '—', pmt.packageName || '—', pmt.note || '—'],
+        { pageSize: 12, searchText: (pmt) => `${pmt.name} ${pmt.branch} ${pmt.date}`,
+          searchPlaceholder: 'ابحث بالاسم أو الفرع أو التاريخ…',
+          emptyText: state.month ? `لا دفعات في ${state.month}.` : 'لا دفعات مسجّلة.' })));
 
     function drawTable() {
       const extra = ROSTER_COLUMNS.filter(([k]) => state.cols.has(k));
@@ -1316,7 +1451,8 @@ async function viewTraineeRoster(root) {
       tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
         ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
           'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
-          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه'],
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه',
+          ...(state.month ? [`دفع في ${state.month}`, `عدد دفعاته`] : []), 'آخر دفعة'],
         // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
         data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
         (r) => {
@@ -1334,7 +1470,12 @@ async function viewTraineeRoster(root) {
             el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
             // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
             el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
-            fmtMoney(r.paidTotal)];
+            fmtMoney(r.paidTotal),
+            ...(state.month
+              ? [el('b', { class: 'num', style: r.paidInMonth ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
+                fmtMoney(r.paidInMonth || 0)), String(r.paymentsInMonth || 0)]
+              : []),
+            r.lastPayment || '—'];
         },
         {
           pageSize: 20, emptyText: 'لا متدربين مطابقين.',
@@ -1368,11 +1509,15 @@ async function viewTraineeRoster(root) {
 }
 
 async function viewReports(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [report, branches, kpis, growthReport, health, allTargets, allTrainers] = await Promise.all([
@@ -1573,12 +1718,28 @@ function branchHealthCard(health, rows, { compact } = {}) {
 /* ============================================================
    الإعدادات والتحكم — كل شيء في تبويب واحد (الإدارة)
    ============================================================ */
+/* صلاحيتا المدرب المخوَّل — تُمنحان بالاسم من جدول المستخدمين */
+const TRAINER_PERMS = [
+  ['canSeePrices', 'يرى الأسعار ✓', 'منح رؤية الأسعار',
+    (name, on) => (on
+      ? `سحب رؤية الأسعار والعقود من «${name}»؟`
+      : `منح «${name}» رؤية أسعار الباقات وصفحة العقود؟ الأسعار سرّ تجاري — تُمنح لمن يحتاجها فقط.`)],
+  ['canRenew', 'يجدّد الاشتراكات ✓', 'منح صلاحية التجديد',
+    (name, on) => (on
+      ? `سحب صلاحية تجديد الاشتراكات من «${name}»؟`
+      : `منح «${name}» تجديد اشتراكات مشتركي فرعه؟ (فتحُ زبون جديد وتسجيلُ الدفعات يبقيان للإدارة والمحاسبة. ومنحُ التجديد يُظهر له الأسعار لأنه لا يُجدِّد بلا سعر.)`)],
+];
+
 async function viewSettings(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
-  const state = { roleFilter: '', search: '' };
+  const state = urlState({ roleFilter: '', search: '' });
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const [branches, users, cfg] = await Promise.all([
@@ -1621,7 +1782,7 @@ async function viewSettings(root) {
           String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
           String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
           b.freezeLimit ? String(b.freezeLimit) : el('span', { class: 'tag tag--neutral' }, 'بلا سقف'),
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+          el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openBranchEditModal(render, b) }, 'تعديل'),
             el('button', {
               class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -1644,7 +1805,7 @@ async function viewSettings(root) {
       if (state.roleFilter) list = list.filter((u) => u.role === state.roleFilter);
       if (state.search) list = list.filter((u) => u.name.includes(state.search) || u.username.includes(state.search.toLowerCase()));
       usersWrap.innerHTML = '';
-      usersWrap.append(pagedTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', ''],
+      usersWrap.append(pagedTable(['الاسم', 'اسم المستخدم', 'الدور', 'الفرع', 'الجوال', 'الحالة', 'صلاحيات إضافية', ''],
         list,
         (u) => [u.role === 'trainee'
             ? el('a', { href: '#/trainee/' + u.id, style: 'color:var(--action);text-decoration:none;font-weight:600' }, u.name)
@@ -1657,8 +1818,26 @@ async function viewSettings(root) {
             : (branches.find((b) => b.id === u.branchId) || {}).name || '—',
           u.phone || '—',
           u.active ? el('span', { class: 'tag tag--accent' }, 'فعّال') : el('span', { class: 'tag tag--danger' }, 'معطّل'),
-          el('div', { style: 'display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap' },
-            el('button', { class: 'btn btn--outline btn--sm', onclick: () => openUserEditModal(render, u, branches) }, 'تعديل'),
+          /* صلاحيتان تُمنحان لمدرب بعينه لا لكل المدربين:
+             «افتح عند المدرب العقود مع الباقات مع الأسعار»، و«أعطِ طه
+             ونور خاصية تجديد الاشتراك». */
+          ['trainer', 'nutritionist'].includes(u.role)
+            ? el('div', { class: 'row-actions' },
+              ...TRAINER_PERMS.map(([key, on, off, ask]) => el('button', {
+                class: 'btn btn--sm ' + (u[key] ? 'btn--accent' : 'btn--ghost'),
+                title: ask(u.name, u[key]),
+                onclick: async () => {
+                  if (!confirm(ask(u.name, u[key]))) return;
+                  try {
+                    await API.put('/api/users/' + u.id, { [key]: !u[key] });
+                    toast(u[key] ? 'سُحبت الصلاحية وأُنهيت جلساته.' : 'مُنحت الصلاحية وأُنهيت جلساته ليدخل بها.');
+                    render();
+                  } catch (ex) { toast(ex.message, true); }
+                },
+              }, u[key] ? on : off)))
+            : el('span', { style: 'color:var(--app-muted)' }, '—'),
+          el('div', { class: 'row-actions' },
+            el('button', { class: 'btn btn--outline btn--sm', onclick: () => { openUserEditModal(render, u, branches).catch((ex) => toast(ex.message, true)); } }, 'تعديل'),
             el('button', { class: 'btn btn--outline btn--sm', onclick: () => openResetPasswordModal(u) }, 'كلمة المرور'),
             // بيانات الدخول جاهزة على واتساب — بكلمة مرور مؤقتة جديدة
             u.id !== API.user.id
@@ -1751,7 +1930,7 @@ function openBranchEditModal(onDone, branch) {
   ]);
 }
 
-function openUserEditModal(onDone, user, branches) {
+async function openUserEditModal(onDone, user, branches) {
   const nameIn = input({ value: user.name });
   // تصحيح اسم المستخدم لأي حساب — لا الاسم المعروض وحده
   const usernameIn = input({ value: user.username || '', dir: 'ltr', style: 'text-align:end' });
@@ -1760,6 +1939,45 @@ function openUserEditModal(onDone, user, branches) {
   const goalSel = user.role === 'trainee' ? select(Object.entries(GOAL_LABELS), { value: user.goal || 'loss' }) : null;
   const residenceIn = user.role === 'trainee' ? input({ value: user.residence || '', placeholder: 'الحي / المنطقة' }) : null;
   const specIn = user.role === 'trainer' ? input({ value: user.specialty || '' }) : null;
+
+  /* ---- بيانات المشترك التي تُغذّي KPI ----
+     «تعديل معلومات المتدرب هو جديد أو فعال عشان أقدر أفحص في KPI عدد
+     الفعالين وعدد الجدد»: «فعّال» يُشتق من اشتراكه القائم فلا يُكتب
+     بيدٍ، أما «جديد» فمن تاريخ انضمامه — وهو ما يُصحَّح هنا.
+     ومعه قناةُ وصوله، فمن أُدخل بقناة خاطئة يُصحَّح («هاي القائمة اذا
+     ادخلت الشخص وكان غلط بهدول كيف اعدل»). */
+  const isTrainee = user.role === 'trainee';
+  const joinedIn = isTrainee ? input({ type: 'date', value: (user.joinedAt || '').slice(0, 10) }) : null;
+  let sourceTypeSel = null; let sourcePersonSel = null; let sourceTrainerSel = null; let sourceNameIn = null;
+  let sourcePersonField = null; let sourceNameField = null; let sourceTrainerField = null;
+  if (isTrainee) {
+    const [others, trainers] = await Promise.all([
+      API.get('/api/users?role=trainee').catch(() => []),
+      API.get('/api/users?role=trainer').catch(() => []),
+    ]);
+    const current = user.sourceType || (user.sourceTrainerId ? 'trainer' : 'new');
+    sourceTypeSel = select(SOURCE_OPTIONS, { value: current });
+    sourcePersonSel = searchSelect(others.filter((t) => t.id !== user.id).map(traineeOption), {
+      value: current === 'trainee' ? (user.sourceRefId || '') : '', placeholder: 'اكتب اسم المتدرب…',
+    });
+    sourceTrainerSel = select([['', '— اختر المدرب —'], ...trainers.map((t) => [t.id, t.name])], {
+      value: current === 'trainer' ? (user.sourceRefId || user.sourceTrainerId || '') : '',
+    });
+    sourceNameIn = input({ value: user.sourceName || '', placeholder: 'اسم الصديق أو المنصة' });
+    sourcePersonField = field('اسم المتدرب المُحيل', sourcePersonSel);
+    sourceTrainerField = field('المدرب المُحيل', sourceTrainerSel);
+    sourceNameField = field('اسم الصديق / المنصة', sourceNameIn);
+    const syncSrc = () => {
+      const v = sourceTypeSel.value;
+      sourcePersonField.style.display = v === 'trainee' ? '' : 'none';
+      sourceTrainerField.style.display = v === 'trainer' ? '' : 'none';
+      sourceNameField.style.display = ['friend', 'social'].includes(v) ? '' : 'none';
+      sourceNameField.querySelector('label').textContent = v === 'social'
+        ? 'المنصة (انستغرام/تيك توك/فيسبوك…)' : 'اسم الصديق (خارج النظام)';
+    };
+    sourceTypeSel.addEventListener('change', syncSrc);
+    setTimeout(syncSrc, 0);
+  }
 
   /* فروع المحاسب: «محاسبة عمّان لا يكون عندها وصول للفروع الثانية».
      يُختار فرع أو أكثر — فمحاسبةٌ واحدة تتولى بيت لحم وبيت ساحور معًا.
@@ -1790,14 +2008,25 @@ function openUserEditModal(onDone, user, branches) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          await API.put('/api/users/' + user.id, {
+          const body = {
             name: nameIn.value, username: usernameIn.value.trim(),
             phone: phoneIn.value, branchId: branchSel.value ? Number(branchSel.value) : null,
             goal: goalSel ? goalSel.value : undefined,
             residence: residenceIn ? residenceIn.value.trim() || null : undefined,
             specialty: specIn ? specIn.value : undefined,
             branchIds: scopeBoxes ? scopeBoxes.filter((x) => x.chk.checked).map((x) => x.id) : undefined,
-          });
+          };
+          if (isTrainee) {
+            body.joinedAt = joinedIn.value || undefined;
+            const v = sourceTypeSel.value;
+            body.sourceType = v;
+            body.sourceRefId = v === 'trainee' ? (Number(sourcePersonSel.value) || null)
+              : v === 'trainer' ? (Number(sourceTrainerSel.value) || null) : null;
+            body.sourceName = ['friend', 'social'].includes(v) ? (sourceNameIn.value.trim() || null) : null;
+            // الترميز القديم يبقى متسقًا مع الجديد فلا يختلف رقمان لمُحيل واحد
+            body.sourceTrainerId = v === 'trainer' ? (Number(sourceTrainerSel.value) || null) : null;
+          }
+          await API.put('/api/users/' + user.id, body);
           toast('تم حفظ التعديلات.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
@@ -1808,6 +2037,15 @@ function openUserEditModal(onDone, user, branches) {
       field('الفرع', branchSel),
       goalSel ? field('الهدف', goalSel) : (specIn ? field('التخصص', specIn) : el('span')),
       residenceIn ? field('مكان السكن (الحي/المنطقة)', residenceIn) : el('span'),
+      isTrainee ? field('تاريخ الانضمام', joinedIn) : el('span'),
+      isTrainee ? el('div', { class: 'span-2' }, field('كيف وصلنا؟ (القناة)', sourceTypeSel)) : el('span'),
+      isTrainee ? sourcePersonField : el('span'),
+      isTrainee ? sourceTrainerField : el('span'),
+      isTrainee ? sourceNameField : el('span'),
+      isTrainee ? el('div', { class: 'span-2 alert alert--info' },
+        'تاريخ الانضمام هو ما يجعله «مشتركًا جديدًا» في KPI ذلك الشهر. '
+        + 'أما «فعّال» فيُشتق من اشتراكه القائم — يُفعَّل بتجديد اشتراكه لا بتعديل هنا، '
+        + 'كي لا يختلف عدد الفعّالين عن عدد الاشتراكات الفعّالة.') : el('span'),
       scopeBoxes
         ? el('div', { class: 'span-2' },
           el('div', { class: 'field__label', style: 'margin-bottom:6px' }, 'الفروع التي يتولّاها هذا المحاسب'),
@@ -1898,7 +2136,7 @@ async function viewMyTrainees(root) {
     API.get('/api/branches'),
   ]);
   container.innerHTML = '';
-  const state = { branch: '' };
+  const state = urlState({ branch: '' });
   const listWrap = el('div');
   const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
     value: state.branch, onchange: (e) => { state.branch = e.target.value; renderList(); },

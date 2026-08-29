@@ -14,24 +14,41 @@ const CANCEL_REASONS = ['السعر', 'السفر', 'الإصابة', 'عدم و
    متابعة المبيعات — ملف بكل رقم نتواصل معه + تحليل شهري
    ============================================================ */
 async function viewSales(root) {
-  const state = { month: thisMonthISO() };
+  /* «المبيعات اقدر ابحث كل فرع لحاله» — الفرع فلتر كامل يشمل المؤشرات
+     والقنوات والاعتراضات وملف المتابعة، لا الجدول وحده. */
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
+    const branchQ = state.branch ? '&branch=' + state.branch : '';
     const [leads, summary, branches] = await Promise.all([
-      API.get('/api/leads?month=' + state.month),
-      API.get('/api/leads/summary?month=' + state.month),
+      API.get(`/api/leads?month=${state.month}${branchQ}`),
+      API.get(`/api/leads/summary?month=${state.month}${branchQ}`),
       API.get('/api/branches'),
     ]);
     container.innerHTML = '';
 
     const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
     container.append(el('div', { class: 'card filters' },
-      field('الشهر', monthIn),
+      field('الشهر', monthIn), field('الفرع', branchSel),
+      el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openLeadModal(render, branches) }, '+ عميل محتمل جديد')));
+
+    if (state.branch) {
+      const bn = (branches.find((b) => String(b.id) === String(state.branch)) || {}).name || '';
+      container.append(el('div', { class: 'alert alert--info' },
+        `كل الأرقام أدناه لفرع ${bn} وحده — نسبة الإغلاق والقنوات والاعتراضات وملف المتابعة.`));
+    }
 
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
       kpiHero(summary.total, 'رقم تواصلنا معه هذا الشهر', 'wa'),
@@ -76,7 +93,7 @@ async function viewSales(root) {
             },
           }),
           l.objection || '—',
-          el('div', { style: 'display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap' },
+          el('div', { class: 'row-actions' },
             l.phone ? el('a', {
               class: 'btn btn--petrol btn--sm', target: '_blank',
               href: waLink(l.phone, OPS_SETTINGS.waCountryCode || '970', '', l.name),
@@ -222,7 +239,7 @@ function expensesCard(expenses, branches, month, onDone) {
       expenses.map((x) => [x.label, x.category,
         x.branchId ? (branches.find((b) => b.id === x.branchId) || {}).name || '—' : 'عام',
         fmtMoney(x.amount), x.note || '—',
-        el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+        el('div', { class: 'row-actions' },
           el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openExpenseModal(onDone, branches, month, x) }, 'تعديل'),
           el('button', {
             class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -533,7 +550,7 @@ async function viewLoyalty(root) {
           data.redemptions.map((r) => [r.traineeName, r.rewardName, String(r.points), r.date, statusTagOf(r.status),
             r.status === 'pending'
               ? (isAdmin
-                ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+                ? el('div', { class: 'row-actions' },
                   el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/redemptions/' + r.id, 'approve', 'اعتُمدت المكافأة وخُصمت النقاط.') }, 'اعتماد'),
                   el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/redemptions/' + r.id, 'reject', 'رُفض الطلب.') }, 'رفض'))
                 : el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'بانتظار اعتماد الإدارة'))
@@ -548,7 +565,7 @@ async function viewLoyalty(root) {
             r.date, statusTagOf(r.status),
             r.status === 'pending'
               ? (isAdmin
-                ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+                ? el('div', { class: 'row-actions' },
                   el('button', { class: 'btn btn--accent btn--sm', onclick: decide('/api/referrals/' + r.id, 'approve', `اعتُمدت الإحالة — ومُنح المُحيل ${data.pts.referral} نقطة.`) }, 'اعتماد'),
                   el('button', { class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)', onclick: decide('/api/referrals/' + r.id, 'reject', 'رُفضت الإحالة.') }, 'رفض'))
                 : el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'بانتظار اعتماد الإدارة'))
@@ -563,7 +580,7 @@ async function viewLoyalty(root) {
       dataTable(['المكافأة', 'النقاط المطلوبة', 'الحالة', ''],
         data.rewards.map((r) => [r.name, String(r.cost),
           r.active !== false ? el('span', { class: 'tag tag--accent' }, 'متاحة') : el('span', { class: 'tag tag--neutral' }, 'موقوفة'),
-          isAdmin ? el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+          isAdmin ? el('div', { class: 'row-actions' },
             el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openRewardModal(render, r) }, 'تعديل'),
             el('button', {
               class: 'btn btn--outline btn--sm',

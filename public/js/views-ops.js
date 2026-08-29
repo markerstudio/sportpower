@@ -4,14 +4,25 @@ const FROZEN_STATUS_LABELS = {
   pending: 'بانتظار التواصل', contacted: 'تم التواصل', replied: 'ردّ',
   'no-reply': 'لم يرد', returned: 'عاد للاشتراك',
 };
-/* كل أعمدة جدول أداء المدربين في التقرير الشهري — لا الحصص والتحصيل وحدها */
-const METRIC_OPTIONS = [
-  ['revenue', 'التحصيل'], ['sessions', 'عدد الحصص'], ['uniqueTrainees', 'متدربون فريدون'],
-  ['newSubs', 'اشتراكات جديدة/تجديد'], ['activeTrainees', 'المتدربون الفعالون'],
-  ['hours', 'ساعات التدريب'], ['officeHours', 'ساعات مكتبية'],
-  ['stories', 'ستوريات منشورة'], ['reels', 'ريلز/فيديوهات'],
-  ['results', 'نتائج مشتركين'], ['referred', 'زبائن عن طريقه'],
+/* قائمة المؤشرات ونطاقاتها تأتي من الخادم (/api/targets/metrics) فلا
+   تتفرّع نسختان تختلفان: هناك يُحسب المؤشر وهنا يُعرض. تُجلب مرة واحدة
+   لكل جلسة، وهذه نسخة احتياطية إن تعذّر الجلب. */
+let METRICS_CACHE = null;
+const METRICS_FALLBACK = [
+  { key: 'revenue', label: 'التحصيل', scopes: ['company', 'branch', 'user'], money: true },
+  { key: 'sessions', label: 'عدد الحصص', scopes: ['company', 'branch', 'trainer', 'user'] },
 ];
+async function loadMetrics() {
+  if (METRICS_CACHE) return METRICS_CACHE;
+  try { METRICS_CACHE = await API.get('/api/targets/metrics'); }
+  catch (e) { METRICS_CACHE = METRICS_FALLBACK; }
+  return METRICS_CACHE;
+}
+
+const SCOPE_LABELS = {
+  company: 'الشركة كاملة', branch: 'فرع', trainer: 'مدرب', user: 'موظف (محاسبة/مبيعات/…)',
+};
+const STAFF_ROLE_LABELS = { admin: 'إدارة', accountant: 'محاسبة', trainer: 'مدرب', nutritionist: 'تغذية' };
 
 /* ============================================================
    تغطية الأهداف التدريبية
@@ -73,12 +84,16 @@ function dailyByCurrency(data) {
    ============================================================ */
 async function viewDaily(root) {
   // «المتابعة اليومية اختار الفرع الي بدي اتابعه»
-  const state = { date: todayISO(), branch: '' };
+  const state = urlState({ date: todayISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
   const branches = await API.get('/api/branches').catch(() => []);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
     const branchQ = state.branch ? '&branch=' + state.branch : '';
@@ -253,20 +268,27 @@ const ACQUISITION_LABELS = {
 };
 
 async function viewKpi(root) {
-  const state = { month: thisMonthISO(), branch: '' };
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  /* الفلاتر تُكتب في العنوان، وموضع الصفحة يبقى كما هو بعد كل إعادة بناء */
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [targets, kpis, branches, trainers, board] = await Promise.all([
+    const [targets, kpis, branches, trainers, board, allUsers] = await Promise.all([
       API.get('/api/targets'),
       API.get('/api/kpi?month=' + state.month),
       API.get('/api/branches'),
       API.get('/api/users?role=trainer'),
       API.get(`/api/kpi/board?month=${state.month}` + (state.branch ? `&branch=${state.branch}` : '')).catch(() => null),
+      // موظفو الهدف الشخصي: المحاسبة والتغذية والإدارة إلى جانب المدربين
+      API.get('/api/users').catch(() => []),
     ]);
+    const staff = (allUsers || []).filter((u) => u.role !== 'trainee');
     container.innerHTML = '';
 
     const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
@@ -275,7 +297,7 @@ async function viewKpi(root) {
     });
     const bar = el('div', { class: 'card filters' }, field('شهر KPI', monthIn), field('الفرع', branchSel));
     if (API.user.role === 'admin') {
-      bar.append(el('button', { class: 'btn btn--accent', onclick: () => openTargetModal(render, branches, trainers) }, '+ هدف جديد'));
+      bar.append(el('button', { class: 'btn btn--accent', onclick: () => openTargetModal(render, branches, trainers, staff) }, '+ هدف جديد'));
     }
     container.append(bar);
 
@@ -290,8 +312,7 @@ async function viewKpi(root) {
       pagedTable(['النطاق', 'المؤشر', 'الفترة', 'الهدف', 'المحقق', 'نسبة الإنجاز', ''],
         targets.sort((a, b) => (a.period < b.period ? 1 : -1)),
         (x) => [x.refName || '—', x.metricLabel, periodLabel(x.period),
-          x.metric === 'revenue' ? fmtMoney(x.value) : String(x.value),
-          x.metric === 'revenue' ? fmtMoney(x.actual) : String(x.actual),
+          targetValueText(x, x.value), targetValueText(x, x.actual),
           progressBar(x.pct),
           API.user.role === 'admin' ? el('button', {
             class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
@@ -301,22 +322,34 @@ async function viewKpi(root) {
 
     // KPI الموظفين
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `KPI الموظفين — ${state.month} (يشمل الساعات مقابل الأشخاص الفريدين)`),
-      dataTable(['المدرب', 'حصص', 'ساعات تدريب', 'متدربون فريدون', 'المهام', 'إنجاز المهام', 'إنجاز الأهداف', 'KPI النهائي'],
+      el('h3', { class: 'card__title' }, `KPI الموظفين — ${state.month}`,
+        el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' },
+          'كل من له مهامٌ أو هدفٌ هذا الشهر — لا المدربين وحدهم')),
+      dataTable(['الموظف', 'الدور', 'حصص', 'ساعات تدريب', 'متدربون فريدون', 'المهام', 'إنجاز المهام', 'إنجاز الأهداف', 'KPI النهائي'],
         kpis.map((k) => [k.name,
-          el('span', { class: 'num' }, String(k.sessions)),
-          el('span', { class: 'num' }, String(k.hours)),
-          el('span', { class: 'num' }, String(k.uniqueTrainees)),
+          el('span', { class: 'tag tag--neutral' }, STAFF_ROLE_LABELS[k.role] || k.role || '—'),
+          // أرقام التدريب للمدربين وحدهم — ليست عمل المحاسبة ولا التغذية
+          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.sessions)) : '—',
+          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.hours)) : '—',
+          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.uniqueTrainees)) : '—',
           k.tasksTotal ? `${k.tasksDone}/${k.tasksTotal}` : '—',
           k.tasksPct !== null ? progressBar(k.tasksPct) : '—',
           k.targetsPct !== null ? progressBar(k.targetsPct) : '—',
           k.kpi !== null
             ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger'), style: 'font-size:13px' }, k.kpi + '%')
             : el('span', { class: 'tag tag--neutral' }, 'لا مهام/أهداف')]),
-        'لا مدربين.')));
+        'لا موظفين لهم مهام أو أهداف هذا الشهر.')));
   }
 
   await render();
+}
+
+/* قيمة هدفٍ معروضة بوحدتها: مال بالعملة، ونسبةٌ بعلامة % */
+function targetValueText(t, v) {
+  if (v === null || v === undefined) return '—';
+  if (t.money || t.metric === 'revenue') return fmtMoney(v);
+  if (t.pctMetric) return v + '%';
+  return String(v);
 }
 
 /* ============================================================
@@ -336,7 +369,9 @@ async function renderKpiBoard(container, b) {
       dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
         'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل',
         'أهداف وضعها', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج أكل', 'برامج تدريب', 'المهام'],
-        b.trainers.map((t) => [t.name, t.branch,
+        b.trainers.map((t) => [
+          el('span', { class: 'cell-name' }, t.name),
+          el('span', { class: 'cell-name' }, t.branch),
           num(t.officeHours), num(t.trainingHours), num(t.sessions),
           el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
           num(t.trainedPeople), fmtMoney(t.collected),
@@ -372,7 +407,7 @@ async function renderKpiBoard(container, b) {
     el('div', { style: 'overflow-x:auto' },
       dataTable(['الفرع', 'مشتركون جدد', 'تجديد', 'عائد من التجميد', 'تجميد الشهر', 'مجمّدون الآن', 'سقف التجميد',
         'التحصيل', 'الفعّالون', 'نسبة التجديد', 'حصص', 'نتائج', 'مشاكل'],
-        b.branches.map((x) => [x.branch,
+        b.branches.map((x) => [el('span', { class: 'cell-name' }, x.branch),
           num(x.newSubs), num(x.renewals), num(x.returnedFromFreeze), num(x.freezesMonth),
           el('span', {
             class: 'num',
@@ -411,6 +446,33 @@ async function renderKpiBoard(container, b) {
         ...Object.entries(b.sales.byChannel).map(([k, v]) => ['قناة: ' + k, String(v)]),
       ]))));
 
+  /* --- أهداف الأشخاص: المحاسبة والمبيعات وكل من يُقاس ---
+     «خلي KPI كلو بمكان واحد»: هدف كل موظف ونسبة إنجازه هنا لا في شاشة
+     ثانية — مجمَّعًا باسم صاحبه. */
+  const st = b.staffTargets || [];
+  if (st.length) {
+    const byPerson = st.reduce((acc, x) => { (acc[x.userId] = acc[x.userId] || []).push(x); return acc; }, {});
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `أهداف الموظفين — ${b.month}`,
+        el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' },
+          'المحاسبة والمبيعات والتغذية والإدارة — كل هدفٍ شخصي ونسبة إنجازه')),
+      el('div', { class: 'goalgrid' },
+        ...st.map((x, i) => goalMeter({
+          title: `${x.name} — ${x.metricLabel}`,
+          sub: `${STAFF_ROLE_LABELS[x.role] || x.role} · ${x.branch} · ${periodLabel(x.period)}`,
+          pct: x.pct, actual: x.actual, money: x.money,
+          targetText: x.money ? fmtMoney(x.target) : x.pctMetric ? x.target + '%' : String(x.target),
+        }, i))),
+      el('div', { class: 'sidebar__caption', style: 'padding:8px 0 0' },
+        `${Object.keys(byPerson).length} موظفًا لهم أهداف هذا الشهر · ${st.length} هدفًا.`)));
+  } else if (API.user.role === 'admin') {
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'أهداف الموظفين'),
+      el('div', { class: 'empty' },
+        'لا أهداف شخصية بعد. من «+ هدف جديد» اختر النطاق «موظف» لتضبط هدفًا للمحاسبة أو المبيعات '
+        + '— التحصيل، الأرقام الجديدة، نسبة الإغلاق، عدد الـ test، المشتركون الجدد، عائد من التجميد…')));
+  }
+
   /* --- كيف وصلنا المشتركون الجدد --- */
   const acq = Object.entries(b.acquisition || {});
   if (acq.length) {
@@ -428,23 +490,59 @@ function periodLabel(p) {
   return 'سنوي — ' + p;
 }
 
-function openTargetModal(onDone, branches, trainers) {
-  const scopeSel = select([['company', 'الشركة كاملة'], ['branch', 'فرع'], ['trainer', 'مدرب']]);
+async function openTargetModal(onDone, branches, trainers, staff) {
+  const metrics = await loadMetrics();
+  /* «كل حدا بنحسب»: الهدف يُضبط للشركة أو لفرع أو لمدرب — أو لأي موظف
+     (محاسبة، مبيعات، تغذية) بنطاق «موظف». */
+  const scopeSel = select([['company', SCOPE_LABELS.company], ['branch', SCOPE_LABELS.branch],
+    ['trainer', SCOPE_LABELS.trainer], ['user', SCOPE_LABELS.user]]);
   const branchSel = select(branches.map((b) => [b.id, b.name]));
   const trainerSel = select(trainers.map((x) => [x.id, x.name]));
-  const metricSel = select(METRIC_OPTIONS);
+  const staffList = (staff || []).filter((u) => u.active !== false);
+  const staffSel = select(staffList.map((u) => [u.id, `${u.name} — ${STAFF_ROLE_LABELS[u.role] || u.role}`]));
+  const metricSel = select([]);
   const kindSel = select([['month', 'شهري'], ['H', 'نصف سنوي'], ['year', 'سنوي']]);
   const monthIn = input({ type: 'month', value: thisMonthISO() });
   const halfSel = select([[thisMonthISO().slice(0, 4) + '-H1', 'النصف الأول'], [thisMonthISO().slice(0, 4) + '-H2', 'النصف الثاني']]);
   const yearIn = input({ type: 'number', value: thisMonthISO().slice(0, 4), min: 2024, max: 2100 });
-  const valueIn = input({ type: 'number', min: 1, placeholder: 'مثال: 70000' });
+  const valueIn = input({ type: 'number', min: 0, step: 'any', placeholder: 'مثال: 70000' });
+  const hint = el('div', { class: 'sidebar__caption', style: 'padding:0' });
 
   const branchField = field('الفرع', branchSel); branchField.style.display = 'none';
   const trainerField = field('المدرب', trainerSel); trainerField.style.display = 'none';
+  const staffField = field('الموظف', staffSel); staffField.style.display = 'none';
+  if (!staffList.length) staffField.append(el('div', { class: 'sidebar__caption', style: 'padding:4px 0 0' }, 'لا حسابات موظفين غير المدربين بعد.'));
+
+  /* المؤشر يتبع النطاق: «ساعات التدريب» بلا معنى على المحاسبة، و«نسبة
+     الإغلاق» بلا معنى على مدرب — فلا تُعرض أصلًا بدل أن يرفضها الخادم. */
+  function syncMetrics() {
+    const scope = scopeSel.value;
+    const allowed = metrics.filter((m) => m.scopes.includes(scope));
+    const keep = metricSel.value;
+    metricSel.innerHTML = '';
+    allowed.forEach((m) => metricSel.append(el('option', { value: m.key }, m.label)));
+    if (allowed.some((m) => m.key === keep)) metricSel.value = keep;
+    syncHint();
+  }
+  function syncHint() {
+    const m = metrics.find((x) => x.key === metricSel.value);
+    if (!m) { hint.textContent = ''; return; }
+    valueIn.placeholder = m.pct ? 'نسبة مئوية — مثال: 35' : m.money ? 'مثال: 70000' : 'مثال: 40';
+    hint.textContent = scopeSel.value !== 'user' ? ''
+      : m.by === 'branch'
+        ? 'يُقاس على فروع هذا الموظف (المحاسبة تُقاس بفرعها لا بما سجّلته بيدها).'
+        : 'يُقاس على عمله هو: ما سجّله وما نفّذه باسمه.';
+  }
+
   scopeSel.addEventListener('change', () => {
     branchField.style.display = scopeSel.value === 'branch' ? '' : 'none';
     trainerField.style.display = scopeSel.value === 'trainer' ? '' : 'none';
+    staffField.style.display = scopeSel.value === 'user' ? '' : 'none';
+    syncMetrics();
   });
+  metricSel.addEventListener('change', syncHint);
+  syncMetrics();
+
   const monthField = field('الشهر', monthIn);
   const halfField = field('النصف', halfSel); halfField.style.display = 'none';
   const yearField = field('السنة', yearIn); yearField.style.display = 'none';
@@ -454,26 +552,29 @@ function openTargetModal(onDone, branches, trainers) {
     yearField.style.display = kindSel.value === 'year' ? '' : 'none';
   });
 
+  const refFor = (scope) => (scope === 'branch' ? Number(branchSel.value)
+    : scope === 'trainer' ? Number(trainerSel.value)
+      : scope === 'user' ? Number(staffSel.value) : null);
+
   const close = modal('هدف جديد (Target)', [
     el('form', {
       class: 'form-grid',
       onsubmit: async (e) => {
         e.preventDefault();
+        const scope = scopeSel.value;
         const period = kindSel.value === 'month' ? monthIn.value : kindSel.value === 'H' ? halfSel.value : String(yearIn.value);
+        const refId = refFor(scope);
+        if (scope !== 'company' && !refId) { toast('اختر صاحب الهدف أولًا.', true); return; }
         try {
-          await API.post('/api/targets', {
-            scope: scopeSel.value,
-            refId: scopeSel.value === 'branch' ? Number(branchSel.value) : scopeSel.value === 'trainer' ? Number(trainerSel.value) : null,
-            metric: metricSel.value, period, value: Number(valueIn.value),
-          });
+          await API.post('/api/targets', { scope, refId, metric: metricSel.value, period, value: Number(valueIn.value) });
           toast('حُفظ الهدف — وستُحسب نسبة الإنجاز تلقائيًا.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('النطاق', scopeSel), field('المؤشر', metricSel),
-      branchField, trainerField,
+      branchField, trainerField, staffField,
       field('نوع الفترة', kindSel), monthField, halfField, yearField,
-      el('div', { class: 'span-2' }, field('قيمة الهدف', valueIn)),
+      el('div', { class: 'span-2' }, field('قيمة الهدف', valueIn), hint),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الهدف'))),
   ]);
 }
@@ -576,7 +677,7 @@ async function viewFrozen(root) {
             catch (ex) { toast(ex.message, true); }
           },
         }),
-        el('div', { style: 'display:flex;gap:6px;justify-content:flex-end' },
+        el('div', { class: 'row-actions' },
           r.phone ? el('a', {
             class: 'btn btn--accent btn--sm', target: '_blank',
             href: waLink(r.phone, OPS_SETTINGS.waCountryCode, OPS_SETTINGS.frozenMessage, r.name),
@@ -637,7 +738,7 @@ async function renderTrainerOps(container) {
   const myKpi = kpis[0];
 
   /* --- سجل اليوم — مع تنقّل بالتاريخ: المدرب يراجع ساعاته في أي يوم ويعدّلها --- */
-  const state = { date: todayISO() };
+  const state = urlState({ date: todayISO() }, 'log');
   const checkIn = input({ type: 'time' });
   const checkOut = input({ type: 'time' });
   const goals = input({ type: 'number', min: 0 });
@@ -658,6 +759,7 @@ async function renderTrainerOps(container) {
   }
 
   async function loadDay() {
+    state.sync();
     titleDate.textContent = `سجل اليوم — ${state.date}`;
     dateIn.value = state.date;
     const logs = await API.get('/api/trainer-logs?date=' + state.date).catch(() => []);

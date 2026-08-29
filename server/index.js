@@ -54,6 +54,8 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
     "font-src 'self' https://fonts.gstatic.com; " +
     "img-src 'self' data: blob:; connect-src 'self'; " +
+    // لا مكوّنات خارجية ولا إطارات: النظام صفحةٌ واحدة بأصلٍ واحد
+    "object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; " +
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   next();
 });
@@ -230,7 +232,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, branchIds: Array.isArray(u.branchIds) ? u.branchIds : [], trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, branchIds: Array.isArray(u.branchIds) ? u.branchIds : [], trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, canSeePrices: u.canSeePrices === true, canRenew: u.canRenew === true, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
 
 /* من أين وصلنا المتدرب — يُختار عند التسجيل ويظهر في تقرير المبيعات */
 const SOURCE_TYPES = ['social', 'trainee', 'friend', 'new', 'returned', 'trainer'];
@@ -1068,6 +1070,22 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
   if (req.body.sourceType !== undefined) Object.assign(patch, normalizeSource(req.body));
 
+  /* صلاحيتا المدرب المخوَّل: رؤية الأسعار والعقود، وتجديد الاشتراكات.
+     تُمنحان لمدربٍ بعينه لا لكل المدربين، وتُسحبان بالطريقة نفسها.
+     سحبُ صلاحية يُنهي جلساته ليسري فورًا لا بعد ١٢ ساعة. */
+  const PERMS = ['canSeePrices', 'canRenew'];
+  let permsChanged = false;
+  for (const k of PERMS) {
+    if (req.body[k] === undefined) continue;
+    const want = !!req.body[k];
+    if (want && !['trainer', 'nutritionist'].includes(user.role)) {
+      return res.status(400).json({ error: 'هذه الصلاحية للمدربين وأخصائية التغذية — بقية الأدوار تملكها أصلًا.' });
+    }
+    if (want !== (user[k] === true)) permsChanged = true;
+    patch[k] = want;
+  }
+  if (permsChanged) await Store.deleteWhere('tokens', { userId: user.id });
+
   // إعفاء من التحقق الثنائي — قرار إداري لمن يصعب عليه تطبيق المصادقة
   if (req.body.mfaExempt !== undefined) patch.mfaExempt = !!req.body.mfaExempt;
 
@@ -1276,7 +1294,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       price: obPrice,
       startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: req.user.id,
     });
     await tx.insert('subEvents', {
       subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
@@ -1365,23 +1383,56 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
     const ids = await traineeIdsMatching(req.query.search);
     where.traineeId = where.traineeId !== undefined ? (ids.includes(where.traineeId) ? where.traineeId : -1) : { in: ids };
   }
+  /* «البحث يبطلع الاسم مره وحده والاشتراك الاخير»: المشترك الذي جدّد
+     خمس مرات كان يملأ نتيجة البحث بخمسة صفوف باسمه، فيصعب معرفة أيّها
+     الحالي. بـ latest=1 يظهر كل شخص مرة واحدة باشتراكه الأخير ومعه
+     عدد اشتراكاته. الترقيم يجري بعد التجميع (لا يمكن أن تُجمِّع
+     القاعدةُ صفحةً قبل أن تعرف صفوف الشخص كلها). */
+  const latestOnly = req.query.latest === '1';
   const [list, total] = await Promise.all([
-    Store.find('subscriptions', where, pageOpts(req)),
-    req.query.limit ? Store.count('subscriptions', where) : Promise.resolve(0),
+    Store.find('subscriptions', where, latestOnly ? {} : pageOpts(req)),
+    req.query.limit && !latestOnly ? Store.count('subscriptions', where) : Promise.resolve(0),
   ]);
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية لا يريان قيمة الاشتراك
-  const withPrice = clients.canSeePrices(req.user.role);
-  let rows = list.map((s) => {
-    const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
+  const withPrice = clients.canSeePrices(req.user);
+  const decorate = (s, extra) => {
+    const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions, ...extra };
     if (!withPrice) delete row.price;
     return row;
-  });
+  };
+
+  if (latestOnly) {
+    // الأحدث = أبعد تاريخ بدء، وعند التساوي أكبر معرّف (آخر ما أُدخل)
+    const newer = (a, b) => (a.startDate || '').localeCompare(b.startDate || '') || (a.id - b.id);
+    const byTrainee = new Map();
+    const counts = new Map();
+    for (const sub of list) {
+      counts.set(sub.traineeId, (counts.get(sub.traineeId) || 0) + 1);
+      const cur = byTrainee.get(sub.traineeId);
+      if (!cur || newer(sub, cur) > 0) byTrainee.set(sub.traineeId, sub);
+    }
+    const all = [...byTrainee.values()]
+      .map((s) => decorate(s, { subsCount: counts.get(s.traineeId) }))
+      .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '') || b.id - a.id);
+    const opts = pageOpts(req);
+    const offset = opts.offset || 0;
+    const page = opts.limit ? all.slice(offset, offset + opts.limit) : all;
+    return res.json(pagedResponse(req, await withTraineeNames(page), all.length));
+  }
+
+  let rows = list.map((s) => decorate(s));
   if (req.query.limit) rows = await withTraineeNames(rows);
   res.json(pagedResponse(req, rows, total));
 }));
 
-/* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
-app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+/* إضافة المشترك/التجديد: من الإدارة أو المحاسب — ومن مدرّبٍ مُنح صلاحية
+   التجديد بالاسم (canRenew). المدرب المخوَّل يُجدِّد لمن اشترك من قبل
+   وفي فرعه هو؛ فتحُ زبونٍ جديد يبقى للإدارة والمحاسبة. */
+app.post('/api/subscriptions', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+  const renewingTrainer = req.user.role === 'trainer';
+  if (renewingTrainer && req.user.canRenew !== true) {
+    return res.status(403).json({ error: 'ليست لديك صلاحية تجديد الاشتراكات — تُمنح من الإدارة.' });
+  }
   const { traineeId, totalSessions, price, startDate, endDate, packageId } = req.body;
   // أرقام صالحة قبل الإدراج: «1,200» أو نصّ يعطي NaN كان يُخزَّن فيُفسد الدَّين
   const nSessions = posInt(totalSessions);
@@ -1396,6 +1447,21 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
   if (startDate > endDate) return res.status(400).json({ error: 'تاريخ البدء بعد تاريخ الانتهاء.' });
   const mine = await Store.find('subscriptions', { traineeId: trainee.id });
   const prior = mine.length > 0;
+  if (renewingTrainer) {
+    /* فرعه هو — لا يُجدِّد لمشترك في فرع آخر. ومدرّبٌ بلا فرع مُسنَد
+       لا يُجدِّد لأحد: «بلا فرع» هنا تعني «كل الفروع» وهو توسيعٌ صامت
+       لصلاحيةٍ مُنحت لتغطية فرعٍ واحد. */
+    if (req.user.branchId == null) {
+      return res.status(403).json({ error: 'حسابك بلا فرع مُسنَد — راجع الإدارة لإسناد فرعك قبل التجديد.' });
+    }
+    if (Number(trainee.branchId) !== Number(req.user.branchId)) return denyOutOfScope(res);
+    // تجديدٌ لا فتحُ زبون جديد: من لا اشتراك سابق له يُفتح من الاستقبال
+    if (!prior) {
+      return res.status(403).json({
+        error: 'صلاحيتك للتجديد لمشترك سابق. الزبون الجديد يُفتح من الإدارة أو المحاسبة (تسجيل زبون جديد).',
+      });
+    }
+  }
 
   /* اشتراك مكرر: نفس المتدرب وبنفس التفاصيل خلال دقيقتين = إرسال ثانٍ
      للطلب نفسه. كان التجديد يُنشئ اشتراكين بدل واحد فيتضاعف المستحق
@@ -1416,7 +1482,7 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
       totalSessions: nSessions, usedSessions: 0, price: nPrice,
       startDate, endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: req.user.id,
     });
     await tx.insert('subEvents', {
       subscriptionId: created.id, traineeId: trainee.id, branchId: trainee.branchId,
@@ -1819,6 +1885,9 @@ app.get('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req,
 
 app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const { subscriptionId, amount, date, method, note } = req.body;
+  /* دفعة على دَينٍ قديم بلا اشتراك — مسارها الخاص (المبلغ يُقاس على
+     الدين لا على قيمة اشتراك غير موجود). */
+  if (req.body.legacyDebtId) return payLegacyDebt(req, res);
   const sub = await Store.get('subscriptions', Number(subscriptionId));
   if (!sub) return res.status(400).json({ error: 'الاشتراك غير موجود.' });
   if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
@@ -1863,18 +1932,148 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
 }));
 
 /* ============================================================
+   ديون سابقة للنظام (legacyDebts)
+   «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها لانو في ديون
+   سابقة بحكم انو النظام جديد»: على مشتركين متأخرات نشأت قبل تشغيل
+   النظام، فلا اشتراك في القاعدة تُعلَّق عليه. تُسجَّل هنا على الشخص
+   مباشرةً، وتُسدَّد بدفعات، وتظهر مع ديون الاشتراكات في /api/debts.
+   ============================================================ */
+const legacyRemaining = (debt, paid) => Math.max(0, round3(debt.amount - (paid || 0)));
+
+/* الدين القديم بحساباته — يُستعمل في القائمة وفي السداد */
+async function legacyDebtRows(where = {}) {
+  const [debts, paidByDebt] = await Promise.all([
+    Store.find('legacyDebts', where),
+    Store.groupSum('payments', 'amount', 'legacyDebtId', { legacyDebtId: { isNull: false } }),
+  ]);
+  return debts.map((d) => {
+    const paid = paidByDebt[d.id] || 0;
+    return { ...d, paid, remaining: legacyRemaining(d, paid), settled: legacyRemaining(d, paid) <= 0 };
+  });
+}
+
+app.get('/api/legacy-debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const where = { ...branchWhere(req) };
+  if (req.query.trainee) where.traineeId = Number(req.query.trainee);
+  const rows = await withTraineeNames(await legacyDebtRows(where));
+  const open = rows.filter((r) => !r.settled);
+  const cur = await currencyMap();
+  res.json({
+    rows: rows.sort((a, b) => Number(a.settled) - Number(b.settled) || b.remaining - a.remaining),
+    totals: {
+      count: open.length,
+      people: new Set(open.map((r) => r.traineeId)).size,
+      amount: sumByCurrency(open, cur, (r) => r.remaining),
+    },
+  });
+}));
+
+app.post('/api/legacy-debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const trainee = await Store.get('users', Number(req.body.traineeId));
+  if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
+  /* الفرع فرعُ صاحب الدين — لا فرعًا يُرسله العميل، فلا يُسجَّل محاسبٌ
+     دَينًا خارج نطاقه بتمرير رقم فرع آخر. */
+  if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
+  const amount = posMoney(req.body.amount);
+  if (amount === null) return res.status(400).json({ error: 'قيمة الدين مطلوبة (رقم موجب).' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : todayStr();
+  const row = await Store.insert('legacyDebts', {
+    traineeId: trainee.id, branchId: trainee.branchId,
+    amount: round3(amount),
+    reason: String(req.body.reason || '').trim().slice(0, 200),
+    note: String(req.body.note || '').trim().slice(0, 500),
+    date, createdBy: req.user.id, createdAt: new Date().toISOString(),
+  });
+  res.json(row);
+}));
+
+app.put('/api/legacy-debts/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const debt = await Store.get('legacyDebts', req.params.id);
+  if (!debt) return res.status(404).json({ error: 'الدين غير موجود.' });
+  if (!branchAllowed(req.user, debt.branchId)) return denyOutOfScope(res);
+  const patch = {};
+  if (req.body.amount !== undefined) {
+    const amount = posMoney(req.body.amount);
+    if (amount === null) return res.status(400).json({ error: 'قيمة الدين رقم موجب.' });
+    /* لا يُخفَّض الدين تحت ما سُدِّد منه — وإلا صار المسدَّد أكبر من الأصل
+       وظهر «متبقٍ سالب» في كل تقرير يقرأه. */
+    const paid = await Store.sum('payments', 'amount', { legacyDebtId: debt.id });
+    if (round3(amount) < round3(paid)) {
+      return res.status(400).json({ error: `سُدِّد من هذا الدين ${round3(paid)} — لا يُخفَّض أصلُه تحتها.` });
+    }
+    patch.amount = round3(amount);
+  }
+  if (req.body.reason !== undefined) patch.reason = String(req.body.reason).trim().slice(0, 200);
+  if (req.body.note !== undefined) patch.note = String(req.body.note).trim().slice(0, 500);
+  if (req.body.date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date)) patch.date = req.body.date;
+  res.json(await Store.update('legacyDebts', debt.id, patch));
+}));
+
+app.delete('/api/legacy-debts/:id', auth, requireRole('admin'), h(async (req, res) => {
+  const debt = await Store.get('legacyDebts', req.params.id);
+  if (!debt) return res.status(404).json({ error: 'الدين غير موجود.' });
+  const paid = await Store.find('payments', { legacyDebtId: debt.id });
+  if (paid.length) {
+    return res.status(400).json({
+      error: `على هذا الدين ${paid.length} دفعة مسجَّلة — احذف الدفعات أولًا إن كان الإدخال خطأ.`,
+    });
+  }
+  await Store.remove('legacyDebts', debt.id);
+  res.json({ ok: true });
+}));
+
+/* سداد دين قديم — دفعة كبقية الدفعات، مربوطة بالدين لا باشتراك.
+   السقف والتزامن يُعالَجان كما في دفعة الاشتراك تمامًا. */
+async function payLegacyDebt(req, res) {
+  const debt = await Store.get('legacyDebts', Number(req.body.legacyDebtId));
+  if (!debt) return res.status(400).json({ error: 'الدين القديم غير موجود.' });
+  if (!branchAllowed(req.user, debt.branchId)) return denyOutOfScope(res);
+  const amt = posMoney(req.body.amount);
+  const date = req.body.date;
+  if (amt === null || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان (رقم موجب).' });
+  const value = round3(amt);
+  const payMethod = req.body.method || 'كاش';
+
+  // نفس حارس الإرسال المزدوج المستعمل مع دفعات الاشتراكات
+  const twin = (await Store.find('payments', { legacyDebtId: debt.id, amount: value, date, method: payMethod }))
+    .filter(withinDupWindow)
+    .sort((x, y) => y.id - x.id)[0];
+  if (twin) return res.json({ ...twin, duplicate: true, loyaltyPoint: false });
+
+  const payment = await Store.transaction(async (tx) => {
+    const locked = await tx.getForUpdate('legacyDebts', debt.id);
+    const paidBefore = await tx.sum('payments', 'amount', { legacyDebtId: locked.id });
+    const left = round3(locked.amount - paidBefore);
+    if (value > left + 0.001) {
+      throw Object.assign(new Error(left > 0
+        ? `المتبقي من هذا الدين ${left} فقط — لا تُسجَّل دفعة أكبر منه.`
+        : 'هذا الدين مسدَّد بالكامل.'), { status: 400 });
+    }
+    return tx.insert('payments', {
+      subscriptionId: null, legacyDebtId: locked.id, traineeId: locked.traineeId,
+      branchId: locked.branchId, amount: value, date, method: payMethod,
+      note: req.body.note || '', createdBy: req.user.id, debt: true,
+      createdAt: new Date().toISOString(),
+    });
+  });
+  return res.json({ ...payment, loyaltyPoint: false });
+}
+
+/* ============================================================
    الديون — كل اشتراك بقي عليه مبلغ، بأي حالة كان
    كان سداد الدين متعذّرًا لأن قائمة الاختيار لم تعرض إلا الاشتراكات
    المنتهية؛ فمن عليه متأخرات على اشتراكٍ فعّال لم يكن له مكان يُسدَّد فيه.
    هذا المسار يعطي قائمة الديون كاملة (فعّالة ومنتهية) بمصدر واحد.
    ============================================================ */
 app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const [subscriptions, users, branches, paidBySub, cur] = await Promise.all([
+  const [subscriptions, users, branches, paidBySub, cur, legacy] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.all('branches'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
     currencyMap(),
+    // الديون السابقة للنظام تُقرأ من المصدر نفسه — لا شاشة ثانية للدَّين
+    legacyDebtRows(),
   ]);
   const inScope = scopeFilter(req);
   const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
@@ -1897,17 +2096,35 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
         old: status === 'expired',
       };
     })
-    .filter((r) => r.remaining > 0)
+    .filter((r) => r.remaining > 0);
+
+  /* ديون ما قبل النظام: بلا اشتراك يقابلها، فتُعرض بصفّها الخاص وتُجمع
+     مع البقية — الدَّين دَينٌ سواء عُلِّق على اشتراك أم لا. */
+  const legacyRows = legacy
+    .filter((d) => d.remaining > 0 && inScope(d))
+    .map((d) => ({
+      legacyDebtId: d.id, subscriptionId: null,
+      traineeId: d.traineeId, traineeName: nameOf(d.traineeId), phone: phoneOf(d.traineeId),
+      branchId: d.branchId, branchName: branchOf(d.branchId),
+      packageName: d.reason || 'دَين سابق للنظام',
+      currency: cur.of(d.branchId),
+      price: d.amount, paid: d.paid, remaining: d.remaining,
+      startDate: d.date, endDate: null, status: 'legacy', old: true, legacy: true,
+    }));
+
+  const all = [...rows, ...legacyRows]
     .sort((a, b) => Number(b.old) - Number(a.old) || b.remaining - a.remaining);
 
   res.json({
-    rows,
+    rows: all,
     totals: {
-      count: rows.length,
-      people: new Set(rows.map((r) => r.traineeId)).size,
+      count: all.length,
+      people: new Set(all.map((r) => r.traineeId)).size,
       // مفصَّلًا بالعملة — فروع بعملتين لا يُجمع دَينها في رقم واحد
-      amount: sumByCurrency(rows, cur, (r) => r.remaining),
-      oldAmount: sumByCurrency(rows.filter((r) => r.old), cur, (r) => r.remaining),
+      amount: sumByCurrency(all, cur, (r) => r.remaining),
+      oldAmount: sumByCurrency(all.filter((r) => r.old), cur, (r) => r.remaining),
+      legacyCount: legacyRows.length,
+      legacyAmount: sumByCurrency(legacyRows, cur, (r) => r.remaining),
     },
   });
 }));
@@ -2169,9 +2386,19 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
 }));
 
 /* محاولة قراءة الصورة تلقائيًا OCR — مع رجوع آمن للإدخال اليدوي */
+/* الملفّ الصحّي بلا عمود فرع على صفّه — فرعُه فرعُ صاحبه.
+   تقييدُ الفرع مبنيٌّ على branchId، فسجلٌّ لا يحمله كان يمرّ بلا تقييد.
+   يُستعمل قبل كل تعديل أو حذف لسجلّ صحّي (قراءة، صورة، خطة غذائية). */
+async function ownerBranchAllowed(user, traineeId) {
+  if (traineeId == null) return true;
+  const owner = await Store.get('users', traineeId);
+  return branchAllowed(user, owner ? owner.branchId : null);
+}
+
 app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const reading = await Store.get('inbody', req.params.id);
   if (!reading) return res.status(404).json({ error: 'القراءة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, reading.traineeId))) return denyOutOfScope(res);
   const patch = {};
   if (req.body.date !== undefined) patch.date = req.body.date;
   if (req.body.notes !== undefined) patch.notes = req.body.notes;
@@ -2185,6 +2412,7 @@ app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, 
 app.delete('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const reading = await Store.get('inbody', req.params.id);
   if (!reading) return res.status(404).json({ error: 'القراءة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, reading.traineeId))) return denyOutOfScope(res);
   await Store.remove('inbody', reading.id);
   res.json({ ok: true });
 }));
@@ -2227,6 +2455,7 @@ app.post('/api/trainee-photos', auth, requireRole('admin', 'trainer'), h(async (
 app.delete('/api/trainee-photos/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const photo = await Store.get('traineePhotos', req.params.id);
   if (!photo) return res.status(404).json({ error: 'الصورة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, photo.traineeId))) return denyOutOfScope(res);
   await Store.remove('traineePhotos', photo.id);
   res.json({ ok: true });
 }));
@@ -2403,7 +2632,10 @@ app.post('/api/meal-plans', auth, requireRole('admin', 'trainer', 'nutritionist'
 }));
 
 app.delete('/api/meal-plans/:id', auth, requireRole('admin', 'trainer', 'nutritionist'), h(async (req, res) => {
-  await Store.remove('mealPlans', req.params.id);
+  const plan = await Store.get('mealPlans', req.params.id);
+  if (!plan) return res.status(404).json({ error: 'الخطة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, plan.traineeId))) return denyOutOfScope(res);
+  await Store.remove('mealPlans', plan.id);
   res.json({ ok: true });
 }));
 
@@ -2432,7 +2664,8 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
      الجداول المرجعية الصغيرة (الاشتراكات والمستخدمون) تُحمَّل كما هي. */
   const scope = branch ? { branchId: branch } : {};
   const period = { gte: month + '-01', lte: month + '-31' };
-  const paidScope = { ...scope, subscriptionId: { isNull: false } };
+  /* كل دفعة تخصّ اشتراكًا أو دَينًا سابقًا للنظام — والاثنان تحصيل */
+  const paidScope = { ...scope };
 
   const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub, cur] = await Promise.all([
     Store.find('sessions', { ...scope, date: period }),
@@ -2603,7 +2836,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
 
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية يريان الباقة والحصص — بلا أي سعر
-  const showPrices = clients.canSeePrices(req.user.role);
+  const showPrices = clients.canSeePrices(req.user);
   const subs = subscriptions.filter((s) => s.traineeId === id)
     .map((s) => {
       const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
@@ -2653,7 +2886,13 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const canSeeMoney = ['admin', 'accountant'].includes(req.user.role)
     || (req.user.role === 'trainee' && req.user.id === id);
   const subIds = subs.map((s) => s.id);
-  const myPayments = canSeeMoney ? payments.filter((p) => subIds.includes(p.subscriptionId)) : null;
+  /* دفعاته: على اشتراكاته أو على دَينٍ سابق للنظام مسجَّل عليه */
+  const myLegacyDebts = canSeeMoney ? await legacyDebtRows({ traineeId: id }) : [];
+  const myLegacyIds = new Set(myLegacyDebts.map((d) => d.id));
+  const myPayments = canSeeMoney
+    ? payments.filter((p) => subIds.includes(p.subscriptionId)
+      || (p.legacyDebtId != null && myLegacyIds.has(p.legacyDebtId)))
+    : null;
   /* المتبقي يُحسب لكل اشتراك على حدة ثم يُجمع — لا بطرح إجمالي المدفوع من
      إجمالي المستحق. الطرح الإجمالي كان يجعل فائض اشتراك ملغى (دفعاته تبقى)
      يمحو دَينًا حقيقيًا على اشتراك آخر، فيظهر المشترك شبه مسدَّد وهو مدين. */
@@ -2663,7 +2902,17 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     const totalDue = counted.reduce((t, s) => t + s.price, 0);
     const totalPaid = payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0);
     const remaining = round3(counted.reduce((t, s) => t + Math.max(0, s.price - paidOf(s.id)), 0));
-    return { totalDue, totalPaid, remaining };
+    /* الدَّين السابق للنظام يدخل مستحقّاته وما تبقّى عليه — وإلا بدا
+       الملف مسدَّدًا وعلى صاحبه متأخرات حقيقية. */
+    const legacyDue = round3(myLegacyDebts.reduce((t, d) => t + d.amount, 0));
+    const legacyPaid = round3(myLegacyDebts.reduce((t, d) => t + d.paid, 0));
+    const legacyRemaining = round3(myLegacyDebts.reduce((t, d) => t + d.remaining, 0));
+    return {
+      totalDue: round3(totalDue + legacyDue),
+      totalPaid: round3(totalPaid + legacyPaid),
+      remaining: round3(remaining + legacyRemaining),
+      legacyDue, legacyPaid, legacyRemaining,
+    };
   })() : null;
 
   /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
@@ -2709,6 +2958,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     attendance,
     payments: myPayments,
     finance,
+    legacyDebts: canSeeMoney ? myLegacyDebts : null,
     ratings: myRatings,
     flags: myFlags,
     goals: myGoals,
@@ -2784,7 +3034,7 @@ async function buildMonthlyReport(month, branch) {
     const absenceSessions = all.filter((s) => !delivered(s));
     const absenceSessionIds = new Set(absenceSessions.map((s) => s.id));
     // الفرع محفوظ على الدفعة نفسها — لا حاجة لمطابقتها باشتراكات الفرع واحدةً واحدة
-    const pays = payments.filter((p) => p.branchId === b.id && p.subscriptionId != null && monthOf(p.date) === m);
+    const pays = payments.filter((p) => p.branchId === b.id && monthOf(p.date) === m);
     const appts = appointments.filter((a) => monthOf(a.date) === m && a.branchId === b.id && a.date <= todayStr());
     // الغياب المسجَّل كحصة يُعلِّم موعده «missed» — فلا يُحتسب مرتين
     const missed = absenceSessions.length
@@ -2849,7 +3099,12 @@ const SUB_STATUS_AR = { active: 'فعّال', frozen: 'مجمّد', expired: 'م
 
 const TRAINEE_REPORT_OPTIONAL = ['phone', 'birthDate', 'residence', 'username', 'joinedAt', 'lastSession'];
 
-async function buildTraineeRoster({ branch, status }) {
+/* تقرير المشتركين — بالفرع والحالة، وبشهرٍ بعينه إن طُلب.
+   «التقارير الشهرية يطلعلي التقرير الشهر بالشهر والدفعات بالشهر واقدر
+   ابحث من خلال الشهر ولي اخر دفعه فقط»: الشهر يُصفّي الدفعات المعروضة
+   (كم دفع فلانٌ في تموز؟)، ووضع «آخر دفعة فقط» يختصر السجل لآخر دفعة
+   لكل شخص حين تكون هي المطلوبة لا السجل كله. */
+async function buildTraineeRoster({ branch, status, month, lastPaymentOnly }) {
   const inBranchList = (id) => !branch || branch.includes(Number(id));
   const { users, branches, subscriptions, payments, sessions } = await Store.load(
     'users', 'branches', 'subscriptions', 'payments', 'sessions');
@@ -2871,6 +3126,8 @@ async function buildTraineeRoster({ branch, status }) {
       || mine.slice().sort((a, b) => a.endDate.localeCompare(b.endDate))[mine.length - 1] || null;
     const myPays = paysByTrainee[u.id] || [];
     const paidCurrent = current ? myPays.filter((p) => p.subscriptionId === current.id).reduce((s, p) => s + p.amount, 0) : 0;
+    // دفعاته في الشهر المطلوب — عمودٌ يجيب «كم دفع فلان هذا الشهر؟»
+    const monthPays = month ? myPays.filter((p) => monthOf(p.date) === month) : null;
     return {
       traineeId: u.id, name: u.name, username: u.username,
       branchId: u.branchId || null, branch: branchName(u.branchId),
@@ -2892,6 +3149,8 @@ async function buildTraineeRoster({ branch, status }) {
           .reduce((x, p) => x + p.amount, 0)), 0),
       paidTotal: myPays.reduce((s, p) => s + p.amount, 0),
       lastPayment: myPays.reduce((m, p) => (p.date > m ? p.date : m), ''),
+      paidInMonth: monthPays ? round3(monthPays.reduce((s, p) => s + p.amount, 0)) : null,
+      paymentsInMonth: monthPays ? monthPays.length : null,
     };
   });
 
@@ -2908,8 +3167,19 @@ async function buildTraineeRoster({ branch, status }) {
   subscriptions.forEach((s) => { subById[s.id] = s; });
   const rowByTrainee = {};
   rows.forEach((r) => { rowByTrainee[r.traineeId] = r; });
-  const paymentsLog = payments
-    .filter((p) => inRoster.has(p.traineeId))
+  let logSource = payments.filter((p) => inRoster.has(p.traineeId));
+  // شهرٌ بعينه: «الدفعات بالشهر … اقدر ابحث من خلال الشهر»
+  if (month) logSource = logSource.filter((p) => monthOf(p.date) === month);
+  if (lastPaymentOnly) {
+    // آخر دفعة لكل شخص وحدها — لا السجل كله
+    const latest = new Map();
+    for (const p of logSource) {
+      const cur = latest.get(p.traineeId);
+      if (!cur || p.date > cur.date || (p.date === cur.date && p.id > cur.id)) latest.set(p.traineeId, p);
+    }
+    logSource = [...latest.values()];
+  }
+  const paymentsLog = logSource
     .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
     .map((p) => {
       const sub = p.subscriptionId != null ? subById[p.subscriptionId] : null;
@@ -2918,7 +3188,9 @@ async function buildTraineeRoster({ branch, status }) {
       return {
         traineeId: p.traineeId, name: r.name, branchId: bid, branch: branchName(bid),
         date: p.date, amount: p.amount, method: p.method || '',
-        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة` : '',
+        // دفعةُ دَينٍ سابق للنظام تُعرَّف بذلك بدل خانة باقة فارغة
+        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة`
+          : p.legacyDebtId ? 'دَين سابق للنظام' : '',
         subPeriod: sub ? `${sub.startDate} ← ${sub.endDate}` : '',
         note: p.note || '',
       };
@@ -2959,13 +3231,22 @@ async function buildTraineeRoster({ branch, status }) {
   };
 }
 
+/* شهرٌ بصيغة YYYY-MM أو لا شيء — لا نمرّر نصًّا غير مفهوم للتصفية */
+const monthParam = (v) => (/^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+
 app.get('/api/reports/trainees', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  res.json(await buildTraineeRoster({ branch: scopedBranchIds(req), status: req.query.status || '' }));
+  res.json(await buildTraineeRoster({
+    branch: scopedBranchIds(req), status: req.query.status || '',
+    month: monthParam(req.query.month), lastPaymentOnly: req.query.lastPayment === '1',
+  }));
 }));
 
 app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const branch = scopedBranchIds(req);
-  const data = await buildTraineeRoster({ branch, status: req.query.status || '' });
+  const month = monthParam(req.query.month);
+  const data = await buildTraineeRoster({
+    branch, status: req.query.status || '', month, lastPaymentOnly: req.query.lastPayment === '1',
+  });
   // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
   const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
   const on = (k) => wanted.includes(k);
@@ -2980,9 +3261,14 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   head.push('الباقة', 'عدد الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'حالة الاشتراك',
     'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي على الاشتراك الحالي', 'إجمالي المتبقي عليه',
     'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
+  // عمودا الشهر المطلوب — «كم دفع فلانٌ في هذا الشهر؟»
+  if (month) head.push(`المدفوع في ${month}`, `عدد دفعاته في ${month}`);
   if (on('lastSession')) head.push('آخر حصة');
 
-  const lines = [`تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`, ''];
+  const scopeLine = `تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`
+    + (month ? ` — دفعات شهر ${month}` : '')
+    + (req.query.lastPayment === '1' ? ' — آخر دفعة لكل شخص فقط' : '');
+  const lines = [scopeLine, ''];
   lines.push(head.join(','));
   data.rows.forEach((r, i) => {
     const s = r.subscription;
@@ -2995,6 +3281,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
     out.push(cell(s && s.packageName), s ? s.totalSessions : '', s ? s.usedSessions : '', s ? s.remaining : '',
       s ? s.startDate : '', s ? s.endDate : '', s ? SUB_STATUS_AR[s.status] || s.status : 'بلا اشتراك',
       s ? s.price : '', r.paidCurrent, r.dueCurrent, r.dueAll, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
+    if (month) out.push(r.paidInMonth ?? 0, r.paymentsInMonth ?? 0);
     if (on('lastSession')) out.push(cell(r.lastSession));
     lines.push(out.join(','));
   });
@@ -3009,7 +3296,8 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   /* سجل الدفعات كاملًا — كان العمود «آخر دفعة» يوحي عند التنزيل أن باقي
      الدفعات ضاعت؛ هنا كل دفعة بسطرها لمطابقة الصندوق في Excel. */
   if (req.query.payments) {
-    lines.push('', `سجل الدفعات كاملًا — دفعة بسطر (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
+    const logTitle = req.query.lastPayment === '1' ? 'آخر دفعة لكل شخص' : 'سجل الدفعات كاملًا — دفعة بسطر';
+    lines.push('', `${logTitle}${month ? ` — شهر ${month}` : ''} (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
     lines.push('#,المتدرب,الفرع,التاريخ,المبلغ,العملة,طريقة الدفع,الباقة,فترة الاشتراك,ملاحظة');
     data.paymentsLog.forEach((p, i) => lines.push(
       `${i + 1},${cell(p.name)},${cell(p.branch)},${p.date},${p.amount},${p.currency},${cell(p.method)},${cell(p.packageName)},${cell(p.subPeriod)},${cell(p.note)}`));

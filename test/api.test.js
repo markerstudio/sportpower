@@ -385,3 +385,282 @@ test('targets: trainer-performance metrics become measurable goals (hours, offic
   const k = kpis.find((x) => x.trainerId === 2);
   assert.ok(k && k.targetsPct !== null, 'trainer KPI includes the new metric targets');
 });
+
+test('legacy debts: a debt can be recorded and settled with no prior subscription', async () => {
+  /* «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها» — نظامٌ جديد
+     وعلى مشتركين متأخرات من قبله، فلا اشتراك في القاعدة تُعلَّق عليه. */
+  const onboard = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'مدين قديم', phone: '0599777010', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } });
+  assert.equal(onboard.status, 200, JSON.stringify(onboard.json));
+  const tid = onboard.json.user.id;
+
+  const created = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    traineeId: tid, amount: 500, date: '2025-11-02', reason: 'متبقٍ من اشتراك ٢٠٢٥',
+  } });
+  assert.equal(created.status, 200, 'legacy debt accepted with no subscription');
+  const debtId = created.json.id;
+
+  // يظهر في مصدر الديون الواحد مع ديون الاشتراكات
+  const debts = (await req('GET', '/api/debts', { token: S.admin })).json;
+  const row = debts.rows.find((r) => r.legacyDebtId === debtId);
+  assert.ok(row, 'legacy debt appears in /api/debts');
+  assert.equal(row.remaining, 500);
+  assert.equal(row.subscriptionId, null, 'it is not tied to any subscription');
+  assert.ok(debts.totals.legacyCount >= 1);
+
+  // يُسدَّد بدفعة كبقية الديون
+  const pay = await req('POST', '/api/payments', { token: S.admin, body: {
+    legacyDebtId: debtId, amount: 200, date: '2026-08-21', method: 'كاش',
+  } });
+  assert.equal(pay.status, 200, 'payment against a legacy debt is accepted');
+  assert.equal(pay.json.subscriptionId, null);
+
+  const after = (await req('GET', '/api/debts', { token: S.admin })).json;
+  assert.equal(after.rows.find((r) => r.legacyDebtId === debtId).remaining, 300);
+
+  // ولا تُقبل دفعة أكبر من المتبقي
+  const over = await req('POST', '/api/payments', { token: S.admin, body: {
+    legacyDebtId: debtId, amount: 1000, date: '2026-08-21',
+  } });
+  assert.equal(over.status, 400, 'over-payment on a legacy debt is refused');
+
+  // ولا يُخفَّض أصل الدين تحت ما سُدِّد منه
+  const shrink = await req('PUT', '/api/legacy-debts/' + debtId, { token: S.admin, body: { amount: 50 } });
+  assert.equal(shrink.status, 400, 'principal cannot drop below what was paid');
+
+  // وسداد الدين القديم تحصيلٌ حقيقي يظهر في ملف صاحبه
+  const overview = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(overview.finance.legacyRemaining, 300);
+  assert.ok(overview.payments.some((p) => p.legacyDebtId === debtId));
+});
+
+test('targets: a personal goal can be set for the accountant and for sales', async () => {
+  const month = '2026-08';
+  const acc = (await req('GET', '/api/users?role=accountant', { token: S.admin })).json;
+  assert.ok(acc.length, 'an accountant account exists');
+  const accId = acc[0].id;
+
+  // التحصيل على المحاسبة يُقاس بفروعها (by=branch) لا بما سجّلته بيدها
+  assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'user', refId: accId, metric: 'revenue', period: month, value: 5000,
+  } })).status, 200, 'accountant revenue target accepted');
+
+  // ومؤشرات المبيعات تُقاس على من سجّل الأرقام (by=person)
+  for (const metric of ['leads', 'tests', 'closingRate', 'unfreezes', 'renewals']) {
+    assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+      scope: 'user', refId: accId, metric, period: month, value: metric === 'closingRate' ? 40 : 10,
+    } })).status, 200, metric + ' target accepted on a person');
+  }
+
+  // مؤشر تدريبي بحت لا يُقبل على نطاق «فرع» — لا معنى له هناك
+  const bad = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'branch', refId: 1, metric: 'sessions', period: month, value: 10,
+  } });
+  assert.equal(bad.status, 200, 'sessions is measurable per branch');
+  const badScope = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'trainer', refId: 2, metric: 'closingRate', period: month, value: 40,
+  } });
+  assert.equal(badScope.status, 400, 'closing rate is not a trainer metric');
+
+  // وصاحب هدفٍ غير موجود يُرفض بدل أن يظهر صفرًا أبدًا
+  const ghost = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'user', refId: 999999, metric: 'revenue', period: month, value: 100,
+  } });
+  assert.equal(ghost.status, 400, 'a target on a non-existent person is refused');
+
+  // والمحاسبة تظهر في KPI الموظفين بنسبتها — لا المدربون وحدهم
+  const kpis = (await req('GET', '/api/kpi?month=' + month, { token: S.admin })).json;
+  const mine = kpis.find((k) => k.trainerId === accId);
+  assert.ok(mine, 'the accountant now has a KPI row');
+  assert.equal(mine.role, 'accountant');
+  assert.ok(mine.targetsPct !== null, 'and a measured completion percentage');
+
+  // ونفس الأهداف تظهر مجمَّعة في لوحة KPI الواحدة
+  const board = (await req('GET', '/api/kpi/board?month=' + month, { token: S.admin })).json;
+  assert.ok((board.staffTargets || []).some((x) => x.userId === accId), 'staff targets are on the KPI board');
+});
+
+test('search: latest=1 lists each person once with their newest subscription', async () => {
+  /* «البحث يبطلع الاسم مره وحده والاشتراك الاخير»: من جدّد ثلاث مرات كان
+     يملأ نتيجة البحث بثلاثة صفوف باسمه. */
+  const ob = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'مجدد كثير', phone: '0599777020', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 8, price: 400, startDate: '2026-01-01', endDate: '2026-03-01' },
+  } });
+  const tid = ob.json.user.id;
+  for (const [start, end] of [['2026-03-02', '2026-05-01'], ['2026-05-02', '2026-08-01']]) {
+    assert.equal((await req('POST', '/api/subscriptions', { token: S.admin, body: {
+      traineeId: tid, totalSessions: 8, price: 400, startDate: start, endDate: end,
+    } })).status, 200);
+  }
+  const all = (await req('GET', '/api/subscriptions?limit=50&search=' + encodeURIComponent('مجدد كثير'), { token: S.admin })).json;
+  assert.equal(all.rows.filter((r) => r.traineeId === tid).length, 3, 'without latest=1 every renewal is a row');
+
+  const latest = (await req('GET', '/api/subscriptions?limit=50&latest=1&search=' + encodeURIComponent('مجدد كثير'), { token: S.admin })).json;
+  const mine = latest.rows.filter((r) => r.traineeId === tid);
+  assert.equal(mine.length, 1, 'the name appears exactly once');
+  assert.equal(mine[0].startDate, '2026-05-02', 'and it is the newest subscription');
+  assert.equal(mine[0].subsCount, 3, 'with the count of all their subscriptions');
+});
+
+test('trainer permissions: prices and renewal are granted by name, not to every trainer', async () => {
+  const trainers = (await req('GET', '/api/users?role=trainer', { token: S.admin })).json;
+  const t = trainers[0];
+
+  // مدرب عادي: بلا أسعار وبلا تجديد وبلا عقود
+  await req('POST', '/api/users/' + t.id + '/credentials', { token: S.admin, body: {} });
+  const setPass = await req('PUT', '/api/users/' + t.id, { token: S.admin, body: { password: 'trainer-pass-1' } });
+  assert.equal(setPass.status, 200);
+  let d = await login(t.username, 'trainer-pass-1');
+  // كلمة مرور من الإدارة مؤقتة — يغيّرها ثم يعمل
+  await req('POST', '/api/me/password', { token: d.token, body: { current: 'trainer-pass-1', next: 'trainer-own-pass-1' } });
+  d = await login(t.username, 'trainer-own-pass-1');
+  const tok = d.token;
+
+  const pkgs = (await req('GET', '/api/packages', { token: tok })).json;
+  assert.ok(pkgs.length, 'a trainer still sees the packages');
+  assert.ok(pkgs.every((p) => p.price === undefined), 'but never their prices');
+  assert.equal((await req('GET', '/api/contracts', { token: tok })).status, 403, 'and no contracts');
+
+  const trainees = (await req('GET', '/api/users?role=trainee', { token: S.admin })).json;
+  const withSub = (await req('GET', '/api/subscriptions?limit=1', { token: S.admin })).json.rows[0];
+  const renew = { traineeId: withSub.traineeId, totalSessions: 8, price: 400, startDate: '2026-09-01', endDate: '2026-11-01' };
+  assert.equal((await req('POST', '/api/subscriptions', { token: tok, body: renew })).status, 403, 'and cannot renew');
+
+  // بعد المنح: يرى الأسعار والعقود ويجدّد لمشترك سابق في فرعه
+  assert.equal((await req('PUT', '/api/users/' + t.id, { token: S.admin, body: { canRenew: true } })).status, 200);
+  d = await login(t.username, 'trainer-own-pass-1'); // منح الصلاحية أنهى جلسته
+  const tok2 = d.token;
+  const pkgs2 = (await req('GET', '/api/packages', { token: tok2 })).json;
+  assert.ok(pkgs2.some((p) => p.price !== undefined), 'renewal permission implies seeing prices');
+  assert.equal((await req('GET', '/api/contracts', { token: tok2 })).status, 200, 'and the contracts page opens');
+
+  const sameBranch = (await req('GET', '/api/subscriptions?limit=200', { token: S.admin })).json.rows
+    .find((r) => trainees.some((x) => x.id === r.traineeId && x.branchId === t.branchId));
+  if (sameBranch) {
+    const ok = await req('POST', '/api/subscriptions', { token: tok2, body: {
+      traineeId: sameBranch.traineeId, totalSessions: 8, price: 400, startDate: '2026-09-01', endDate: '2026-11-01',
+    } });
+    assert.equal(ok.status, 200, 'a granted trainer renews for an existing member in their branch');
+  }
+
+  // لكنه لا يفتح زبونًا جديدًا: من لا اشتراك سابق له
+  const fresh = await req('POST', '/api/users', { token: S.admin, body: {
+    username: 'freshtrainee1', password: 'temp-pass-123', name: 'بلا اشتراك', role: 'trainee', branchId: t.branchId,
+  } });
+  const blocked = await req('POST', '/api/subscriptions', { token: tok2, body: {
+    traineeId: fresh.json.id, totalSessions: 8, price: 400, startDate: '2026-09-01', endDate: '2026-11-01',
+  } });
+  assert.equal(blocked.status, 403, 'opening a brand-new client stays with reception');
+
+  // والصلاحية لا تُمنح لدور يملكها أصلًا
+  const admins = (await req('GET', '/api/users?role=admin', { token: S.admin })).json;
+  assert.equal((await req('PUT', '/api/users/' + admins[0].id, { token: S.admin, body: { canRenew: true } })).status, 400);
+});
+
+test('inbody: a wrong reading can be corrected and deleted', async () => {
+  const ob = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'قراءة خاطئة', phone: '0599777030', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } });
+  const tid = ob.json.user.id;
+  const created = await req('POST', '/api/inbody', { token: S.admin, body: {
+    traineeId: tid, date: '2026-08-10', weight: 780, bodyFatPct: 30,
+  } });
+  assert.equal(created.status, 200);
+  const id = created.json.id;
+
+  // «التعديل ع inbody بادخال الارقام اذا صار في خربطة»
+  const fixed = await req('PUT', '/api/inbody/' + id, { token: S.admin, body: { weight: 78, bodyFatPct: 30 } });
+  assert.equal(fixed.status, 200);
+  assert.equal(fixed.json.weight, 78);
+
+  // والخانة المُفرَّغة تُمحى بدل أن تبقى قيمة خاطئة
+  const cleared = await req('PUT', '/api/inbody/' + id, { token: S.admin, body: { weight: 78, bodyFatPct: '' } });
+  assert.equal(cleared.json.bodyFatPct, null);
+
+  assert.equal((await req('DELETE', '/api/inbody/' + id, { token: S.admin })).status, 200);
+  const left = (await req('GET', '/api/inbody?trainee=' + tid, { token: S.admin })).json;
+  assert.equal(left.length, 0);
+});
+
+test('security: bodies cannot smuggle extra fields or pollute prototypes', async () => {
+  /* من أشهر ما يسقط فيه الكود المولَّد: نسخُ جسم الطلب كما هو إلى الصف
+     المخزَّن. هنا كل صفٍّ يُبنى بحقوله المسمّاة، فما لم يُسمَّ لا يُخزَّن. */
+  const ob = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'حقول مهرّبة', phone: '0599777040', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } });
+  const tid = ob.json.user.id;
+
+  // معرّف مفروض وفرع مفروض لا يُقبلان — الفرع يُقرأ من حساب صاحب الدين
+  const debt = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    traineeId: tid, amount: 100, id: 999999, createdBy: 4242, branchId: 99999, evil: 'x',
+  } });
+  assert.equal(debt.status, 200);
+  assert.notEqual(debt.json.id, 999999, 'a forced id is ignored');
+  assert.equal(debt.json.branchId, 1, 'the branch comes from the trainee, not the body');
+  assert.equal(debt.json.evil, undefined, 'unknown fields are not stored');
+
+  // إنشاء مستخدم بصلاحيات مهرّبة في جسم الطلب
+  const u = await req('POST', '/api/users', { token: S.admin, body: {
+    username: 'smuggle1', password: 'temp-pass-123', name: 'S', role: 'trainee',
+    canRenew: true, canSeePrices: true, mfaExempt: true, active: true,
+  } });
+  assert.equal(u.json.canRenew, false, 'permissions are not granted at creation from the body');
+  assert.equal(u.json.mfaExempt, false);
+
+  // تلويث النموذج الأولي عبر JSON — يمرّ الطلب ولا يُلوَّث شيء
+  const res = await fetch(base + '/api/legacy-debts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.admin },
+    body: `{"traineeId":${tid},"amount":25,"__proto__":{"pollutedByTest":"yes"}}`,
+  });
+  assert.ok(res.status < 500);
+  assert.equal({}.pollutedByTest, undefined, 'Object.prototype stays clean');
+});
+
+test('security: a trainee sees only their own records, whatever id they ask for', async () => {
+  // متدربان ننشئهما هنا — لا نعتمد على حالة تركتها اختبارات سابقة
+  const mk = async (username, name, phone) => (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name, phone, branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } })).json.user;
+  const a = await mk('bolaA', 'ضحية أ', '0599777051');
+  const b = await mk('bolaB', 'ضحية ب', '0599777052');
+  assert.ok(a && b, 'two trainees created');
+
+  await req('PUT', '/api/users/' + a.id, { token: S.admin, body: { password: 'trainee-temp-1' } });
+  const temp = await login(a.username, 'trainee-temp-1');
+  assert.ok(temp.token, 'the trainee can log in with the temporary password');
+  await req('POST', '/api/me/password', {
+    token: temp.token, body: { current: 'trainee-temp-1', next: 'trainee-own-pass-1' },
+  });
+  const tok = (await login(a.username, 'trainee-own-pass-1')).token;
+  assert.ok(tok, 'and again with their own');
+
+  // سجلّ صحّي لكلٍّ منهما كي يكون هناك ما يُسرَّب أصلًا
+  for (const t of [a, b]) {
+    await req('POST', '/api/inbody', { token: S.admin, body: { traineeId: t.id, date: '2026-08-05', weight: 80 } });
+  }
+
+  // ملف غيره مرفوض صراحةً
+  assert.equal((await req('GET', `/api/trainee/${b.id}/overview`, { token: tok })).status, 403);
+
+  // وطلبُ سجلات غيره بالمعرّف يعود بسجلاته هو لا بسجلات غيره
+  for (const path of ['/api/inbody', '/api/meal-plans', '/api/trainee-photos', '/api/sessions', '/api/subscriptions']) {
+    const r = await req('GET', `${path}?trainee=${b.id}`, { token: tok });
+    const rows = Array.isArray(r.json) ? r.json : (r.json && r.json.rows) || [];
+    assert.ok(rows.every((x) => x.traineeId === undefined || x.traineeId === a.id),
+      `${path} never returns another trainee's rows`);
+  }
+
+  // والرصد الداخلي (النتائج والمشاكل) لا يفتح للمتدرب إطلاقًا
+  assert.equal((await req('GET', `/api/trainee-flags?trainee=${b.id}`, { token: tok })).status, 403);
+
+  // ولا كتابة على أحد
+  assert.equal((await req('POST', '/api/inbody', { token: tok, body: { traineeId: b.id, date: '2026-08-01', weight: 70 } })).status, 403);
+  assert.equal((await req('PUT', '/api/users/' + b.id, { token: tok, body: { name: 'x' } })).status, 403);
+});

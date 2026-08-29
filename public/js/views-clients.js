@@ -25,8 +25,13 @@ const categoryLabel = (c) => (PACKAGE_CATEGORIES.find(([k]) => k === c) || PACKA
 async function viewPackages(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
+  // نوع الباقات المعروض في العنوان — لا يضيع بالتحديث
+  const state = urlState({ cat: '' });
 
-  async function render() {
+  // موضع الصفحة يبقى بعد كل حفظ باقة أو عقد — لا تُرمى للأعلى
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
     container.innerHTML = '';
     container.append(spinnerCard());
     const [packages, contracts, branches, settings] = await Promise.all([
@@ -47,24 +52,63 @@ async function viewPackages(root) {
       'الباقات تظهر للزبون داخل العقد الإلكتروني بكل أسعارها قبل أن يشترك، وتظهر على ملف كل مشترك للتجديد أو الترقية. '
       + 'المدرب لا يرى الأسعار إطلاقًا.'));
 
-    /* --- بطاقات الباقات مجمّعة بالنوع (كما تظهر في العقد) --- */
-    const pkgCard = el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`));
-    if (!packages.length) {
-      pkgCard.append(el('div', { class: 'empty' }, 'لا باقات بعد — أضف أول باقة.'));
-    } else {
-      PACKAGE_CATEGORIES.forEach(([key, label]) => {
-        const list = packages.filter((p) => (p.category || 'personal') === key);
-        if (!list.length) return;
-        const grid = el('div', { class: 'meals-grid' });
+    /* --- الباقات: قائمةُ الأنواع على جنب والباقاتُ إلى جانبها ---
+       «تعديل الباقات انو تظهر الباقات ع جنب وفيها الباقات»: كانت كل
+       الأنواع مكدَّسة عموديًا في صفحة واحدة، فالوصول لباقةٍ بعينها
+       تمريرٌ طويل. الآن رفٌّ جانبي بالأنواع وأعدادها، والباقات إلى
+       جانبه — والاختيار محفوظ في العنوان فلا يضيع بالتحديث. */
+    const catOf = (p) => p.category || 'personal';
+    const counts = {};
+    packages.forEach((p) => { counts[catOf(p)] = (counts[catOf(p)] || 0) + 1; });
+    const activeCount = (key) => packages.filter((p) => catOf(p) === key && p.active !== false).length;
+
+    const grid = el('div', { class: 'meals-grid' });
+    const railBtns = [];
+    const paint = () => {
+      const cat = state.cat;
+      railBtns.forEach((b) => b.classList.toggle('pkg-rail__item--on', b.dataset.cat === cat));
+      grid.innerHTML = '';
+      const list = packages.filter((p) => !cat || catOf(p) === cat);
+      if (!list.length) {
+        grid.append(el('div', { class: 'empty' },
+          packages.length ? 'لا باقات في هذا النوع — أضف باقة إليه.' : 'لا باقات بعد — أضف أول باقة.'));
+        return;
+      }
+      if (cat) {
         list.forEach((p) => grid.append(packageCard(p, branches, render)));
-        pkgCard.append(
-          el('h4', { style: 'margin:14px 0 8px;font-family:var(--font-display);font-weight:800;color:var(--accent-hover)' },
-            `${label} (${list.length})`),
-          grid);
+        return;
+      }
+      // «الكل»: مجمَّعة بالنوع كما تظهر للزبون في العقد
+      PACKAGE_CATEGORIES.forEach(([key, label]) => {
+        const sub = packages.filter((p) => catOf(p) === key);
+        if (!sub.length) return;
+        grid.append(el('h4', {
+          class: 'span-all',
+          style: 'grid-column:1/-1;margin:6px 0 0;font-family:var(--font-display);font-weight:800;color:var(--accent-hover)',
+        }, `${label} (${sub.length})`));
+        sub.forEach((p) => grid.append(packageCard(p, branches, render)));
       });
-    }
-    container.append(pkgCard);
+    };
+
+    const railItem = (key, label, n, activeN) => {
+      const b = el('button', { class: 'pkg-rail__item', type: 'button' },
+        el('span', {}, label),
+        el('span', { class: 'tag tag--neutral' }, String(n)));
+      b.dataset.cat = key;
+      if (activeN !== null && activeN !== n) b.title = `${activeN} منها مفعّلة`;
+      b.addEventListener('click', () => { state.cat = key; state.sync(); paint(); });
+      railBtns.push(b);
+      return b;
+    };
+    const rail = el('nav', { class: 'pkg-rail', 'aria-label': 'أنواع الباقات' },
+      el('div', { class: 'sidebar__caption', style: 'padding:0 0 6px' }, 'أنواع الباقات'),
+      railItem('', 'كل الباقات', packages.length, null),
+      ...PACKAGE_CATEGORIES.map(([key, label]) => railItem(key, label, counts[key] || 0, activeCount(key))));
+
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`),
+      el('div', { class: 'pkg-layout' }, rail, grid)));
+    paint();
 
     /* --- العقود --- */
     const pending = contracts.filter((c) => c.status === 'submitted');
@@ -90,7 +134,7 @@ async function viewPackages(root) {
             c.submission ? c.submission.name : (c.prospectName || '—'),
             el('span', { class: 'tag ' + tone }, label),
             c.expiresAt || '—',
-            el('div', { style: 'display:flex;gap:5px;flex-wrap:wrap' },
+            el('div', { class: 'row-actions' },
               el('button', {
                 class: 'btn btn--outline btn--sm',
                 onclick: () => navigator.clipboard.writeText(url).then(() => toast('نُسخ رابط العقد.')),
@@ -102,7 +146,7 @@ async function viewPackages(root) {
                   c.prospectName),
               }, 'واتساب') : el('span'),
               el('a', { class: 'btn btn--ghost btn--sm', href: '#/contract/' + c.token, target: '_blank' }, 'معاينة')),
-            el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+            el('div', { class: 'row-actions' },
               c.status === 'submitted'
                 ? el('button', { class: 'btn btn--accent btn--sm', onclick: () => convertContract(c, render) }, 'تحويله لمشترك')
                 : el('span'),
@@ -439,7 +483,7 @@ function traineeFlagsCard(data, traineeId, onDone) {
     el('div', {}, el('b', {}, f.title), f.note ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, f.note) : ''),
     f.date,
     f.status === 'closed' ? el('span', { class: 'tag tag--neutral' }, 'مغلق ' + (f.closedAt || '')) : el('span', { class: 'tag tag--warning' }, 'مفتوح'),
-    el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
+    el('div', { class: 'row-actions' },
       f.status === 'closed'
         ? el('button', {
           class: 'btn btn--ghost btn--sm',
@@ -517,7 +561,9 @@ async function viewRatings(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
 
-  async function render() {
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
     container.innerHTML = '';
     container.append(spinnerCard());
     const data = await API.get('/api/session-ratings');
