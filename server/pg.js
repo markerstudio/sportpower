@@ -298,6 +298,32 @@ const MIGRATIONS = [
       await secureTables(c, log);
     },
   },
+  {
+    id: 5,
+    name: 'legacy-debt-without-account',
+    async up(c, log) {
+      /* الدَّين السابق للنظام كان يلزمه حسابُ مشترك مسجَّل — وهذا يفرض
+         فتحَ حساب لكل من يدفع متأخراته ثم ينصرف. صاحبُ الدَّين صار
+         إمّا مشتركًا مسجَّلًا وإمّا اسمًا مجرَّدًا، فيسقط قيدُ NOT NULL
+         عن trainee_id. (الجدول أُنشئ قبل هذا الترحيل بالقيد، وsyncSchema
+         يضيف الأعمدة ولا يغيّر قيودها — فالإسقاط هنا.)
+         ومرجعُ العمود يصير ON DELETE SET NULL: حذفُ حساب مشترك لا يجوز
+         أن يمحو دَينًا مستحقًا عليه من السجل المالي. */
+      if (!(await tableExists(c, 'legacy_debts'))) return; // قاعدة جديدة: syncSchema يُنشئه صحيحًا
+      await c.query('ALTER TABLE legacy_debts ALTER COLUMN trainee_id DROP NOT NULL');
+      const { rows } = await c.query(
+        `SELECT conname FROM pg_constraint
+         WHERE conrelid = 'legacy_debts'::regclass AND contype = 'f'
+           AND confrelid = 'users'::regclass`);
+      for (const r of rows) {
+        await c.query(`ALTER TABLE legacy_debts DROP CONSTRAINT ${quoteIdent(r.conname)}`);
+      }
+      await c.query(
+        'ALTER TABLE legacy_debts ADD CONSTRAINT fk_legacy_debts_trainee_id '
+        + 'FOREIGN KEY (trainee_id) REFERENCES users(id) ON DELETE SET NULL');
+      log('  legacy_debts.trainee_id: صار اختياريًا (دَينُ شخصٍ غير مسجَّل)');
+    },
+  },
 ];
 
 /* مزامنة المخطط: تنشئ أي **مجموعة** جديدة أُضيفت إلى schema.js، وتضيف أي
