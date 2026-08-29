@@ -967,12 +967,26 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   app.post('/api/frozen/import', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const { fileBase64, defaultBranchId } = req.body;
     if (!fileBase64) return res.status(400).json({ error: 'الملف مطلوب.' });
+    /* محلل Excel اعتماد اختياري: حالة إعدادٍ ناقص لا خطأ خادم — و503
+       تقول للمشغّل إن الخدمة غير مهيأة، والرسالة تقول ماذا يفعل. */
     let XLSX;
     try { XLSX = require('xlsx'); }
-    catch (e) { return res.status(500).json({ error: 'محلل Excel غير مثبت.' }); }
+    catch (e) {
+      return res.status(503).json({
+        error: 'استيراد Excel غير مفعَّل على هذا الخادم (حزمة xlsx غير مثبّتة). '
+          + 'ثبّتها بـ npm install، أو أدخل المجمّدين يدويًا من «+ إضافة مجمّد».',
+      });
+    }
 
     const buf = Buffer.from(fileBase64.replace(/^data:[^;]+;base64,/, ''), 'base64');
-    const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
+    /* ملفٌ ليس Excel (أو تالف) كان يرمي خطأً داخليًا فيصل للمستخدم
+       «حدث خطأ في الخادم» — وهو خطأ ملفِه لا خطأ الخادم. */
+    let wb;
+    try { wb = XLSX.read(buf, { type: 'buffer', cellDates: true }); }
+    catch (e) { return res.status(400).json({ error: 'تعذّرت قراءة الملف — تأكد أنه ملف Excel أو CSV صالح.' }); }
+    if (!wb.SheetNames || !wb.SheetNames.length) {
+      return res.status(400).json({ error: 'الملف بلا أوراق عمل.' });
+    }
     const sheetName = wb.SheetNames.find((n) => n.includes('مجمد')) || wb.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
 
