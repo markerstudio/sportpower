@@ -130,6 +130,16 @@ const NAV = {
   ],
 };
 
+/* صفحات يفتحها المدرب المخوَّل وحده — لا كل المدربين.
+   «افتح عند المدرب العقود مع الباقات مع الأسعار» و«أعطِ طه ونور خاصية
+   تجديد الاشتراك»: صلاحيتان تُمنحان بالاسم من صفحة المستخدمين. */
+const PERMISSION_NAV = [
+  ['#/packages', 'الباقات والعقود', 'tag', (u) => u.canSeePrices || u.canRenew],
+  ['#/subscriptions', 'الاشتراكات والتجديد', 'card', (u) => u.canRenew],
+];
+const grantedNav = (u) => PERMISSION_NAV.filter(([, , , ok]) => ok(u)).map(([h, l, i]) => [h, l, i]);
+const hasGrant = (u, hash) => PERMISSION_NAV.some(([h, , , ok]) => h === hash && ok(u));
+
 /* من يفتح أي صفحة — مصدرٌ واحد يستعمله الموجّه وأزرارُ مركز القرارات،
    فلا يُعرض للمدرب زرٌّ يقوده إلى «ليست لديك صلاحية». */
 const ROUTE_ROLES = {
@@ -163,7 +173,9 @@ function canOpenRoute(hash, role) {
   if (/^#\/trainee\/\d+$/.test(h)) return ['admin', 'accountant', 'trainer', 'nutritionist', 'trainee'].includes(role);
   if (!(h in ROUTE_ROLES)) return false;
   const allowed = ROUTE_ROLES[h];
-  return !allowed || allowed.includes(role);
+  if (!allowed || allowed.includes(role)) return true;
+  // صلاحيةٌ مُنحت لهذا الحساب بعينه تفتح صفحةً ليست لدوره
+  return !!(API.user && API.user.role === role && hasGrant(API.user, h));
 }
 
 const TITLES = {
@@ -220,7 +232,10 @@ async function renderShell(route, renderView) {
     } catch (e) { /* الافتراضي */ }
   }
 
-  const nav = NAV[API.user.role] || [];
+  /* قائمة الدور + ما مُنح لهذا الحساب بعينه (الأسعار/التجديد) */
+  const baseNav = NAV[API.user.role] || [];
+  const extra = grantedNav(API.user).filter(([h]) => !baseNav.some(([b]) => b === h));
+  const nav = [...baseNav, ...extra];
   const logoSrc = document.documentElement.getAttribute('data-theme') === 'dark' ? '/assets/logo-white.svg' : '/assets/logo-color.svg';
   // على الموبايل: القائمة تنزلق فوق المحتوى مع خلفية معتمة، وتُغلق بالنقر خارجها أو باختيار صفحة
   const closeSidebar = () => { sidebar.classList.remove('open'); backdrop.classList.remove('show'); };
@@ -383,7 +398,10 @@ async function route() {
     return;
   }
 
-  const guard = (roles, fn) => (roles.includes(API.user.role) ? fn : (r) => { r.append(el('div', { class: 'content' }, el('div', { class: 'alert alert--warning' }, 'ليست لديك صلاحية لهذه الصفحة.'))); });
+  /* الحارس يقرأ من canOpenRoute نفسه الذي تقرأ منه القائمة وأزرار
+     مركز القرارات — فلا تُعرض صفحة في القائمة ثم يرفضها الموجّه. */
+  const guard = (hash, fn) => (canOpenRoute(hash, API.user.role) ? fn
+    : (r) => { r.append(el('div', { class: 'content' }, el('div', { class: 'alert alert--warning' }, 'ليست لديك صلاحية لهذه الصفحة.'))); });
 
   const traineeMatch = hash.match(/^#\/trainee\/(\d+)$/);
   if (traineeMatch) {
@@ -415,9 +433,7 @@ async function route() {
     '#/packages': viewPackages,
     '#/ratings': viewRatings,
   };
-  const routes = Object.fromEntries(Object.entries(VIEWS)
-    // null في ROUTE_ROLES = مفتوحة لكل الأدوار
-    .map(([h, fn]) => [h, guard(ROUTE_ROLES[h] || Object.keys(NAV), fn)]));
+  const routes = Object.fromEntries(Object.entries(VIEWS).map(([h, fn]) => [h, guard(h, fn)]));
 
   const view = routes[hash];
   if (!view) { location.hash = homeRoute(API.user.role); return; }

@@ -165,6 +165,13 @@ async function buildActions({ branch, subStatus, forTrainer }) {
     Store.all('traineeGoals'),
   ]);
 
+  /* رصدٌ يدوي بأن مشتركًا «وصل لنتيجة»: «بعض الأشخاص واصلين لنتيجة وهو
+     حسب القراءة بحكي لاء». حكمُ الأرقام على الميزان لا يرى كل شيء —
+     محيطٌ نزل، ألمٌ زال، أداءٌ تحسّن — فالرصد اليدوي من المدرب أو الإدارة
+     يُسكت قرارَ «بلا تقدّم» ما دام حديثًا. */
+  const recentResultFlags = await Store.find('traineeFlags',
+    { kind: 'result', date: { gte: daysAgo(90) } });
+
   // تاريخ القياسات الكامل — للمرشحين وحدهم (من لديه قراءة حديثة)
   const candidateIds = [...new Set(inbodyRecent.map((r) => r.traineeId))];
   const inbody = candidateIds.length
@@ -172,7 +179,8 @@ async function buildActions({ branch, subStatus, forTrainer }) {
     : [];
 
   const data = { users, branches, subscriptions, targets, settings, packages, sessions, appointments,
-    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks, traineeGoals };
+    inbody, inbodyRecent, payments, subEvents, sessionRatings, actionLog, trainerLogs, monthTasks,
+    traineeGoals, recentResultFlags };
 
   const TH = readThresholds(data.settings[0]);
   const nowIso = nowLocalMinute(); // بتوقيت النادي
@@ -742,6 +750,10 @@ async function buildActions({ branch, subStatus, forTrainer }) {
 
     // الحكم على التقدّم يتبع هدف المتدرب — التصنيف الواحد في goals.js
     if (improvedFor(trainee.goal, { dWeight, dFat, dMuscle })) continue;
+    /* نتيجةٌ رُصدت يدويًا بعد القراءة الأساس تُبطل هذا القرار: من رآه
+       مدربُه وصل لنتيجة لا يُطالَب النظام بمراجعة خطته لأن الميزان
+       وحده لم يتحرك. (الرصد اليدوي أعلى من حكم الأرقام لا دونه.) */
+    if (data.recentResultFlags.some((f) => f.traineeId === trainee.id && f.date >= base.date)) continue;
 
     const changes = [
       dWeight != null ? `الوزن ${dWeight > 0 ? '+' : ''}${dWeight} كغ` : null,

@@ -62,6 +62,12 @@ const SCHEMA = {
       sourceType: col('text'),
       sourceRefId: col('int'),
       sourceName: col('text'),
+      /* صلاحيتان تُمنحان لمدربٍ بعينه (بطلب العميل: «افتح عند المدرب
+         العقود مع الباقات مع الأسعار» و«أعطِ طه ونور خاصية تجديد
+         الاشتراك»). تُمنح بالاسم من صفحة المستخدمين لا لكل المدربين:
+         الأسعار سرّ تجاري يبقى مغلقًا افتراضيًا. */
+      canSeePrices: col('bool'),
+      canRenew: col('bool'),
       mfaSecret: col('text'),
       mfaEnrolledAt: col('text'),
       mfaExempt: col('bool'),

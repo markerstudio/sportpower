@@ -230,7 +230,7 @@ function requireRole(...roles) {
   };
 }
 
-const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, branchIds: Array.isArray(u.branchIds) ? u.branchIds : [], trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
+const publicUser = (u) => u && ({ id: u.id, username: u.username, name: u.name, role: u.role, phone: u.phone, branchId: u.branchId, branchIds: Array.isArray(u.branchIds) ? u.branchIds : [], trainerId: u.trainerId, goal: u.goal, specialty: u.specialty, joinedAt: u.joinedAt, birthDate: u.birthDate || null, residence: u.residence || null, sourceTrainerId: u.sourceTrainerId || null, sourceType: u.sourceType || null, sourceRefId: u.sourceRefId || null, sourceName: u.sourceName || null, canSeePrices: u.canSeePrices === true, canRenew: u.canRenew === true, mfaEnrolled: !!u.mfaSecret, mfaExempt: u.mfaExempt === true, mustChangePassword: !!u.mustChangePassword, seenRelease: u.seenRelease || null, active: u.active !== false });
 
 /* من أين وصلنا المتدرب — يُختار عند التسجيل ويظهر في تقرير المبيعات */
 const SOURCE_TYPES = ['social', 'trainee', 'friend', 'new', 'returned', 'trainer'];
@@ -1068,6 +1068,22 @@ app.put('/api/users/:id', auth, requireRole('admin'), h(async (req, res) => {
   if (req.body.sourceTrainerId !== undefined) patch.sourceTrainerId = Number(req.body.sourceTrainerId) || null;
   if (req.body.sourceType !== undefined) Object.assign(patch, normalizeSource(req.body));
 
+  /* صلاحيتا المدرب المخوَّل: رؤية الأسعار والعقود، وتجديد الاشتراكات.
+     تُمنحان لمدربٍ بعينه لا لكل المدربين، وتُسحبان بالطريقة نفسها.
+     سحبُ صلاحية يُنهي جلساته ليسري فورًا لا بعد ١٢ ساعة. */
+  const PERMS = ['canSeePrices', 'canRenew'];
+  let permsChanged = false;
+  for (const k of PERMS) {
+    if (req.body[k] === undefined) continue;
+    const want = !!req.body[k];
+    if (want && !['trainer', 'nutritionist'].includes(user.role)) {
+      return res.status(400).json({ error: 'هذه الصلاحية للمدربين وأخصائية التغذية — بقية الأدوار تملكها أصلًا.' });
+    }
+    if (want !== (user[k] === true)) permsChanged = true;
+    patch[k] = want;
+  }
+  if (permsChanged) await Store.deleteWhere('tokens', { userId: user.id });
+
   // إعفاء من التحقق الثنائي — قرار إداري لمن يصعب عليه تطبيق المصادقة
   if (req.body.mfaExempt !== undefined) patch.mfaExempt = !!req.body.mfaExempt;
 
@@ -1365,23 +1381,56 @@ app.get('/api/subscriptions', auth, h(async (req, res) => {
     const ids = await traineeIdsMatching(req.query.search);
     where.traineeId = where.traineeId !== undefined ? (ids.includes(where.traineeId) ? where.traineeId : -1) : { in: ids };
   }
+  /* «البحث يبطلع الاسم مره وحده والاشتراك الاخير»: المشترك الذي جدّد
+     خمس مرات كان يملأ نتيجة البحث بخمسة صفوف باسمه، فيصعب معرفة أيّها
+     الحالي. بـ latest=1 يظهر كل شخص مرة واحدة باشتراكه الأخير ومعه
+     عدد اشتراكاته. الترقيم يجري بعد التجميع (لا يمكن أن تُجمِّع
+     القاعدةُ صفحةً قبل أن تعرف صفوف الشخص كلها). */
+  const latestOnly = req.query.latest === '1';
   const [list, total] = await Promise.all([
-    Store.find('subscriptions', where, pageOpts(req)),
-    req.query.limit ? Store.count('subscriptions', where) : Promise.resolve(0),
+    Store.find('subscriptions', where, latestOnly ? {} : pageOpts(req)),
+    req.query.limit && !latestOnly ? Store.count('subscriptions', where) : Promise.resolve(0),
   ]);
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية لا يريان قيمة الاشتراك
-  const withPrice = clients.canSeePrices(req.user.role);
-  let rows = list.map((s) => {
-    const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
+  const withPrice = clients.canSeePrices(req.user);
+  const decorate = (s, extra) => {
+    const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions, ...extra };
     if (!withPrice) delete row.price;
     return row;
-  });
+  };
+
+  if (latestOnly) {
+    // الأحدث = أبعد تاريخ بدء، وعند التساوي أكبر معرّف (آخر ما أُدخل)
+    const newer = (a, b) => (a.startDate || '').localeCompare(b.startDate || '') || (a.id - b.id);
+    const byTrainee = new Map();
+    const counts = new Map();
+    for (const sub of list) {
+      counts.set(sub.traineeId, (counts.get(sub.traineeId) || 0) + 1);
+      const cur = byTrainee.get(sub.traineeId);
+      if (!cur || newer(sub, cur) > 0) byTrainee.set(sub.traineeId, sub);
+    }
+    const all = [...byTrainee.values()]
+      .map((s) => decorate(s, { subsCount: counts.get(s.traineeId) }))
+      .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '') || b.id - a.id);
+    const opts = pageOpts(req);
+    const offset = opts.offset || 0;
+    const page = opts.limit ? all.slice(offset, offset + opts.limit) : all;
+    return res.json(pagedResponse(req, await withTraineeNames(page), all.length));
+  }
+
+  let rows = list.map((s) => decorate(s));
   if (req.query.limit) rows = await withTraineeNames(rows);
   res.json(pagedResponse(req, rows, total));
 }));
 
-/* إضافة المشترك/التجديد: من الإدارة أو المحاسب — وليس المدرب */
-app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+/* إضافة المشترك/التجديد: من الإدارة أو المحاسب — ومن مدرّبٍ مُنح صلاحية
+   التجديد بالاسم (canRenew). المدرب المخوَّل يُجدِّد لمن اشترك من قبل
+   وفي فرعه هو؛ فتحُ زبونٍ جديد يبقى للإدارة والمحاسبة. */
+app.post('/api/subscriptions', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+  const renewingTrainer = req.user.role === 'trainer';
+  if (renewingTrainer && req.user.canRenew !== true) {
+    return res.status(403).json({ error: 'ليست لديك صلاحية تجديد الاشتراكات — تُمنح من الإدارة.' });
+  }
   const { traineeId, totalSessions, price, startDate, endDate, packageId } = req.body;
   // أرقام صالحة قبل الإدراج: «1,200» أو نصّ يعطي NaN كان يُخزَّن فيُفسد الدَّين
   const nSessions = posInt(totalSessions);
@@ -1396,6 +1445,18 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant'), h(async
   if (startDate > endDate) return res.status(400).json({ error: 'تاريخ البدء بعد تاريخ الانتهاء.' });
   const mine = await Store.find('subscriptions', { traineeId: trainee.id });
   const prior = mine.length > 0;
+  if (renewingTrainer) {
+    // فرعه هو — لا يُجدِّد لمشترك في فرع آخر
+    if (req.user.branchId != null && Number(trainee.branchId) !== Number(req.user.branchId)) {
+      return denyOutOfScope(res);
+    }
+    // تجديدٌ لا فتحُ زبون جديد: من لا اشتراك سابق له يُفتح من الاستقبال
+    if (!prior) {
+      return res.status(403).json({
+        error: 'صلاحيتك للتجديد لمشترك سابق. الزبون الجديد يُفتح من الإدارة أو المحاسبة (تسجيل زبون جديد).',
+      });
+    }
+  }
 
   /* اشتراك مكرر: نفس المتدرب وبنفس التفاصيل خلال دقيقتين = إرسال ثانٍ
      للطلب نفسه. كان التجديد يُنشئ اشتراكين بدل واحد فيتضاعف المستحق
@@ -2755,7 +2816,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
 
   // الأسعار سرّ تجاري: المدرب وأخصائية التغذية يريان الباقة والحصص — بلا أي سعر
-  const showPrices = clients.canSeePrices(req.user.role);
+  const showPrices = clients.canSeePrices(req.user);
   const subs = subscriptions.filter((s) => s.traineeId === id)
     .map((s) => {
       const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };

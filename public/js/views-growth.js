@@ -14,7 +14,9 @@ const CANCEL_REASONS = ['السعر', 'السفر', 'الإصابة', 'عدم و
    متابعة المبيعات — ملف بكل رقم نتواصل معه + تحليل شهري
    ============================================================ */
 async function viewSales(root) {
-  const state = urlState({ month: thisMonthISO() });
+  /* «المبيعات اقدر ابحث كل فرع لحاله» — الفرع فلتر كامل يشمل المؤشرات
+     والقنوات والاعتراضات وملف المتابعة، لا الجدول وحده. */
+  const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
   root.append(container);
 
@@ -25,17 +27,28 @@ async function viewSales(root) {
     state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
+    const branchQ = state.branch ? '&branch=' + state.branch : '';
     const [leads, summary, branches] = await Promise.all([
-      API.get('/api/leads?month=' + state.month),
-      API.get('/api/leads/summary?month=' + state.month),
+      API.get(`/api/leads?month=${state.month}${branchQ}`),
+      API.get(`/api/leads/summary?month=${state.month}${branchQ}`),
       API.get('/api/branches'),
     ]);
     container.innerHTML = '';
 
     const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
+    const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch, onchange: (e) => { state.branch = e.target.value; render(); },
+    });
     container.append(el('div', { class: 'card filters' },
-      field('الشهر', monthIn),
+      field('الشهر', monthIn), field('الفرع', branchSel),
+      el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openLeadModal(render, branches) }, '+ عميل محتمل جديد')));
+
+    if (state.branch) {
+      const bn = (branches.find((b) => String(b.id) === String(state.branch)) || {}).name || '';
+      container.append(el('div', { class: 'alert alert--info' },
+        `كل الأرقام أدناه لفرع ${bn} وحده — نسبة الإغلاق والقنوات والاعتراضات وملف المتابعة.`));
+    }
 
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
       kpiHero(summary.total, 'رقم تواصلنا معه هذا الشهر', 'wa'),

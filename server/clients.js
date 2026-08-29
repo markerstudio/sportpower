@@ -12,9 +12,16 @@ const seedData = require('./seed-data');
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const addDays = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
 
-/* الأسعار سرّ تجاري: المدرب والأخصائية لا يريان أي سعر */
+/* الأسعار سرّ تجاري: المدرب والأخصائية لا يريان أي سعر — إلا من مُنح
+   الصلاحية بالاسم (canSeePrices)، أو مَن يُجدِّد الاشتراكات فعلًا
+   (canRenew) لأنه لا يستطيع تجديدًا بلا سعر.
+   يقبل حساب المستخدم كاملًا لا دورَه وحده. */
 const HIDE_PRICE_ROLES = ['trainer', 'nutritionist'];
-const canSeePrices = (role) => !HIDE_PRICE_ROLES.includes(role);
+const canSeePrices = (user) => {
+  if (!user) return false;
+  if (!HIDE_PRICE_ROLES.includes(user.role)) return true;
+  return user.canSeePrices === true || user.canRenew === true;
+};
 
 function stripPackagePrice(pkg) {
   const { price, ...rest } = pkg;
@@ -65,10 +72,10 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     // الباقة بلا فرع باقةُ الشركة كلها فتظهر للجميع؛ وباقة الفرع لأهله
     const mine = scopedBranchIds(req);
     if (mine) list = list.filter((p) => !p.branchId || mine.includes(Number(p.branchId)));
-    if (req.query.active === '1' || !canSeePrices(req.user.role)) list = list.filter((p) => p.active !== false);
+    if (req.query.active === '1' || !canSeePrices(req.user)) list = list.filter((p) => p.active !== false);
     if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
     list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory);
-    res.json(canSeePrices(req.user.role) ? list : list.map(stripPackagePrice));
+    res.json(canSeePrices(req.user) ? list : list.map(stripPackagePrice));
   }));
 
   app.post('/api/packages', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -119,13 +126,23 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     url: `/#/contract/${c.token}`,
   });
 
-  app.get('/api/contracts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  /* «افتح عند المدرب العقود مع الباقات مع الأسعار»: المدرب المخوَّل
+     يقرأ العقود ويرى أسعار باقاتها — لكنه لا يفتح عقدًا ولا يعدّله؛
+     الإنشاء والتعديل يبقيان للإدارة والمحاسبة. */
+  app.get('/api/contracts', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
+    if (req.user.role === 'trainer' && !canSeePrices(req.user)) {
+      return res.status(403).json({ error: 'ليست لديك صلاحية للاطّلاع على العقود.' });
+    }
     const { contracts, branches } = await Store.load('contracts', 'branches');
     let list = contracts;
     if (req.query.status) list = list.filter((c) => c.status === req.query.status);
     // العقد بلا فرع عقدُ الشركة — يبقى للإدارة
     const mine = scopedBranchIds(req);
     if (mine) list = list.filter((c) => mine.includes(Number(c.branchId)));
+    // المدرب المخوَّل يرى عقود فرعه هو
+    if (req.user.role === 'trainer' && req.user.branchId != null) {
+      list = list.filter((c) => c.branchId == null || Number(c.branchId) === Number(req.user.branchId));
+    }
     res.json(list.map((c) => contractView(c, branches)).sort((a, b) => b.id - a.id));
   }));
 
