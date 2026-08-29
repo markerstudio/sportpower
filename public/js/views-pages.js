@@ -1343,7 +1343,9 @@ const ROSTER_COLUMNS = [
 
 async function viewTraineeRoster(root) {
   /* الفرع والحالة في العنوان؛ أعمدة التصدير اختيارٌ لحظي يبقى في الذاكرة */
-  const state = urlState({ branch: '', status: '' });
+  /* month + lastPayment: «التقارير الشهرية يطلعلي … الدفعات بالشهر واقدر
+     ابحث من خلال الشهر ولي اخر دفعه فقط» */
+  const state = urlState({ branch: '', status: '', month: '', lastPayment: false });
   state.cols = new Set(['phone', 'residence']);
   const container = el('div', { class: 'content' });
   root.append(container);
@@ -1355,7 +1357,8 @@ async function viewTraineeRoster(root) {
     state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
-    const q = `?branch=${state.branch}&status=${state.status}`;
+    const q = `?branch=${state.branch}&status=${state.status}`
+      + (state.month ? `&month=${state.month}` : '') + (state.lastPayment ? '&lastPayment=1' : '');
     const data = await API.get('/api/reports/trainees' + q);
     container.innerHTML = '';
 
@@ -1365,6 +1368,11 @@ async function viewTraineeRoster(root) {
     const statusSel = select([['', 'الكل'], ['active', 'باشتراك فعّال فقط'], ['inactive', 'بلا اشتراك فعّال']], {
       value: state.status, onchange: (e) => { state.status = e.target.value; render(); },
     });
+    /* شهر الدفعات: يُصفّي السجل ويضيف عمود «كم دفع في هذا الشهر» */
+    const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
+    const lastPayChk = input({ type: 'checkbox' });
+    lastPayChk.checked = !!state.lastPayment;
+    lastPayChk.addEventListener('change', () => { state.lastPayment = lastPayChk.checked; render(); });
     const colsBox = el('div', { style: 'display:flex;gap:14px;flex-wrap:wrap;align-items:center' },
       el('span', { style: 'font-size:12px;color:var(--app-muted)' }, 'أعمدة إضافية:'),
       ...ROSTER_COLUMNS.map(([key, label]) => {
@@ -1386,9 +1394,12 @@ async function viewTraineeRoster(root) {
     container.append(el('div', { class: 'card' },
       el('div', { class: 'filters' },
         field('الفرع', branchSel), field('الحالة', statusSel),
+        field('شهر الدفعات (اختياري)', monthIn),
         el('div', { style: 'flex:1' }),
         el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
-          payLogChk, 'مع سجل الدفعات كاملًا (كل دفعة بسطر)'),
+          lastPayChk, 'آخر دفعة لكل شخص فقط'),
+        el('label', { style: 'display:flex;gap:6px;align-items:center;font-size:13px;cursor:pointer;white-space:nowrap' },
+          payLogChk, 'مع سجل الدفعات في الملف'),
         el('button', {
           class: 'btn btn--accent',
           onclick: () => API.download(
@@ -1414,7 +1425,25 @@ async function viewTraineeRoster(root) {
     const tableWrap = el('div');
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, 'المتدربون بالأسماء — الاشتراك والدفعات'),
+      state.month
+        ? el('div', { class: 'sidebar__caption', style: 'padding:0 0 8px' },
+          `عمودا «دفع في ${state.month}» يعرضان تحصيل ذلك الشهر وحده — وبقية الأعمدة على كامل تاريخه.`)
+        : el('span'),
       tableWrap));
+
+    /* سجل الدفعات المعروض على الشاشة — لا في الملف وحده */
+    const log = data.paymentsLog || [];
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' },
+        (state.lastPayment ? 'آخر دفعة لكل شخص' : 'سجل الدفعات')
+        + (state.month ? ` — شهر ${state.month}` : '') + ` (${log.length})`),
+      pagedTable(['التاريخ', 'المتدرب', 'الفرع', 'المبلغ', 'الطريقة', 'البند', 'ملاحظة'],
+        log,
+        (pmt) => [pmt.date, pmt.name, pmt.branch, fmtMoney(pmt.amount, pmt.currency),
+          pmt.method || '—', pmt.packageName || '—', pmt.note || '—'],
+        { pageSize: 12, searchText: (pmt) => `${pmt.name} ${pmt.branch} ${pmt.date}`,
+          searchPlaceholder: 'ابحث بالاسم أو الفرع أو التاريخ…',
+          emptyText: state.month ? `لا دفعات في ${state.month}.` : 'لا دفعات مسجّلة.' })));
 
     function drawTable() {
       const extra = ROSTER_COLUMNS.filter(([k]) => state.cols.has(k));
@@ -1422,7 +1451,8 @@ async function viewTraineeRoster(root) {
       tableWrap.append(el('div', { style: 'overflow-x:auto' }, pagedTable(
         ['#', 'الاسم', 'الفرع', ...extra.map(([, label]) => label),
           'الباقة', 'الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'الحالة',
-          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه'],
+          'قيمة الاشتراك', 'المدفوع', 'المتبقي على الاشتراك', 'إجمالي المتبقي عليه', 'إجمالي ما دفعه',
+          ...(state.month ? [`دفع في ${state.month}`, `عدد دفعاته`] : []), 'آخر دفعة'],
         // ترقيم ثابت لكل صف (لا يُعاد من 1 مع كل صفحة)
         data.rows.map((r, i) => ({ ...r, seq: i + 1 })),
         (r) => {
@@ -1440,7 +1470,12 @@ async function viewTraineeRoster(root) {
             el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
             // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
             el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
-            fmtMoney(r.paidTotal)];
+            fmtMoney(r.paidTotal),
+            ...(state.month
+              ? [el('b', { class: 'num', style: r.paidInMonth ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
+                fmtMoney(r.paidInMonth || 0)), String(r.paymentsInMonth || 0)]
+              : []),
+            r.lastPayment || '—'];
         },
         {
           pageSize: 20, emptyText: 'لا متدربين مطابقين.',

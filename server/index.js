@@ -3079,7 +3079,12 @@ const SUB_STATUS_AR = { active: 'فعّال', frozen: 'مجمّد', expired: 'م
 
 const TRAINEE_REPORT_OPTIONAL = ['phone', 'birthDate', 'residence', 'username', 'joinedAt', 'lastSession'];
 
-async function buildTraineeRoster({ branch, status }) {
+/* تقرير المشتركين — بالفرع والحالة، وبشهرٍ بعينه إن طُلب.
+   «التقارير الشهرية يطلعلي التقرير الشهر بالشهر والدفعات بالشهر واقدر
+   ابحث من خلال الشهر ولي اخر دفعه فقط»: الشهر يُصفّي الدفعات المعروضة
+   (كم دفع فلانٌ في تموز؟)، ووضع «آخر دفعة فقط» يختصر السجل لآخر دفعة
+   لكل شخص حين تكون هي المطلوبة لا السجل كله. */
+async function buildTraineeRoster({ branch, status, month, lastPaymentOnly }) {
   const inBranchList = (id) => !branch || branch.includes(Number(id));
   const { users, branches, subscriptions, payments, sessions } = await Store.load(
     'users', 'branches', 'subscriptions', 'payments', 'sessions');
@@ -3101,6 +3106,8 @@ async function buildTraineeRoster({ branch, status }) {
       || mine.slice().sort((a, b) => a.endDate.localeCompare(b.endDate))[mine.length - 1] || null;
     const myPays = paysByTrainee[u.id] || [];
     const paidCurrent = current ? myPays.filter((p) => p.subscriptionId === current.id).reduce((s, p) => s + p.amount, 0) : 0;
+    // دفعاته في الشهر المطلوب — عمودٌ يجيب «كم دفع فلان هذا الشهر؟»
+    const monthPays = month ? myPays.filter((p) => monthOf(p.date) === month) : null;
     return {
       traineeId: u.id, name: u.name, username: u.username,
       branchId: u.branchId || null, branch: branchName(u.branchId),
@@ -3122,6 +3129,8 @@ async function buildTraineeRoster({ branch, status }) {
           .reduce((x, p) => x + p.amount, 0)), 0),
       paidTotal: myPays.reduce((s, p) => s + p.amount, 0),
       lastPayment: myPays.reduce((m, p) => (p.date > m ? p.date : m), ''),
+      paidInMonth: monthPays ? round3(monthPays.reduce((s, p) => s + p.amount, 0)) : null,
+      paymentsInMonth: monthPays ? monthPays.length : null,
     };
   });
 
@@ -3138,8 +3147,19 @@ async function buildTraineeRoster({ branch, status }) {
   subscriptions.forEach((s) => { subById[s.id] = s; });
   const rowByTrainee = {};
   rows.forEach((r) => { rowByTrainee[r.traineeId] = r; });
-  const paymentsLog = payments
-    .filter((p) => inRoster.has(p.traineeId))
+  let logSource = payments.filter((p) => inRoster.has(p.traineeId));
+  // شهرٌ بعينه: «الدفعات بالشهر … اقدر ابحث من خلال الشهر»
+  if (month) logSource = logSource.filter((p) => monthOf(p.date) === month);
+  if (lastPaymentOnly) {
+    // آخر دفعة لكل شخص وحدها — لا السجل كله
+    const latest = new Map();
+    for (const p of logSource) {
+      const cur = latest.get(p.traineeId);
+      if (!cur || p.date > cur.date || (p.date === cur.date && p.id > cur.id)) latest.set(p.traineeId, p);
+    }
+    logSource = [...latest.values()];
+  }
+  const paymentsLog = logSource
     .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
     .map((p) => {
       const sub = p.subscriptionId != null ? subById[p.subscriptionId] : null;
@@ -3191,13 +3211,22 @@ async function buildTraineeRoster({ branch, status }) {
   };
 }
 
+/* شهرٌ بصيغة YYYY-MM أو لا شيء — لا نمرّر نصًّا غير مفهوم للتصفية */
+const monthParam = (v) => (/^\d{4}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+
 app.get('/api/reports/trainees', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  res.json(await buildTraineeRoster({ branch: scopedBranchIds(req), status: req.query.status || '' }));
+  res.json(await buildTraineeRoster({
+    branch: scopedBranchIds(req), status: req.query.status || '',
+    month: monthParam(req.query.month), lastPaymentOnly: req.query.lastPayment === '1',
+  }));
 }));
 
 app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
   const branch = scopedBranchIds(req);
-  const data = await buildTraineeRoster({ branch, status: req.query.status || '' });
+  const month = monthParam(req.query.month);
+  const data = await buildTraineeRoster({
+    branch, status: req.query.status || '', month, lastPaymentOnly: req.query.lastPayment === '1',
+  });
   // الأعمدة الاختيارية يختارها المستخدم من الواجهة قبل التصدير
   const wanted = String(req.query.cols || '').split(',').map((s) => s.trim()).filter(Boolean);
   const on = (k) => wanted.includes(k);
@@ -3212,9 +3241,14 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   head.push('الباقة', 'عدد الحصص', 'المستخدمة', 'المتبقية', 'من', 'إلى', 'حالة الاشتراك',
     'قيمة الاشتراك', 'المدفوع على الاشتراك', 'المتبقي على الاشتراك الحالي', 'إجمالي المتبقي عليه',
     'إجمالي ما دفعه', 'آخر دفعة', 'عدد اشتراكاته');
+  // عمودا الشهر المطلوب — «كم دفع فلانٌ في هذا الشهر؟»
+  if (month) head.push(`المدفوع في ${month}`, `عدد دفعاته في ${month}`);
   if (on('lastSession')) head.push('آخر حصة');
 
-  const lines = [`تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`, ''];
+  const scopeLine = `تقرير المتدربين — ${todayStr()}${branch ? ` — ${(data.rows[0] || {}).branch || ''}` : ' — كل الفروع'}`
+    + (month ? ` — دفعات شهر ${month}` : '')
+    + (req.query.lastPayment === '1' ? ' — آخر دفعة لكل شخص فقط' : '');
+  const lines = [scopeLine, ''];
   lines.push(head.join(','));
   data.rows.forEach((r, i) => {
     const s = r.subscription;
@@ -3227,6 +3261,7 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
     out.push(cell(s && s.packageName), s ? s.totalSessions : '', s ? s.usedSessions : '', s ? s.remaining : '',
       s ? s.startDate : '', s ? s.endDate : '', s ? SUB_STATUS_AR[s.status] || s.status : 'بلا اشتراك',
       s ? s.price : '', r.paidCurrent, r.dueCurrent, r.dueAll, r.paidTotal, cell(r.lastPayment), r.subscriptionsCount);
+    if (month) out.push(r.paidInMonth ?? 0, r.paymentsInMonth ?? 0);
     if (on('lastSession')) out.push(cell(r.lastSession));
     lines.push(out.join(','));
   });
@@ -3241,7 +3276,8 @@ app.get('/api/reports/trainees.csv', auth, requireRole('admin', 'accountant'), h
   /* سجل الدفعات كاملًا — كان العمود «آخر دفعة» يوحي عند التنزيل أن باقي
      الدفعات ضاعت؛ هنا كل دفعة بسطرها لمطابقة الصندوق في Excel. */
   if (req.query.payments) {
-    lines.push('', `سجل الدفعات كاملًا — دفعة بسطر (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
+    const logTitle = req.query.lastPayment === '1' ? 'آخر دفعة لكل شخص' : 'سجل الدفعات كاملًا — دفعة بسطر';
+    lines.push('', `${logTitle}${month ? ` — شهر ${month}` : ''} (${data.paymentsLog.length} دفعة، الأحدث أولًا)`);
     lines.push('#,المتدرب,الفرع,التاريخ,المبلغ,العملة,طريقة الدفع,الباقة,فترة الاشتراك,ملاحظة');
     data.paymentsLog.forEach((p, i) => lines.push(
       `${i + 1},${cell(p.name)},${cell(p.branch)},${p.date},${p.amount},${p.currency},${cell(p.method)},${cell(p.packageName)},${cell(p.subPeriod)},${cell(p.note)}`));
