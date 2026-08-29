@@ -738,23 +738,29 @@ async function viewAccountantDash(root) {
           }))));
     }
 
-    /* الديون — كل من عليه متبقٍ، بأي حالة اشتراك، وسدادها بضغطة */
-    if (debts && debts.rows.length) {
+    /* الديون — كل من عليه متبقٍ، بأي حالة اشتراك، وسدادها بضغطة.
+       تُعرض البطاقة حتى بلا ديون: منها يُسجَّل الدَّين السابق للنظام. */
+    if (debts) {
       container.append(el('div', { class: 'card' },
-        el('h3', { class: 'card__title' }, `الديون المستحقة (${debts.totals.count} اشتراكًا · ${debts.totals.people} شخصًا)`,
-          el('button', { class: 'btn btn--accent btn--sm', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ تسجيل سداد')),
+        el('h3', { class: 'card__title' }, `الديون المستحقة (${debts.totals.count} بندًا · ${debts.totals.people} شخصًا)`,
+          el('button', { class: 'btn btn--accent btn--sm', onclick: () => openPaymentModal(render, data.subscriptions) }, '+ تسجيل سداد'),
+          /* «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها» —
+             دَينُ ما قبل النظام يُسجَّل على الشخص مباشرةً */
+          el('button', { class: 'btn btn--outline btn--sm', onclick: () => openLegacyDebtModal(render) }, '+ دَين سابق للنظام')),
         el('div', { class: 'kpis', style: 'margin-bottom:10px' },
           kpiTile(fmtMoneyMap(debts.totals.amount), 'إجمالي الديون', 'alert', 'danger'),
           kpiTile(fmtMoneyMap(debts.totals.oldAmount), 'ديون اشتراكات سابقة', 'card', 'warn'),
+          kpiTile(fmtMoneyMap(debts.totals.legacyAmount || {}), `ديون ما قبل النظام (${debts.totals.legacyCount || 0})`, 'file', 'warn'),
           kpiTile(debts.totals.people, 'أشخاص عليهم دين', 'users')),
-        pagedTable(['المتدرب', 'الفرع', 'الباقة', 'القيمة', 'المدفوع', 'المتبقي', 'ينتهي', 'الحالة', ''],
+        pagedTable(['المتدرب', 'الفرع', 'البند', 'القيمة', 'المدفوع', 'المتبقي', 'ينتهي', 'الحالة', ''],
           debts.rows,
           (r) => [
             el('a', { href: '#/trainee/' + r.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, r.traineeName),
             r.branchName, r.packageName, fmtMoney(r.price, r.currency), fmtMoney(r.paid, r.currency),
             el('b', { style: 'color:var(--status-danger)' }, fmtMoney(r.remaining, r.currency)),
-            r.endDate,
-            r.old ? el('span', { class: 'tag tag--danger' }, 'دين سابق') : statusTag(r.status),
+            r.endDate || '—',
+            r.legacy ? el('span', { class: 'tag tag--warning' }, 'دَين سابق للنظام')
+              : r.old ? el('span', { class: 'tag tag--danger' }, 'دين سابق') : statusTag(r.status),
             el('div', { style: 'display:flex;gap:5px;justify-content:flex-end' },
               el('button', {
                 class: 'btn btn--outline btn--sm',
@@ -766,7 +772,8 @@ async function viewAccountantDash(root) {
                   `مرحبًا ${r.traineeName} 👋 تذكير ودّي من سبورت باور بخصوص المتبقي على اشتراكك (${fmtMoney(r.remaining)}) — نسعد بترتيب الدفعة في أي وقت يناسبك.`,
                   r.traineeName),
               }, 'واتساب') : el('span'))],
-          { pageSize: 10, searchText: (r) => r.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…' })));
+          { pageSize: 10, searchText: (r) => r.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…',
+            emptyText: '✅ لا ديون مستحقة. ومن «+ دَين سابق للنظام» تُسجَّل متأخرات ما قبل التشغيل.' })));
     }
 
     /* إدارة المصاريف الشهرية */
@@ -951,11 +958,14 @@ function openDebtPaymentModal(onDone, debtRow) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
-          const r = await API.post('/api/payments', {
-            subscriptionId: debtRow.subscriptionId, amount: amountIn.value, date: dateIn.value,
-            method: methodSel.value, note: noteIn.value || 'سداد دين', debt: true,
-          });
-          toast('سُجّل السداد — وتحدّث المتبقي على الاشتراك.');
+          /* دَينُ ما قبل النظام لا اشتراك له — يُسدَّد على الدين نفسه */
+          const r = await API.post('/api/payments', debtRow.legacyDebtId
+            ? { legacyDebtId: debtRow.legacyDebtId, amount: amountIn.value, date: dateIn.value,
+              method: methodSel.value, note: noteIn.value || 'سداد دين سابق' }
+            : { subscriptionId: debtRow.subscriptionId, amount: amountIn.value, date: dateIn.value,
+              method: methodSel.value, note: noteIn.value || 'سداد دين', debt: true });
+          toast(debtRow.legacyDebtId ? 'سُجّل السداد — وتحدّث المتبقي من الدين.'
+            : 'سُجّل السداد — وتحدّث المتبقي على الاشتراك.');
           if (r && r.loyaltyPoint) toast('🏅 استحق المشترك نقطة ولاء.');
           close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
@@ -966,6 +976,47 @@ function openDebtPaymentModal(onDone, debtRow) {
       field(`المبلغ (${curInfo(debtRow.currency).name})`, amountIn), field('تاريخ السداد', dateIn),
       field('طريقة الدفع', methodSel), field('ملاحظة', noteIn),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'تسجيل السداد'))),
+  ]);
+}
+
+/* ============================================================
+   دَين سابق للنظام
+   «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها لانو في ديون
+   سابقة بحكم انو النظام جديد»: يُسجَّل الدين على الشخص مباشرةً بلا
+   اشتراك، ثم يُسدَّد بدفعات كبقية الديون.
+   ============================================================ */
+async function openLegacyDebtModal(onDone) {
+  const trainees = await API.get('/api/users?role=trainee').catch(() => []);
+  const traineeSel = searchSelect(trainees.map(traineeOption), { value: '' });
+  const amountIn = input({ type: 'number', min: 1, step: 'any', placeholder: 'قيمة الدين' });
+  const dateIn = input({ type: 'date', value: todayISO() });
+  const reasonIn = input({ placeholder: 'مثال: متبقٍ من اشتراك ٢٠٢٥ قبل النظام' });
+  const noteIn = input({ placeholder: 'ملاحظة (اختياري)' });
+
+  const close = modal('تسجيل دَين سابق للنظام', [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (!traineeSel.value) { toast('اختر المتدرب.', true); return; }
+        try {
+          await API.post('/api/legacy-debts', {
+            traineeId: Number(traineeSel.value), amount: amountIn.value,
+            date: dateIn.value, reason: reasonIn.value, note: noteIn.value,
+          });
+          toast('سُجّل الدين — ويظهر الآن في قائمة الديون المستحقة.');
+          close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      el('div', { class: 'span-2' }, el('div', { class: 'alert alert--info' },
+        'للمتأخرات التي نشأت قبل تشغيل النظام فلا اشتراك لها هنا. '
+        + 'تُسجَّل على الشخص، وتدخل إجمالي الديون، وتُسدَّد بدفعات كبقية الديون.')),
+      el('div', { class: 'span-2' }, field('المتدرب', traineeSel)),
+      field('قيمة الدين', amountIn), field('تاريخ نشوء الدين', dateIn),
+      el('div', { class: 'span-2' }, field('سبب الدين / وصفه', reasonIn)),
+      el('div', { class: 'span-2' }, field('ملاحظة', noteIn)),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الدين'))),
   ]);
 }
 
@@ -1114,6 +1165,30 @@ async function viewTraineePage(root, traineeId) {
       kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
   }
   container.append(statTiles);
+
+  /* ديون ما قبل النظام على هذا المشترك — بلا اشتراك يقابلها.
+     تظهر هنا كي لا يبدو الملف مسدَّدًا وعلى صاحبه متأخرات حقيقية. */
+  if (isMoneyStaff && (data.legacyDebts || []).length) {
+    container.append(el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, 'ديون سابقة للنظام',
+        el('button', { class: 'btn btn--outline btn--sm', onclick: () => openLegacyDebtModal(refreshPage) }, '+ دَين سابق')),
+      el('div', { class: 'sidebar__caption', style: 'padding:0 0 8px' },
+        'متأخرات نشأت قبل تشغيل النظام فلا اشتراك لها — تُسدَّد كبقية الديون.'),
+      dataTable(['التاريخ', 'السبب', 'القيمة', 'المدفوع', 'المتبقي', ''],
+        data.legacyDebts.map((d) => [d.date || '—', d.reason || 'دَين سابق',
+          fmtMoney(d.amount, d.branchId), fmtMoney(d.paid, d.branchId),
+          el('b', { style: d.remaining > 0 ? 'color:var(--status-danger)' : 'color:var(--app-muted)' },
+            fmtMoney(d.remaining, d.branchId)),
+          d.remaining > 0
+            ? el('button', {
+              class: 'btn btn--accent btn--sm',
+              onclick: () => openDebtPaymentModal(refreshPage, {
+                legacyDebtId: d.id, traineeName: t.name, packageName: d.reason || 'دَين سابق للنظام',
+                price: d.amount, paid: d.paid, remaining: d.remaining, currency: undefined,
+              }),
+            }, 'تسجيل سداد')
+            : el('span', { class: 'tag tag--accent' }, 'مسدَّد ✓')]))));
+  }
 
   /* النتائج والمشاكل — رصد داخلي سرّي (الخادم يُرسل null لحساب المتدرب) */
   if (data.flags) container.append(traineeFlagsCard(data, traineeId, refreshPage));

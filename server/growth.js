@@ -146,9 +146,9 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     Store.all('expenses'),
     Store.all('targets'),
     Store.all('branches'),
-    Store.find('payments', { ...scope, subscriptionId: { isNull: false }, date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
-    Store.groupSum('payments', 'amount', 'branchId', { ...scope, subscriptionId: { isNull: false } }),
-    Store.find('payments', { ...scope, subscriptionId: { isNull: false } }, { }),
+    Store.find('payments', { ...scope, date: { gte: prevYear + '-01-01', lte: year + '-12-31' } }),
+    Store.groupSum('payments', 'amount', 'branchId', { ...scope }),
+    Store.find('payments', { ...scope }, { }),
   ]);
   // مؤشرات الحصص وسجل اليوم والنتائج تُحمَّل فقط إن وُجد هدف يعتمدها
   const relevant = (metrics) => targets.some((t) => metrics.includes(t.metric)

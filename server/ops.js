@@ -578,7 +578,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
     const inBranch = (x) => inScopeList(branch, x.branchId);
     const sessions = sessionsAll.filter(delivered).filter(inBranch);
     const absences = sessionsAll.filter((s) => !delivered(s)).filter(inBranch);
-    const scopedPayments = payments.filter((p) => p.subscriptionId != null && inBranch(p));
+    // الدفعة تخصّ اشتراكًا أو دَينًا سابقًا — والاثنان تحصيلٌ حقيقي
+    const scopedPayments = payments.filter(inBranch);
     const scopedEvents = subEvents.filter(inBranch);
     const scopedBranches = branches.filter((b) => inScopeList(branch, b.id));
     const trainees = users.filter((u) => u.role === 'trainee');
@@ -677,7 +678,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         freezeLimit: limit,
         // «التجميد مسموح عدد معين للفرع» — نُظهر التجاوز صراحةً
         freezeOverLimit: limit !== null ? Math.max(0, frozenNow - limit) : 0,
-        collected: payments.filter((p) => p.branchId === b.id && p.subscriptionId != null).reduce((s, p) => s + p.amount, 0),
+        collected: payments.filter((p) => p.branchId === b.id).reduce((s, p) => s + p.amount, 0),
         activeTrainees: new Set(subs.filter((s) => subStatus(s) === 'active').map((s) => s.traineeId)).size,
         endedSubs: ended,
         retentionPct: ended ? Math.min(100, Math.round((renewals / ended) * 100)) : null,
@@ -795,7 +796,7 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     // التحصيل اليومي لكل فرع
     const branchRows = data.branches.map((b) => {
-      const dayPays = data.payments.filter((p) => p.branchId === b.id && p.subscriptionId != null);
+      const dayPays = data.payments.filter((p) => p.branchId === b.id);
       const ev = data.subEvents.filter((e) => e.branchId === b.id);
       return {
         branchId: b.id, branch: b.name,

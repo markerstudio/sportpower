@@ -94,6 +94,27 @@ const SCHEMA = {
     indexes: [['traineeId'], ['branchId'], ['status'], ['endDate'], ['branchId', 'status']],
   },
 
+  /* ============================================================
+     ديون سابقة للنظام — «الديون مش لازم يكون في مدخل سابق لاشتراك عشان
+     يدخلها لانو في ديون سابقة بحكم انو النظام جديد».
+     دَينٌ يُسجَّل على شخص مباشرةً بلا اشتراك يقابله، ويُسدَّد بدفعات
+     كبقية الديون، ويظهر مع ديون الاشتراكات في مصدر واحد.
+     ============================================================ */
+  legacyDebts: {
+    columns: {
+      traineeId: col('int', { notNull: true, ref: ref('users') }),
+      branchId: col('int', { ref: ref('branches', 'setnull') }),
+      amount: col('num', { notNull: true }),
+      /* سبب الدين ووصفه — «اشتراك ٢٠٢٥ قبل النظام»، «حصص خاصة»… */
+      reason: col('text'),
+      date: col('text'),           // تاريخ نشوء الدين
+      note: col('text'),
+      createdBy: col('int'),
+      createdAt: col('text'),
+    },
+    indexes: [['traineeId'], ['branchId'], ['date']],
+  },
+
   payments: {
     columns: {
       subscriptionId: col('int', { ref: ref('subscriptions') }),
@@ -108,10 +129,13 @@ const SCHEMA = {
       createdBy: col('int'),
       /* سداد دين على اشتراك سابق — يُميَّز في السجل ولا يخلط بتحصيل الاشتراك الحالي */
       debt: col('bool', { default: 'false' }),
+      /* دفعة على دَينٍ قديم لا اشتراك له في النظام (legacyDebts) — النظام
+         جديد وعلى بعض المشتركين متأخرات من قبله، فلا اشتراك تُعلَّق عليه. */
+      legacyDebtId: col('int', { ref: ref('legacyDebts', 'setnull') }),
       /* لحظة الإنشاء (ISO) — تكشف الدفعة المكررة خلال ثوانٍ فلا تُسجَّل مرتين */
       createdAt: col('text'),
     },
-    indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date']],
+    indexes: [['date'], ['subscriptionId'], ['traineeId'], ['branchId'], ['branchId', 'date'], ['legacyDebtId']],
   },
 
   sessions: {
@@ -548,7 +572,8 @@ const SCHEMA = {
 /* ترتيب الإنشاء: الجداول المرجعية أولًا حتى تصحّ المفاتيح الأجنبية */
 const CREATE_ORDER = [
   'branches', 'users', 'packages', 'meals', 'rewards', 'settings',
-  'subscriptions', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
+  // legacyDebts قبل payments: الدفعة تشير إليه بمفتاح أجنبي
+  'subscriptions', 'legacyDebts', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'rateLimits', 'trainerLogs', 'tasks', 'targets', 'frozen',
   'subEvents', 'expenses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',

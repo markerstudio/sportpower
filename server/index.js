@@ -1819,6 +1819,9 @@ app.get('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req,
 
 app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req, res) => {
   const { subscriptionId, amount, date, method, note } = req.body;
+  /* دفعة على دَينٍ قديم بلا اشتراك — مسارها الخاص (المبلغ يُقاس على
+     الدين لا على قيمة اشتراك غير موجود). */
+  if (req.body.legacyDebtId) return payLegacyDebt(req, res);
   const sub = await Store.get('subscriptions', Number(subscriptionId));
   if (!sub) return res.status(400).json({ error: 'الاشتراك غير موجود.' });
   if (!branchAllowed(req.user, sub.branchId)) return denyOutOfScope(res);
@@ -1863,18 +1866,148 @@ app.post('/api/payments', auth, requireRole('accountant', 'admin'), h(async (req
 }));
 
 /* ============================================================
+   ديون سابقة للنظام (legacyDebts)
+   «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها لانو في ديون
+   سابقة بحكم انو النظام جديد»: على مشتركين متأخرات نشأت قبل تشغيل
+   النظام، فلا اشتراك في القاعدة تُعلَّق عليه. تُسجَّل هنا على الشخص
+   مباشرةً، وتُسدَّد بدفعات، وتظهر مع ديون الاشتراكات في /api/debts.
+   ============================================================ */
+const legacyRemaining = (debt, paid) => Math.max(0, round3(debt.amount - (paid || 0)));
+
+/* الدين القديم بحساباته — يُستعمل في القائمة وفي السداد */
+async function legacyDebtRows(where = {}) {
+  const [debts, paidByDebt] = await Promise.all([
+    Store.find('legacyDebts', where),
+    Store.groupSum('payments', 'amount', 'legacyDebtId', { legacyDebtId: { isNull: false } }),
+  ]);
+  return debts.map((d) => {
+    const paid = paidByDebt[d.id] || 0;
+    return { ...d, paid, remaining: legacyRemaining(d, paid), settled: legacyRemaining(d, paid) <= 0 };
+  });
+}
+
+app.get('/api/legacy-debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const where = { ...branchWhere(req) };
+  if (req.query.trainee) where.traineeId = Number(req.query.trainee);
+  const rows = await withTraineeNames(await legacyDebtRows(where));
+  const open = rows.filter((r) => !r.settled);
+  const cur = await currencyMap();
+  res.json({
+    rows: rows.sort((a, b) => Number(a.settled) - Number(b.settled) || b.remaining - a.remaining),
+    totals: {
+      count: open.length,
+      people: new Set(open.map((r) => r.traineeId)).size,
+      amount: sumByCurrency(open, cur, (r) => r.remaining),
+    },
+  });
+}));
+
+app.post('/api/legacy-debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const trainee = await Store.get('users', Number(req.body.traineeId));
+  if (!trainee || trainee.role !== 'trainee') return res.status(400).json({ error: 'المتدرب غير موجود.' });
+  /* الفرع فرعُ صاحب الدين — لا فرعًا يُرسله العميل، فلا يُسجَّل محاسبٌ
+     دَينًا خارج نطاقه بتمرير رقم فرع آخر. */
+  if (!branchAllowed(req.user, trainee.branchId)) return denyOutOfScope(res);
+  const amount = posMoney(req.body.amount);
+  if (amount === null) return res.status(400).json({ error: 'قيمة الدين مطلوبة (رقم موجب).' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : todayStr();
+  const row = await Store.insert('legacyDebts', {
+    traineeId: trainee.id, branchId: trainee.branchId,
+    amount: round3(amount),
+    reason: String(req.body.reason || '').trim().slice(0, 200),
+    note: String(req.body.note || '').trim().slice(0, 500),
+    date, createdBy: req.user.id, createdAt: new Date().toISOString(),
+  });
+  res.json(row);
+}));
+
+app.put('/api/legacy-debts/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  const debt = await Store.get('legacyDebts', req.params.id);
+  if (!debt) return res.status(404).json({ error: 'الدين غير موجود.' });
+  if (!branchAllowed(req.user, debt.branchId)) return denyOutOfScope(res);
+  const patch = {};
+  if (req.body.amount !== undefined) {
+    const amount = posMoney(req.body.amount);
+    if (amount === null) return res.status(400).json({ error: 'قيمة الدين رقم موجب.' });
+    /* لا يُخفَّض الدين تحت ما سُدِّد منه — وإلا صار المسدَّد أكبر من الأصل
+       وظهر «متبقٍ سالب» في كل تقرير يقرأه. */
+    const paid = await Store.sum('payments', 'amount', { legacyDebtId: debt.id });
+    if (round3(amount) < round3(paid)) {
+      return res.status(400).json({ error: `سُدِّد من هذا الدين ${round3(paid)} — لا يُخفَّض أصلُه تحتها.` });
+    }
+    patch.amount = round3(amount);
+  }
+  if (req.body.reason !== undefined) patch.reason = String(req.body.reason).trim().slice(0, 200);
+  if (req.body.note !== undefined) patch.note = String(req.body.note).trim().slice(0, 500);
+  if (req.body.date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(req.body.date)) patch.date = req.body.date;
+  res.json(await Store.update('legacyDebts', debt.id, patch));
+}));
+
+app.delete('/api/legacy-debts/:id', auth, requireRole('admin'), h(async (req, res) => {
+  const debt = await Store.get('legacyDebts', req.params.id);
+  if (!debt) return res.status(404).json({ error: 'الدين غير موجود.' });
+  const paid = await Store.find('payments', { legacyDebtId: debt.id });
+  if (paid.length) {
+    return res.status(400).json({
+      error: `على هذا الدين ${paid.length} دفعة مسجَّلة — احذف الدفعات أولًا إن كان الإدخال خطأ.`,
+    });
+  }
+  await Store.remove('legacyDebts', debt.id);
+  res.json({ ok: true });
+}));
+
+/* سداد دين قديم — دفعة كبقية الدفعات، مربوطة بالدين لا باشتراك.
+   السقف والتزامن يُعالَجان كما في دفعة الاشتراك تمامًا. */
+async function payLegacyDebt(req, res) {
+  const debt = await Store.get('legacyDebts', Number(req.body.legacyDebtId));
+  if (!debt) return res.status(400).json({ error: 'الدين القديم غير موجود.' });
+  if (!branchAllowed(req.user, debt.branchId)) return denyOutOfScope(res);
+  const amt = posMoney(req.body.amount);
+  const date = req.body.date;
+  if (amt === null || !date) return res.status(400).json({ error: 'المبلغ والتاريخ مطلوبان (رقم موجب).' });
+  const value = round3(amt);
+  const payMethod = req.body.method || 'كاش';
+
+  // نفس حارس الإرسال المزدوج المستعمل مع دفعات الاشتراكات
+  const twin = (await Store.find('payments', { legacyDebtId: debt.id, amount: value, date, method: payMethod }))
+    .filter(withinDupWindow)
+    .sort((x, y) => y.id - x.id)[0];
+  if (twin) return res.json({ ...twin, duplicate: true, loyaltyPoint: false });
+
+  const payment = await Store.transaction(async (tx) => {
+    const locked = await tx.getForUpdate('legacyDebts', debt.id);
+    const paidBefore = await tx.sum('payments', 'amount', { legacyDebtId: locked.id });
+    const left = round3(locked.amount - paidBefore);
+    if (value > left + 0.001) {
+      throw Object.assign(new Error(left > 0
+        ? `المتبقي من هذا الدين ${left} فقط — لا تُسجَّل دفعة أكبر منه.`
+        : 'هذا الدين مسدَّد بالكامل.'), { status: 400 });
+    }
+    return tx.insert('payments', {
+      subscriptionId: null, legacyDebtId: locked.id, traineeId: locked.traineeId,
+      branchId: locked.branchId, amount: value, date, method: payMethod,
+      note: req.body.note || '', createdBy: req.user.id, debt: true,
+      createdAt: new Date().toISOString(),
+    });
+  });
+  return res.json({ ...payment, loyaltyPoint: false });
+}
+
+/* ============================================================
    الديون — كل اشتراك بقي عليه مبلغ، بأي حالة كان
    كان سداد الدين متعذّرًا لأن قائمة الاختيار لم تعرض إلا الاشتراكات
    المنتهية؛ فمن عليه متأخرات على اشتراكٍ فعّال لم يكن له مكان يُسدَّد فيه.
    هذا المسار يعطي قائمة الديون كاملة (فعّالة ومنتهية) بمصدر واحد.
    ============================================================ */
 app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
-  const [subscriptions, users, branches, paidBySub, cur] = await Promise.all([
+  const [subscriptions, users, branches, paidBySub, cur, legacy] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.all('branches'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
     currencyMap(),
+    // الديون السابقة للنظام تُقرأ من المصدر نفسه — لا شاشة ثانية للدَّين
+    legacyDebtRows(),
   ]);
   const inScope = scopeFilter(req);
   const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
@@ -1897,17 +2030,35 @@ app.get('/api/debts', auth, requireRole('admin', 'accountant'), h(async (req, re
         old: status === 'expired',
       };
     })
-    .filter((r) => r.remaining > 0)
+    .filter((r) => r.remaining > 0);
+
+  /* ديون ما قبل النظام: بلا اشتراك يقابلها، فتُعرض بصفّها الخاص وتُجمع
+     مع البقية — الدَّين دَينٌ سواء عُلِّق على اشتراك أم لا. */
+  const legacyRows = legacy
+    .filter((d) => d.remaining > 0 && inScope(d))
+    .map((d) => ({
+      legacyDebtId: d.id, subscriptionId: null,
+      traineeId: d.traineeId, traineeName: nameOf(d.traineeId), phone: phoneOf(d.traineeId),
+      branchId: d.branchId, branchName: branchOf(d.branchId),
+      packageName: d.reason || 'دَين سابق للنظام',
+      currency: cur.of(d.branchId),
+      price: d.amount, paid: d.paid, remaining: d.remaining,
+      startDate: d.date, endDate: null, status: 'legacy', old: true, legacy: true,
+    }));
+
+  const all = [...rows, ...legacyRows]
     .sort((a, b) => Number(b.old) - Number(a.old) || b.remaining - a.remaining);
 
   res.json({
-    rows,
+    rows: all,
     totals: {
-      count: rows.length,
-      people: new Set(rows.map((r) => r.traineeId)).size,
+      count: all.length,
+      people: new Set(all.map((r) => r.traineeId)).size,
       // مفصَّلًا بالعملة — فروع بعملتين لا يُجمع دَينها في رقم واحد
-      amount: sumByCurrency(rows, cur, (r) => r.remaining),
-      oldAmount: sumByCurrency(rows.filter((r) => r.old), cur, (r) => r.remaining),
+      amount: sumByCurrency(all, cur, (r) => r.remaining),
+      oldAmount: sumByCurrency(all.filter((r) => r.old), cur, (r) => r.remaining),
+      legacyCount: legacyRows.length,
+      legacyAmount: sumByCurrency(legacyRows, cur, (r) => r.remaining),
     },
   });
 }));
@@ -2432,7 +2583,8 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
      الجداول المرجعية الصغيرة (الاشتراكات والمستخدمون) تُحمَّل كما هي. */
   const scope = branch ? { branchId: branch } : {};
   const period = { gte: month + '-01', lte: month + '-31' };
-  const paidScope = { ...scope, subscriptionId: { isNull: false } };
+  /* كل دفعة تخصّ اشتراكًا أو دَينًا سابقًا للنظام — والاثنان تحصيل */
+  const paidScope = { ...scope };
 
   const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub, cur] = await Promise.all([
     Store.find('sessions', { ...scope, date: period }),
@@ -2653,7 +2805,13 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const canSeeMoney = ['admin', 'accountant'].includes(req.user.role)
     || (req.user.role === 'trainee' && req.user.id === id);
   const subIds = subs.map((s) => s.id);
-  const myPayments = canSeeMoney ? payments.filter((p) => subIds.includes(p.subscriptionId)) : null;
+  /* دفعاته: على اشتراكاته أو على دَينٍ سابق للنظام مسجَّل عليه */
+  const myLegacyDebts = canSeeMoney ? await legacyDebtRows({ traineeId: id }) : [];
+  const myLegacyIds = new Set(myLegacyDebts.map((d) => d.id));
+  const myPayments = canSeeMoney
+    ? payments.filter((p) => subIds.includes(p.subscriptionId)
+      || (p.legacyDebtId != null && myLegacyIds.has(p.legacyDebtId)))
+    : null;
   /* المتبقي يُحسب لكل اشتراك على حدة ثم يُجمع — لا بطرح إجمالي المدفوع من
      إجمالي المستحق. الطرح الإجمالي كان يجعل فائض اشتراك ملغى (دفعاته تبقى)
      يمحو دَينًا حقيقيًا على اشتراك آخر، فيظهر المشترك شبه مسدَّد وهو مدين. */
@@ -2663,7 +2821,17 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     const totalDue = counted.reduce((t, s) => t + s.price, 0);
     const totalPaid = payments.filter((p) => subIds.includes(p.subscriptionId)).reduce((t, p) => t + p.amount, 0);
     const remaining = round3(counted.reduce((t, s) => t + Math.max(0, s.price - paidOf(s.id)), 0));
-    return { totalDue, totalPaid, remaining };
+    /* الدَّين السابق للنظام يدخل مستحقّاته وما تبقّى عليه — وإلا بدا
+       الملف مسدَّدًا وعلى صاحبه متأخرات حقيقية. */
+    const legacyDue = round3(myLegacyDebts.reduce((t, d) => t + d.amount, 0));
+    const legacyPaid = round3(myLegacyDebts.reduce((t, d) => t + d.paid, 0));
+    const legacyRemaining = round3(myLegacyDebts.reduce((t, d) => t + d.remaining, 0));
+    return {
+      totalDue: round3(totalDue + legacyDue),
+      totalPaid: round3(totalPaid + legacyPaid),
+      remaining: round3(remaining + legacyRemaining),
+      legacyDue, legacyPaid, legacyRemaining,
+    };
   })() : null;
 
   /* الباقات المتاحة — تظهر على ملف المشترك للتجديد أو الترقية (بلا أسعار للمدرب) */
@@ -2709,6 +2877,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     attendance,
     payments: myPayments,
     finance,
+    legacyDebts: canSeeMoney ? myLegacyDebts : null,
     ratings: myRatings,
     flags: myFlags,
     goals: myGoals,
@@ -2784,7 +2953,7 @@ async function buildMonthlyReport(month, branch) {
     const absenceSessions = all.filter((s) => !delivered(s));
     const absenceSessionIds = new Set(absenceSessions.map((s) => s.id));
     // الفرع محفوظ على الدفعة نفسها — لا حاجة لمطابقتها باشتراكات الفرع واحدةً واحدة
-    const pays = payments.filter((p) => p.branchId === b.id && p.subscriptionId != null && monthOf(p.date) === m);
+    const pays = payments.filter((p) => p.branchId === b.id && monthOf(p.date) === m);
     const appts = appointments.filter((a) => monthOf(a.date) === m && a.branchId === b.id && a.date <= todayStr());
     // الغياب المسجَّل كحصة يُعلِّم موعده «missed» — فلا يُحتسب مرتين
     const missed = absenceSessions.length
@@ -2918,7 +3087,9 @@ async function buildTraineeRoster({ branch, status }) {
       return {
         traineeId: p.traineeId, name: r.name, branchId: bid, branch: branchName(bid),
         date: p.date, amount: p.amount, method: p.method || '',
-        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة` : '',
+        // دفعةُ دَينٍ سابق للنظام تُعرَّف بذلك بدل خانة باقة فارغة
+        packageName: sub ? sub.packageName || `${sub.totalSessions} حصة`
+          : p.legacyDebtId ? 'دَين سابق للنظام' : '',
         subPeriod: sub ? `${sub.startDate} ← ${sub.endDate}` : '',
         note: p.note || '',
       };

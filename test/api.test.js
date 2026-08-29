@@ -385,3 +385,99 @@ test('targets: trainer-performance metrics become measurable goals (hours, offic
   const k = kpis.find((x) => x.trainerId === 2);
   assert.ok(k && k.targetsPct !== null, 'trainer KPI includes the new metric targets');
 });
+
+test('legacy debts: a debt can be recorded and settled with no prior subscription', async () => {
+  /* «الديون مش لازم يكون في مدخل سابق لاشتراك عشان يدخلها» — نظامٌ جديد
+     وعلى مشتركين متأخرات من قبله، فلا اشتراك في القاعدة تُعلَّق عليه. */
+  const onboard = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'مدين قديم', phone: '0599777010', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } });
+  assert.equal(onboard.status, 200, JSON.stringify(onboard.json));
+  const tid = onboard.json.user.id;
+
+  const created = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    traineeId: tid, amount: 500, date: '2025-11-02', reason: 'متبقٍ من اشتراك ٢٠٢٥',
+  } });
+  assert.equal(created.status, 200, 'legacy debt accepted with no subscription');
+  const debtId = created.json.id;
+
+  // يظهر في مصدر الديون الواحد مع ديون الاشتراكات
+  const debts = (await req('GET', '/api/debts', { token: S.admin })).json;
+  const row = debts.rows.find((r) => r.legacyDebtId === debtId);
+  assert.ok(row, 'legacy debt appears in /api/debts');
+  assert.equal(row.remaining, 500);
+  assert.equal(row.subscriptionId, null, 'it is not tied to any subscription');
+  assert.ok(debts.totals.legacyCount >= 1);
+
+  // يُسدَّد بدفعة كبقية الديون
+  const pay = await req('POST', '/api/payments', { token: S.admin, body: {
+    legacyDebtId: debtId, amount: 200, date: '2026-08-21', method: 'كاش',
+  } });
+  assert.equal(pay.status, 200, 'payment against a legacy debt is accepted');
+  assert.equal(pay.json.subscriptionId, null);
+
+  const after = (await req('GET', '/api/debts', { token: S.admin })).json;
+  assert.equal(after.rows.find((r) => r.legacyDebtId === debtId).remaining, 300);
+
+  // ولا تُقبل دفعة أكبر من المتبقي
+  const over = await req('POST', '/api/payments', { token: S.admin, body: {
+    legacyDebtId: debtId, amount: 1000, date: '2026-08-21',
+  } });
+  assert.equal(over.status, 400, 'over-payment on a legacy debt is refused');
+
+  // ولا يُخفَّض أصل الدين تحت ما سُدِّد منه
+  const shrink = await req('PUT', '/api/legacy-debts/' + debtId, { token: S.admin, body: { amount: 50 } });
+  assert.equal(shrink.status, 400, 'principal cannot drop below what was paid');
+
+  // وسداد الدين القديم تحصيلٌ حقيقي يظهر في ملف صاحبه
+  const overview = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(overview.finance.legacyRemaining, 300);
+  assert.ok(overview.payments.some((p) => p.legacyDebtId === debtId));
+});
+
+test('targets: a personal goal can be set for the accountant and for sales', async () => {
+  const month = '2026-08';
+  const acc = (await req('GET', '/api/users?role=accountant', { token: S.admin })).json;
+  assert.ok(acc.length, 'an accountant account exists');
+  const accId = acc[0].id;
+
+  // التحصيل على المحاسبة يُقاس بفروعها (by=branch) لا بما سجّلته بيدها
+  assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'user', refId: accId, metric: 'revenue', period: month, value: 5000,
+  } })).status, 200, 'accountant revenue target accepted');
+
+  // ومؤشرات المبيعات تُقاس على من سجّل الأرقام (by=person)
+  for (const metric of ['leads', 'tests', 'closingRate', 'unfreezes', 'renewals']) {
+    assert.equal((await req('POST', '/api/targets', { token: S.admin, body: {
+      scope: 'user', refId: accId, metric, period: month, value: metric === 'closingRate' ? 40 : 10,
+    } })).status, 200, metric + ' target accepted on a person');
+  }
+
+  // مؤشر تدريبي بحت لا يُقبل على نطاق «فرع» — لا معنى له هناك
+  const bad = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'branch', refId: 1, metric: 'sessions', period: month, value: 10,
+  } });
+  assert.equal(bad.status, 200, 'sessions is measurable per branch');
+  const badScope = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'trainer', refId: 2, metric: 'closingRate', period: month, value: 40,
+  } });
+  assert.equal(badScope.status, 400, 'closing rate is not a trainer metric');
+
+  // وصاحب هدفٍ غير موجود يُرفض بدل أن يظهر صفرًا أبدًا
+  const ghost = await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'user', refId: 999999, metric: 'revenue', period: month, value: 100,
+  } });
+  assert.equal(ghost.status, 400, 'a target on a non-existent person is refused');
+
+  // والمحاسبة تظهر في KPI الموظفين بنسبتها — لا المدربون وحدهم
+  const kpis = (await req('GET', '/api/kpi?month=' + month, { token: S.admin })).json;
+  const mine = kpis.find((k) => k.trainerId === accId);
+  assert.ok(mine, 'the accountant now has a KPI row');
+  assert.equal(mine.role, 'accountant');
+  assert.ok(mine.targetsPct !== null, 'and a measured completion percentage');
+
+  // ونفس الأهداف تظهر مجمَّعة في لوحة KPI الواحدة
+  const board = (await req('GET', '/api/kpi/board?month=' + month, { token: S.admin })).json;
+  assert.ok((board.staffTargets || []).some((x) => x.userId === accId), 'staff targets are on the KPI board');
+});
