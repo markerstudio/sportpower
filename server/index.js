@@ -54,6 +54,8 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
     "font-src 'self' https://fonts.gstatic.com; " +
     "img-src 'self' data: blob:; connect-src 'self'; " +
+    // لا مكوّنات خارجية ولا إطارات: النظام صفحةٌ واحدة بأصلٍ واحد
+    "object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; " +
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   next();
 });
@@ -1292,7 +1294,7 @@ app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req,
       price: obPrice,
       startDate: subscription.startDate, endDate: subscription.endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: req.user.id,
     });
     await tx.insert('subEvents', {
       subscriptionId: sub.id, traineeId: user.id, branchId: user.branchId, type: 'new', date: todayStr(),
@@ -1446,10 +1448,13 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant', 'trainer
   const mine = await Store.find('subscriptions', { traineeId: trainee.id });
   const prior = mine.length > 0;
   if (renewingTrainer) {
-    // فرعه هو — لا يُجدِّد لمشترك في فرع آخر
-    if (req.user.branchId != null && Number(trainee.branchId) !== Number(req.user.branchId)) {
-      return denyOutOfScope(res);
+    /* فرعه هو — لا يُجدِّد لمشترك في فرع آخر. ومدرّبٌ بلا فرع مُسنَد
+       لا يُجدِّد لأحد: «بلا فرع» هنا تعني «كل الفروع» وهو توسيعٌ صامت
+       لصلاحيةٍ مُنحت لتغطية فرعٍ واحد. */
+    if (req.user.branchId == null) {
+      return res.status(403).json({ error: 'حسابك بلا فرع مُسنَد — راجع الإدارة لإسناد فرعك قبل التجديد.' });
     }
+    if (Number(trainee.branchId) !== Number(req.user.branchId)) return denyOutOfScope(res);
     // تجديدٌ لا فتحُ زبون جديد: من لا اشتراك سابق له يُفتح من الاستقبال
     if (!prior) {
       return res.status(403).json({
@@ -1477,7 +1482,7 @@ app.post('/api/subscriptions', auth, requireRole('admin', 'accountant', 'trainer
       totalSessions: nSessions, usedSessions: 0, price: nPrice,
       startDate, endDate, status: 'active',
       packageId: pkg ? pkg.id : null, packageName: pkg ? pkg.name : null,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), createdBy: req.user.id,
     });
     await tx.insert('subEvents', {
       subscriptionId: created.id, traineeId: trainee.id, branchId: trainee.branchId,
@@ -2381,9 +2386,19 @@ app.post('/api/inbody', auth, requireRole('admin', 'trainer'), h(async (req, res
 }));
 
 /* محاولة قراءة الصورة تلقائيًا OCR — مع رجوع آمن للإدخال اليدوي */
+/* الملفّ الصحّي بلا عمود فرع على صفّه — فرعُه فرعُ صاحبه.
+   تقييدُ الفرع مبنيٌّ على branchId، فسجلٌّ لا يحمله كان يمرّ بلا تقييد.
+   يُستعمل قبل كل تعديل أو حذف لسجلّ صحّي (قراءة، صورة، خطة غذائية). */
+async function ownerBranchAllowed(user, traineeId) {
+  if (traineeId == null) return true;
+  const owner = await Store.get('users', traineeId);
+  return branchAllowed(user, owner ? owner.branchId : null);
+}
+
 app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const reading = await Store.get('inbody', req.params.id);
   if (!reading) return res.status(404).json({ error: 'القراءة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, reading.traineeId))) return denyOutOfScope(res);
   const patch = {};
   if (req.body.date !== undefined) patch.date = req.body.date;
   if (req.body.notes !== undefined) patch.notes = req.body.notes;
@@ -2397,6 +2412,7 @@ app.put('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, 
 app.delete('/api/inbody/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const reading = await Store.get('inbody', req.params.id);
   if (!reading) return res.status(404).json({ error: 'القراءة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, reading.traineeId))) return denyOutOfScope(res);
   await Store.remove('inbody', reading.id);
   res.json({ ok: true });
 }));
@@ -2439,6 +2455,7 @@ app.post('/api/trainee-photos', auth, requireRole('admin', 'trainer'), h(async (
 app.delete('/api/trainee-photos/:id', auth, requireRole('admin', 'trainer'), h(async (req, res) => {
   const photo = await Store.get('traineePhotos', req.params.id);
   if (!photo) return res.status(404).json({ error: 'الصورة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, photo.traineeId))) return denyOutOfScope(res);
   await Store.remove('traineePhotos', photo.id);
   res.json({ ok: true });
 }));
@@ -2615,7 +2632,10 @@ app.post('/api/meal-plans', auth, requireRole('admin', 'trainer', 'nutritionist'
 }));
 
 app.delete('/api/meal-plans/:id', auth, requireRole('admin', 'trainer', 'nutritionist'), h(async (req, res) => {
-  await Store.remove('mealPlans', req.params.id);
+  const plan = await Store.get('mealPlans', req.params.id);
+  if (!plan) return res.status(404).json({ error: 'الخطة غير موجودة.' });
+  if (!(await ownerBranchAllowed(req.user, plan.traineeId))) return denyOutOfScope(res);
+  await Store.remove('mealPlans', plan.id);
   res.json({ ok: true });
 }));
 

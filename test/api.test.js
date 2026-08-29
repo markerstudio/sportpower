@@ -585,3 +585,82 @@ test('inbody: a wrong reading can be corrected and deleted', async () => {
   const left = (await req('GET', '/api/inbody?trainee=' + tid, { token: S.admin })).json;
   assert.equal(left.length, 0);
 });
+
+test('security: bodies cannot smuggle extra fields or pollute prototypes', async () => {
+  /* من أشهر ما يسقط فيه الكود المولَّد: نسخُ جسم الطلب كما هو إلى الصف
+     المخزَّن. هنا كل صفٍّ يُبنى بحقوله المسمّاة، فما لم يُسمَّ لا يُخزَّن. */
+  const ob = await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'حقول مهرّبة', phone: '0599777040', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } });
+  const tid = ob.json.user.id;
+
+  // معرّف مفروض وفرع مفروض لا يُقبلان — الفرع يُقرأ من حساب صاحب الدين
+  const debt = await req('POST', '/api/legacy-debts', { token: S.admin, body: {
+    traineeId: tid, amount: 100, id: 999999, createdBy: 4242, branchId: 99999, evil: 'x',
+  } });
+  assert.equal(debt.status, 200);
+  assert.notEqual(debt.json.id, 999999, 'a forced id is ignored');
+  assert.equal(debt.json.branchId, 1, 'the branch comes from the trainee, not the body');
+  assert.equal(debt.json.evil, undefined, 'unknown fields are not stored');
+
+  // إنشاء مستخدم بصلاحيات مهرّبة في جسم الطلب
+  const u = await req('POST', '/api/users', { token: S.admin, body: {
+    username: 'smuggle1', password: 'temp-pass-123', name: 'S', role: 'trainee',
+    canRenew: true, canSeePrices: true, mfaExempt: true, active: true,
+  } });
+  assert.equal(u.json.canRenew, false, 'permissions are not granted at creation from the body');
+  assert.equal(u.json.mfaExempt, false);
+
+  // تلويث النموذج الأولي عبر JSON — يمرّ الطلب ولا يُلوَّث شيء
+  const res = await fetch(base + '/api/legacy-debts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.admin },
+    body: `{"traineeId":${tid},"amount":25,"__proto__":{"pollutedByTest":"yes"}}`,
+  });
+  assert.ok(res.status < 500);
+  assert.equal({}.pollutedByTest, undefined, 'Object.prototype stays clean');
+});
+
+test('security: a trainee sees only their own records, whatever id they ask for', async () => {
+  // متدربان ننشئهما هنا — لا نعتمد على حالة تركتها اختبارات سابقة
+  const mk = async (username, name, phone) => (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name, phone, branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2026-08-01', endDate: '2026-10-01' },
+  } })).json.user;
+  const a = await mk('bolaA', 'ضحية أ', '0599777051');
+  const b = await mk('bolaB', 'ضحية ب', '0599777052');
+  assert.ok(a && b, 'two trainees created');
+
+  await req('PUT', '/api/users/' + a.id, { token: S.admin, body: { password: 'trainee-temp-1' } });
+  const temp = await login(a.username, 'trainee-temp-1');
+  assert.ok(temp.token, 'the trainee can log in with the temporary password');
+  await req('POST', '/api/me/password', {
+    token: temp.token, body: { current: 'trainee-temp-1', next: 'trainee-own-pass-1' },
+  });
+  const tok = (await login(a.username, 'trainee-own-pass-1')).token;
+  assert.ok(tok, 'and again with their own');
+
+  // سجلّ صحّي لكلٍّ منهما كي يكون هناك ما يُسرَّب أصلًا
+  for (const t of [a, b]) {
+    await req('POST', '/api/inbody', { token: S.admin, body: { traineeId: t.id, date: '2026-08-05', weight: 80 } });
+  }
+
+  // ملف غيره مرفوض صراحةً
+  assert.equal((await req('GET', `/api/trainee/${b.id}/overview`, { token: tok })).status, 403);
+
+  // وطلبُ سجلات غيره بالمعرّف يعود بسجلاته هو لا بسجلات غيره
+  for (const path of ['/api/inbody', '/api/meal-plans', '/api/trainee-photos', '/api/sessions', '/api/subscriptions']) {
+    const r = await req('GET', `${path}?trainee=${b.id}`, { token: tok });
+    const rows = Array.isArray(r.json) ? r.json : (r.json && r.json.rows) || [];
+    assert.ok(rows.every((x) => x.traineeId === undefined || x.traineeId === a.id),
+      `${path} never returns another trainee's rows`);
+  }
+
+  // والرصد الداخلي (النتائج والمشاكل) لا يفتح للمتدرب إطلاقًا
+  assert.equal((await req('GET', `/api/trainee-flags?trainee=${b.id}`, { token: tok })).status, 403);
+
+  // ولا كتابة على أحد
+  assert.equal((await req('POST', '/api/inbody', { token: tok, body: { traineeId: b.id, date: '2026-08-01', weight: 70 } })).status, 403);
+  assert.equal((await req('PUT', '/api/users/' + b.id, { token: tok, body: { name: 'x' } })).status, 403);
+});
