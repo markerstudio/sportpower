@@ -26,7 +26,7 @@ async function viewPackages(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
   // نوع الباقات المعروض في العنوان — لا يضيع بالتحديث
-  const state = urlState({ cat: '' });
+  const state = urlState({ cat: '', branch: '' });
 
   // موضع الصفحة يبقى بعد كل حفظ باقة أو عقد — لا تُرمى للأعلى
   const render = (...a) => keepScroll(() => build(...a));
@@ -34,7 +34,7 @@ async function viewPackages(root) {
   async function build() {
     container.innerHTML = '';
     container.append(spinnerCard());
-    const [packages, contracts, branches, settings] = await Promise.all([
+    const [allPackages, allContracts, branches, settings] = await Promise.all([
       API.get('/api/packages'),
       API.get('/api/contracts'),
       API.get('/api/branches'),
@@ -42,8 +42,18 @@ async function viewPackages(root) {
     ]);
     OPS_SETTINGS.waCountryCode = settings.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
     container.innerHTML = '';
+    const bid = Number(state.branch) || null;
+    const packages = bid ? allPackages.filter((p) => !p.branchId || p.branchId === bid) : allPackages;
+    const contracts = bid ? allContracts.filter((c) => Number(c.branchId) === bid) : allContracts;
 
+    /* الباقات حسب الفرع: منتقي الفرع يقصر القائمة على باقاته (والباقات
+       العامة) — بطلب العميل: «لازم حسب الفرع». */
+    const branchFilter = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])], {
+      value: state.branch || '', style: 'width:180px',
+      onchange: (e) => { state.branch = e.target.value; state.sync(); render(); },
+    });
     container.append(el('div', { class: 'card filters' },
+      branches.length > 1 ? field('الفرع', branchFilter) : el('span'),
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openContractModal(render, branches) }, '+ فتح عقد لزبون جديد'),
       el('button', { class: 'btn btn--outline', onclick: () => openPackageModal(render, branches) }, '+ باقة جديدة')));
@@ -171,7 +181,7 @@ function packageCard(p, branches, onDone) {
     el('div', { class: 'meal-card__head' },
       el('h4', {}, p.name),
       p.active === false ? el('span', { class: 'tag tag--neutral' }, 'موقوفة') : el('span', { class: 'tag tag--accent' }, 'متاحة')),
-    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price) : '—'),
+    el('div', { class: 'pkg-card__price' }, p.price !== undefined ? fmtMoney(p.price, p.currency || p.branchId || undefined) : '—'),
     el('div', { class: 'macros' },
       el('span', { class: 'macro' }, el('b', {}, categoryLabel(p.category || 'personal'))),
       el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
@@ -181,7 +191,7 @@ function packageCard(p, branches, onDone) {
     p.description ? el('p', { class: 'meal-card__desc' }, p.description) : '',
     features.length ? el('ul', { class: 'pkg-card__features' }, ...features.map((f) => el('li', {}, f))) : '',
     p.price !== undefined && p.sessions
-      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions))}`)
+      ? el('div', { style: 'font-size:12px;color:var(--app-muted)' }, `سعر الحصة: ${fmtMoney(Math.round(p.price / p.sessions), p.currency || p.branchId || undefined)}`)
       : '',
     el('div', { style: 'display:flex;gap:6px;margin-top:auto;flex-wrap:wrap' },
       el('button', { class: 'btn btn--outline btn--sm', onclick: () => openPackageModal(onDone, branches, p) }, 'تعديل'),
@@ -246,7 +256,12 @@ function openPackageModal(onDone, branches, existing) {
 
 /* --- عقد جديد: إنشاء الرابط ومشاركته --- */
 function openContractModal(onDone, branches) {
-  const branchSel = select([['', 'كل الفروع'], ...branches.map((b) => [b.id, b.name])]);
+  /* العقد لفرعٍ بعينه: باقاتُه باقاتُ الفرع وعملتُه عملةُ الفرع — لا «كل الفروع» */
+  const branchSel = select(branches.map((b) => [b.id, b.name]),
+    API.user.branchId && branches.some((b) => b.id === API.user.branchId) ? { value: API.user.branchId } : {});
+  const contractCurLabel = el('div', { style: 'font-size:12px;color:var(--app-muted)' });
+  const syncContractCur = () => { contractCurLabel.textContent = `تُعرض للزبون باقات هذا الفرع بعملته: ${curInfo(branchCurrency(Number(branchSel.value) || null)).name}.`; };
+  branchSel.addEventListener('change', syncContractCur); syncContractCur();
   const nameIn = input({ placeholder: 'اسم الزبون (اختياري — يساعد بالمتابعة)' });
   const phoneIn = input({ placeholder: '05XXXXXXXX (لإرسال الرابط واتساب)', dir: 'ltr', style: 'text-align:end' });
   const daysIn = input({ type: 'number', min: 1, max: 180, value: 14 });
@@ -261,8 +276,9 @@ function openContractModal(onDone, branches) {
       onsubmit: async (e) => {
         e.preventDefault();
         try {
+          if (!branchSel.value) { toast('اختر فرع العقد أولًا.', true); return; }
           const c = await API.post('/api/contracts', {
-            branchId: branchSel.value || null, prospectName: nameIn.value,
+            branchId: Number(branchSel.value), prospectName: nameIn.value,
             prospectPhone: phoneIn.value, validDays: daysIn.value, note: noteIn.value,
           });
           showLink(c);
@@ -274,6 +290,7 @@ function openContractModal(onDone, branches) {
         'الرابط يفتحه الزبون بلا حساب — يشاهد كل الباقات بأسعارها وشروط الاشتراك، يختار باقته ويعبّي بياناته. '
         + 'ثم تظهر لك بياناته هنا لتحوّله لمشترك بضغطة.')),
       field('الفرع', branchSel), field('صلاحية الرابط (يوم)', daysIn),
+      el('div', { class: 'span-2' }, contractCurLabel),
       field('اسم الزبون', nameIn), field('جوال الزبون', phoneIn),
       el('div', { class: 'span-2' }, field('ملاحظة داخلية', noteIn)),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--lg btn--full', type: 'submit' }, 'إنشاء رابط العقد'))));
@@ -311,7 +328,8 @@ function submittedContractCard(c, onDone) {
       el('span', { class: 'macro' }, 'الجوال ', el('b', { dir: 'ltr' }, s.phone || '—')),
       el('span', { class: 'macro' }, 'الفرع ', el('b', {}, c.branchName)),
       el('span', { class: 'macro' }, 'الحصص ', el('b', {}, String(s.sessions))),
-      el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(s.price))),
+      el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(s.price, s.currency || c.currency || c.branchId))),
+      s.packageCategoryLabel ? el('span', { class: 'macro' }, 'النوع ', el('b', {}, s.packageCategoryLabel)) : '',
       el('span', { class: 'macro' }, 'الهدف ', el('b', {}, GOAL_LABELS[s.goal] || '—')),
       s.birthDate ? el('span', { class: 'macro' }, 'الميلاد ', el('b', {}, s.birthDate)) : ''),
     s.healthNotes ? el('div', { class: 'ac-card__reason' }, el('b', {}, 'ملاحظات صحية: '), s.healthNotes) : '',
@@ -346,15 +364,19 @@ function traineePackagesCard(data, traineeId, onDone) {
   const canRenew = ['admin', 'accountant'].includes(API.user.role);
   const showPrices = data.showPrices !== false;
 
+  const traineeCur = data.currency || branchCurrency(data.trainee && data.trainee.branchId);
   const currentBox = sub
     ? el('div', { class: 'pkg-current' },
-      el('div', { style: 'font-family:var(--font-display);font-weight:900;color:var(--app-ink);font-size:1.05rem' },
-        sub.packageName || `اشتراك ${sub.totalSessions} حصة`),
+      el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' },
+        el('div', { style: 'font-family:var(--font-display);font-weight:900;color:var(--app-ink);font-size:1.05rem' },
+          sub.packageName || `اشتراك ${sub.totalSessions} حصة`),
+        // نوع الباقة (شخصي/مجموعات/توفير) يُقرأ على الاشتراك نفسه
+        sub.packageCategoryLabel ? el('span', { class: 'tag tag--petrol' }, sub.packageCategoryLabel) : ''),
       el('div', { class: 'macros', style: 'margin-top:8px' },
         el('span', { class: 'macro' }, 'الحصص ', el('b', {}, String(sub.totalSessions))),
         el('span', { class: 'macro' }, 'المستخدمة ', el('b', {}, String(sub.usedSessions))),
         el('span', { class: 'macro' }, 'المتبقية ', el('b', {}, String(sub.remaining))),
-        showPrices && sub.price !== undefined ? el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(sub.price))) : '',
+        showPrices && sub.price !== undefined ? el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(sub.price, sub.currency || traineeCur))) : '',
         el('span', { class: 'macro' }, 'من ', el('b', {}, sub.startDate)),
         el('span', { class: 'macro' }, 'إلى ', el('b', {}, sub.endDate)),
         statusTag(sub.status, sub.expiring)))
@@ -363,14 +385,23 @@ function traineePackagesCard(data, traineeId, onDone) {
   /* بطاقات الباقات تُبنى مرة وتُعرض داخل اللوح الجانبي عند الطلب —
      كانت مفرودةً في الصفحة فتبتلع «صفحتي» كلها تحت الاشتراك الحالي،
      والمشترك يفتح صفحته ليرى رصيده لا ليتصفّح المعروضات. */
+  /* «يوم تعرض الباقات ع صفحة المتدرب لازم تحكي إنه هاي مجموعة وهاي هيك»:
+     الباقات مجمَّعة بنوعها — تدريب شخصي / مجموعات / توفير — بعنوانٍ لكل
+     نوع ووسمٍ على كل بطاقة، لا قائمةً واحدة مختلطة. */
   const grid = el('div', { class: 'pkg-drawer-list' });
-  (data.packages || []).forEach((p) => {
+  const pkgs = data.packages || [];
+  const cats = (data.packageCategories && data.packageCategories.length)
+    ? data.packageCategories
+    : PACKAGE_CATEGORIES.map(([key, label]) => ({ key, label, count: pkgs.filter((p) => (p.category || 'personal') === key).length })).filter((c) => c.count);
+  const pkgCard = (p) => {
     const isCurrent = sub && sub.packageId === p.id;
-    grid.append(el('div', { class: 'card meal-card pkg-card' + (isCurrent ? ' pkg-card--current' : '') },
+    return el('div', { class: 'card meal-card pkg-card' + (isCurrent ? ' pkg-card--current' : '') },
       el('div', { class: 'meal-card__head' },
         el('h4', {}, p.name),
-        isCurrent ? el('span', { class: 'tag tag--accent' }, 'باقته الحالية') : ''),
-      showPrices && p.price !== undefined ? el('div', { class: 'pkg-card__price' }, fmtMoney(p.price)) : '',
+        el('span', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
+          el('span', { class: 'tag tag--petrol' }, p.categoryLabel || categoryLabel(p.category || 'personal')),
+          isCurrent ? el('span', { class: 'tag tag--accent' }, 'باقته الحالية') : '')),
+      showPrices && p.price !== undefined ? el('div', { class: 'pkg-card__price' }, fmtMoney(p.price, p.currency || traineeCur)) : '',
       el('div', { class: 'macros' },
         el('span', { class: 'macro' }, el('b', {}, String(p.sessions)), ' حصة'),
         el('span', { class: 'macro' }, 'المدة ', el('b', {}, (p.durationDays || 30) + ' يوم')),
@@ -382,20 +413,35 @@ function traineePackagesCard(data, traineeId, onDone) {
           class: 'btn btn--accent btn--sm', style: 'margin-top:auto',
           onclick: async () => openSubModal(onDone, await API.get('/api/users?role=trainee'), traineeId, p),
         }, 'تفعيل هذه الباقة')
-        : el('span')));
+        : el('span'));
+  };
+  cats.forEach((c) => {
+    const list = pkgs.filter((p) => (p.category || 'personal') === c.key);
+    if (!list.length) return;
+    grid.append(el('h4', {
+      style: 'margin:6px 0 0;font-family:var(--font-display);font-weight:800;color:var(--accent-hover)',
+    }, `${c.label} (${list.length})`));
+    list.forEach((p) => grid.append(pkgCard(p)));
   });
 
-  const count = (data.packages || []).length;
+  const count = pkgs.length;
   const openPackages = () => modal(`الباقات المتاحة (${count})`, [
     el('div', { class: 'sidebar__caption', style: 'padding:0 0 4px' },
-      'للتجديد أو الترقية' + (showPrices ? '' : ' — الأسعار متاحة للإدارة والمحاسب فقط')),
+      `باقات فرع ${data.branchName || 'المشترك'} بعملته (${curInfo(traineeCur).name}) — للتجديد أو الترقية`
+      + (showPrices ? '' : ' — الأسعار متاحة للإدارة والمحاسب فقط')),
     grid,
   ], { drawer: true });
+  /* ملخّص الأنواع ظاهرٌ على الصفحة قبل فتح اللوح: كم باقة من كل نوع */
+  const catSummary = count
+    ? el('div', { class: 'macros', style: 'margin-top:10px' },
+      ...cats.map((c) => el('span', { class: 'macro' }, c.label + ' ', el('b', {}, String(c.count)))))
+    : '';
 
   return el('div', { class: 'card' },
     el('h3', { class: 'card__title' }, 'الاشتراك والباقات',
       !showPrices ? el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' }, 'الأسعار متاحة للإدارة والمحاسب فقط') : ''),
     currentBox,
+    catSummary,
     count
       ? el('button', {
         class: 'btn btn--outline', type: 'button',
@@ -664,7 +710,7 @@ async function viewPublicContract(root, token) {
       body.append(el('div', { class: 'macros', style: 'margin-top:14px' },
         el('span', { class: 'macro' }, 'الاسم ', el('b', {}, data.submission.name)),
         el('span', { class: 'macro' }, 'الباقة ', el('b', {}, data.submission.packageName)),
-        el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(data.submission.price)))));
+        el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(data.submission.price, data.submission.currency || data.currency)))));
     }
     return;
   }
@@ -708,10 +754,10 @@ async function viewPublicContract(root, token) {
         onclick: () => { selectedId = p.id; drawPackages(); drawSummary(); },
       },
         el('div', { class: 'public-pkg__name' }, p.name),
-        el('div', { class: 'public-pkg__price' }, fmtMoney(p.price)),
+        el('div', { class: 'public-pkg__price' }, fmtMoney(p.price, p.currency || data.currency)),
         el('div', { class: 'public-pkg__meta' },
           `${p.sessions} حصة · ${p.durationDays || 30} يوم` + (p.sessionsPerWeek ? ` · ${p.sessionsPerWeek} أسبوعيًا` : '')),
-        el('div', { class: 'public-pkg__meta' }, `سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions))}`),
+        el('div', { class: 'public-pkg__meta' }, `سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions), p.currency || data.currency)}`),
         p.description ? el('div', { class: 'public-pkg__desc' }, p.description) : '',
         (p.features || '')
           ? el('ul', { class: 'pkg-card__features' }, ...(p.features || '').split('\n').filter(Boolean).map((f) => el('li', {}, f)))
@@ -727,8 +773,8 @@ async function viewPublicContract(root, token) {
     summaryBox.append(
       el('b', {}, 'ملخص اشتراكك: '),
       `${p.name} — ${p.sessions} حصة خلال ${p.durationDays || 30} يومًا، القيمة الإجمالية `,
-      el('b', {}, fmtMoney(p.price)),
-      ` (سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions))}).`,
+      el('b', {}, fmtMoney(p.price, p.currency || data.currency)),
+      ` (سعر الحصة ${fmtMoney(Math.round(p.price / p.sessions), p.currency || data.currency)}).`,
       el('div', { style: 'margin-top:6px' },
         el('span', { class: 'tag tag--accent' }, 'نوع التدريب: ' + categoryLabel(p.category || 'personal'))));
   }
@@ -785,7 +831,7 @@ async function viewPublicContract(root, token) {
           body.innerHTML = '';
           body.append(
             el('div', { class: 'alert alert--info' },
-              `✅ تم إرسال طلبك بنجاح — اخترت «${res.packageName}»${res.categoryLabel ? ` (${res.categoryLabel})` : ''} — ${res.sessions} حصة بقيمة ${fmtMoney(res.price)}.`),
+              `✅ تم إرسال طلبك بنجاح — اخترت «${res.packageName}»${res.categoryLabel ? ` (${res.categoryLabel})` : ''} — ${res.sessions} حصة بقيمة ${fmtMoney(res.price, res.currency || data.currency)}.`),
             el('div', { style: 'text-align:center;padding:24px 8px' },
               el('div', { style: 'font-family:var(--font-display);font-weight:900;font-size:1.3rem;color:var(--app-ink)' }, 'أهلًا بك في سبورت باور 💪'),
               el('div', { style: 'font-family:var(--font-display);font-weight:800;color:var(--accent-hover);letter-spacing:.06em;margin-top:4px' }, 'change your life'),

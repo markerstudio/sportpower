@@ -830,6 +830,45 @@ function outstandingTotal(subs, paidBySub) {
     .reduce((t, s) => t + outstandingOf(s, paidBySub[s.id]), 0));
 }
 
+/* ------------------------------------------------------------
+   التحصيل: المطلوب والمحصَّل والمتبقي — بطلب العميل
+   «بدنا يكون المبلغ المطلوب، والمحصل، والمتبقي. التحصيل من الفعالين،
+   أو إذا حد من المجمدين دفع كمان يحسبهم».
+   المطلوب = قيمة الاشتراكات الفعّالة الآن + المجمّدة التي دُفع عليها شيء.
+   المحصَّل = ما دُفع على هذه الاشتراكات نفسها. المتبقي = الفرق.
+   كلٌّ بعملة فرعه — ولا يُجمع الدينار على الشيكل.
+   ------------------------------------------------------------ */
+const countsTowardCollection = (r) => r.status === 'active' || (r.status === 'frozen' && Number(r.paid) > 0);
+function collectionSummary(rows, cur, branches) {
+  const counted = rows.filter(countsTowardCollection);
+  const sums = (list) => {
+    const required = sumByCurrency(list, cur, (r) => r.price);
+    const collected = sumByCurrency(list, cur, (r) => Math.min(Number(r.paid) || 0, Number(r.price) || 0));
+    const remaining = {};
+    for (const c of new Set([...Object.keys(required), ...Object.keys(collected)])) {
+      remaining[c] = roundMoney(Math.max(0, (required[c] || 0) - (collected[c] || 0)), c);
+    }
+    return { required, collected, remaining };
+  };
+  const one = (m) => Object.values(m)[0] || 0;
+  return {
+    ...sums(counted),
+    subs: counted.length,
+    active: counted.filter((r) => r.status === 'active').length,
+    frozenPaid: counted.filter((r) => r.status === 'frozen').length,
+    byBranch: (branches || []).map((b) => {
+      const mine = counted.filter((r) => r.branchId === b.id);
+      const t = sums(mine);
+      return {
+        branchId: b.id, branch: b.name, currency: cur.of(b.id),
+        required: one(t.required), collected: one(t.collected), remaining: one(t.remaining),
+        active: mine.filter((r) => r.status === 'active').length,
+        frozenPaid: mine.filter((r) => r.status === 'frozen').length,
+      };
+    }).filter((b) => b.active || b.frozenPaid),
+  };
+}
+
 const DUP_WINDOW_MS = 2 * 60 * 1000;
 const withinDupWindow = (row) => {
   if (!row || !row.createdAt) return false;
@@ -945,10 +984,13 @@ app.get('/api/branches', auth, h(async (req, res) => {
 app.post('/api/branches', auth, requireRole('admin'), h(async (req, res) => {
   const { name, address, phone } = req.body;
   if (!name) return res.status(400).json({ error: 'اسم الفرع مطلوب.' });
+  /* لكل فرع عملته الصريحة — الفرع الجديد بلا عملة يأخذ عملة النظام
+     الحالية مكتوبةً عليه، فلا ينقلب رقمه إن تغيّر الإعداد العام لاحقًا. */
+  const { fallback } = await currencyMap();
   res.json(await Store.insert('branches', {
     name, address: address || '', phone: phone || '',
     freezeLimit: Number(req.body.freezeLimit) > 0 ? Number(req.body.freezeLimit) : null,
-    currency: CURRENCIES.includes(req.body.currency) ? req.body.currency : null,
+    currency: CURRENCIES.includes(req.body.currency) ? req.body.currency : fallback,
   }));
 }));
 
@@ -957,12 +999,14 @@ app.put('/api/branches/:id', auth, requireRole('admin'), h(async (req, res) => {
   if (!branch) return res.status(404).json({ error: 'الفرع غير موجود.' });
   const patch = {};
   ['name', 'address', 'phone'].forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
-  // عملة الفرع — الفارغ يعني عملة النظام الافتراضية
+  /* عملة الفرع صريحة دائمًا: الفارغ لا يعني «اتبع النظام» بعد اليوم —
+     تغييرُ عملة النظام كان يقلب أرقام عمّان — بل يُثبَّت على عملة
+     النظام الحالية مكتوبةً على الفرع. */
   if (req.body.currency !== undefined) {
     if (req.body.currency && !CURRENCIES.includes(req.body.currency)) {
       return res.status(400).json({ error: 'عملة غير مدعومة — المتاح: شيكل ILS، دينار JOD، دولار USD.' });
     }
-    patch.currency = req.body.currency || null;
+    patch.currency = req.body.currency || (await currencyMap()).fallback;
   }
   // سقف التجميد المسموح للفرع — فارغ يعني بلا سقف
   if (req.body.freezeLimit !== undefined) {
@@ -1629,8 +1673,9 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
   if (kind === 'makeup') {
     const mine = await Store.find('sessions', { traineeId: trainee.id });
     const compensated = new Set(mine.filter((s) => s.kind === 'makeup' && s.absenceSessionId).map((s) => s.absenceSessionId));
+    // الغياب المسجَّل بلا خصم (بلا اشتراك فعّال يومها) لا يُعوَّض مجانًا — لم تُخصم حصته أصلًا
     const pending = mine
-      .filter((s) => s.kind === 'absence' && !compensated.has(s.id))
+      .filter((s) => s.kind === 'absence' && s.subscriptionId && !compensated.has(s.id))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))[0];
 
     if (pending) {
@@ -1663,6 +1708,25 @@ app.post('/api/sessions', auth, requireRole('trainer', 'admin'), h(async (req, r
     .filter((s) => s.traineeId === trainee.id && subStatus(s) === 'active')
     .sort((a, b) => a.endDate.localeCompare(b.endDate));
   if (!subs.length) {
+    /* غيابٌ بلا اشتراك فعّال (مجمّد أو منتهٍ): كان يُرفض كليًّا، فلا يُسجَّل
+       الغياب في أي مكان ويضيع من ملف المتدرب («محطوط عنده غيابات بس
+       بالبرنامج مش مبين ولا غياب»). يُسجَّل الآن غيابًا بلا خصم — فلا
+       رصيد يُخصم منه — ويظهر في الحضور والتقارير كأي غياب. */
+    if (kind === 'absence') {
+      const session = await Store.insert('sessions', {
+        traineeId: trainee.id, trainerId, branchId: trainee.branchId,
+        date, time, duration: Number(duration), style: '', notes: notes || '',
+        weight: null, subscriptionId: null, kind, absenceReason,
+        createdAt: new Date().toISOString(),
+      });
+      if (appointmentId) {
+        const appt = await Store.get('appointments', Number(appointmentId));
+        if (appt) await Store.update('appointments', appt.id, { status: 'missed', sessionId: session.id });
+      }
+      const admin = (await Store.find('users', { role: 'admin' }))[0];
+      if (admin) await notify(admin.id, `⚠️ غياب مسجَّل: ${trainee.name} يوم ${date}${absenceReason ? ` — ${absenceReason}` : ''} (بلا اشتراك فعّال — لم تُخصم حصة).`, 'absence');
+      return res.json({ session, absent: true, deducted: false, remaining: null, total: null });
+    }
     return res.status(400).json({
       error: kind === 'makeup'
         ? `لا يوجد غياب مخصوم بانتظار التعويض للمتدرب ${trainee.name}، ولا اشتراك فعّال تُخصم منه الحصة — يرجى التجديد أولًا.`
@@ -2733,7 +2797,7 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
   /* كل دفعة تخصّ اشتراكًا أو دَينًا سابقًا للنظام — والاثنان تحصيل */
   const paidScope = { ...scope };
 
-  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub, cur] = await Promise.all([
+  const [allMonthSessions, todayCount, subscriptions, users, monthPayments, paidBySub, cur, branches] = await Promise.all([
     Store.find('sessions', { ...scope, date: period }),
     Store.count('sessions', { ...scope, date: todayStr(), kind: { ne: 'absence' } }),
     Store.all('subscriptions'),
@@ -2741,6 +2805,7 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
     Store.find('payments', { ...paidScope, date: period }),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
     currencyMap(),
+    Store.all('branches'),
   ]);
   const monthSessions = allMonthSessions.filter(delivered);
   const monthAbsences = allMonthSessions.filter((s) => !delivered(s));
@@ -2777,6 +2842,9 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
       collectedMonth: collected,
       // نفس تعريف صفحة الديون بالضبط — لا رقمين لنفس السؤال
       outstanding: sumByCurrency(subs.filter(countsTowardDebt), cur, (x) => outstandingOf(x, paidBySub[x.id])),
+      /* المطلوب والمحصَّل والمتبقي من الفعّالين (والمجمّد الذي دفع) */
+      collection: collectionSummary(subs.map((x) => ({ ...x, paid: paidBySub[x.id] || 0 })), cur,
+        branches.filter((b) => inBranch({ branchId: b.id }))),
     },
     trainers, daily,
     expiringList: subs.filter((s) => s.expiring || s.status === 'expired').map((s) => ({
@@ -2836,7 +2904,7 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
   })();
   /* المدفوع لكل اشتراك يُجمَّع في القاعدة بعملية واحدة — كان يُحسب سابقًا
      بحلقة داخل حلقة (كل اشتراك × كل الدفعات). */
-  const [subscriptions, users, paidBySub, monthPayments, trendPayments, cur, legacyDebts] = await Promise.all([
+  const [subscriptions, users, paidBySub, monthPayments, trendPayments, cur, legacyDebts, branches] = await Promise.all([
     Store.all('subscriptions'),
     Store.all('users'),
     Store.groupSum('payments', 'amount', 'subscriptionId', null),
@@ -2844,6 +2912,7 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
     Store.find('payments', { ...scope, date: { gte: trendStart, lte: month + '-31' } }),
     currencyMap(),
     Store.all('legacyDebts'),
+    Store.all('branches'),
   ]);
 
   const subs = subscriptions
@@ -2878,6 +2947,8 @@ app.get('/api/dashboard/accountant', auth, requireRole('accountant', 'admin'), h
       outstanding: sumByCurrency(subs.filter((x) => !x.cancelled), cur, (x) => x.remaining),
       expired: subs.filter((s) => s.status === 'expired').length,
       renewed: subs.filter((s) => s.renewed).length,
+      /* المطلوب والمحصَّل والمتبقي من الفعّالين (والمجمّد الذي دفع) */
+      collection: collectionSummary(subs, cur, branches.filter((b) => inScope({ branchId: b.id }))),
     },
     subscriptions: subs,
     /* اسمُ الدافع على الدفعة نفسها: دفعةُ دَينٍ سابق قد تخصّ شخصًا بلا
@@ -2903,6 +2974,7 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   await clients.ensureDefaultPackages();
   const { users, subscriptions, sessions, appointments, inbody, mealPlans, meals, branches, payments, packages, sessionRatings } = await Store.load(
     'users', 'subscriptions', 'sessions', 'appointments', 'inbody', 'mealPlans', 'meals', 'branches', 'payments', 'packages', 'sessionRatings');
+  const cur = await currencyMap();
 
   const trainee = users.find((u) => u.id === id && u.role === 'trainee');
   if (!trainee) return res.status(404).json({ error: 'المتدرب غير موجود.' });
@@ -2919,6 +2991,10 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   const subs = subscriptions.filter((s) => s.traineeId === id)
     .map((s) => {
       const row = { ...s, status: subStatus(s), expiring: subExpiring(s), remaining: s.totalSessions - s.usedSessions };
+      // نوع باقته (شخصي/مجموعات/توفير) وعملة فرعه — يُقرآن على الملف مباشرة
+      const pkg = s.packageId ? packages.find((p) => p.id === s.packageId) : null;
+      if (pkg) { const c = clients.withCategory(pkg); row.packageCategory = c.category; row.packageCategoryLabel = c.categoryLabel; }
+      row.currency = cur.of(s.branchId || trainee.branchId);
       if (!showPrices) delete row.price;
       return row;
     });
@@ -2951,13 +3027,25 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
   /* الغياب الذي لم تُنفَّذ تعويضته بعد — هو وحده «مستحق تعويض»، فالحصة
      خُصمت يوم الغياب وتعويضها لاحقًا لا يُخصم مرة ثانية. */
   const compensatedIds = new Set(mySessions.filter((s) => s.absenceSessionId).map((s) => s.absenceSessionId));
-  const owedMakeups = absenceSessions.filter((s) => !compensatedIds.has(s.id)).length;
+  // الغياب المخصوم وحده يستحق تعويضًا مجانيًا — المسجَّل بلا خصم لم تُؤخذ حصته
+  const owedMakeups = absenceSessions.filter((s) => s.subscriptionId && !compensatedIds.has(s.id)).length;
+  const makeupOf = (absId) => mySessions.find((s) => s.absenceSessionId === absId);
   const attendance = {
     attended: attendedCount,
     missed: missedCount,
     absenceSessions: absenceSessions.length,
     owedMakeups,
     pct: (attendedCount + missedCount) ? Math.round((attendedCount / (attendedCount + missedCount)) * 100) : null,
+    /* تفصيل كل غياب — حتى يُرى أين ذهب كل غياب لا رقمٌ مجرَّد */
+    absences: absenceSessions.map((s) => ({
+      id: s.id, date: s.date, time: s.time, reason: s.absenceReason || s.notes || '',
+      deducted: !!s.subscriptionId,
+      compensatedOn: (makeupOf(s.id) || {}).date || null,
+      trainerName: (users.find((u) => u.id === s.trainerId) || {}).name || null,
+    })),
+    missedAppointments: myAppts.filter((a) => isMissedA(a) && !absenceSessionIds.has(a.sessionId))
+      .map((a) => ({ id: a.id, date: a.date, time: a.time, status: a.status,
+        trainerName: (users.find((u) => u.id === a.trainerId) || {}).name || null })),
   };
 
   // البيانات المالية — للإدارة والمحاسب، وللمتدرب على حسابه هو
@@ -2999,7 +3087,12 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
     .filter((p) => p.active !== false && (!p.branchId || p.branchId === trainee.branchId))
     .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
     .map(clients.withCategory)
+    // كل باقة بعملة فرعها — والباقة العامة بعملة فرع المشترك
+    .map((p) => ({ ...p, currency: cur.of(p.branchId || trainee.branchId) }))
     .map((p) => (showPrices ? p : clients.stripPackagePrice(p)));
+  const packageCategories = clients.PACKAGE_CATEGORIES
+    .map((key) => ({ key, label: clients.CATEGORY_LABELS[key], count: availablePackages.filter((p) => p.category === key).length }))
+    .filter((c) => c.count > 0);
 
   /* تقييمات الحصص: المتدرب يرى تقييماته، والإدارة ترى كل شيء — والمدرب لا يرى شيئًا */
   const canSeeRatings = req.user.role === 'admin' || (req.user.role === 'trainee' && req.user.id === id);
@@ -3023,11 +3116,13 @@ app.get('/api/trainee/:id/overview', auth, h(async (req, res) => {
 
   res.json({
     trainee: publicUser(trainee),
+    currency: cur.of(trainee.branchId),
     trainerName: lastSession ? (users.find((u) => u.id === lastSession.trainerId) || {}).name : null,
     branchName: (branches.find((b) => b.id === trainee.branchId) || {}).name,
     subscription: current || null,
     subscriptions: subs,
     packages: availablePackages,
+    packageCategories,
     showPrices,
     sessions: mySessions,
     appointments: appts.map((a) => ({ ...a, trainerName: (users.find((u) => u.id === a.trainerId) || {}).name })),
@@ -3119,7 +3214,7 @@ async function buildMonthlyReport(month, branch) {
     const missed = absenceSessions.length
       + appts.filter((a) => isMissed(a) && !absenceSessionIds.has(a.sessionId)).length;
     return {
-      branch: b.name, sessions: bs.length, hours: trainerHours(bs),
+      branchId: b.id, branch: b.name, sessions: bs.length, hours: trainerHours(bs),
       activeTrainees: new Set(subscriptions.filter((s) => s.branchId === b.id && subStatus(s) === 'active').map((s) => s.traineeId)).size,
       collected: pays.reduce((s, p) => s + p.amount, 0),
       missed,
@@ -3492,7 +3587,7 @@ require('./ops')(app, { auth, requireRole, h, notify, subStatus, ...scope });
 growth(app, { auth, requireRole, h, notify, subStatus, rateLimited, ...scope });
 
 /* وحدة العملاء: الباقات، العقد الإلكتروني، تقييم الحصص */
-clients(app, { auth, requireRole, h, notify, rateLimited, clientIp, ...scope });
+clients(app, { auth, requireRole, h, notify, rateLimited, clientIp, currencyMap, ...scope });
 
 /* نتائج المشتركين ومشاكلهم — رصد داخلي سرّي عن المتدرب */
 require('./flags')(app, { auth, requireRole, h, notify, ...scope });

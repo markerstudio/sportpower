@@ -58,23 +58,31 @@ const catOf = (p) => (PACKAGE_CATEGORIES.includes(p.category) ? p.category : 'pe
 const withCategory = (p) => ({ ...p, category: catOf(p), categoryLabel: CATEGORY_LABELS[catOf(p)] });
 
 module.exports = function registerClients(app, { auth, requireRole, h, notify,
-  rateLimited, clientIp, scopedBranchIds, branchAllowed, denyOutOfScope }) {
+  rateLimited, clientIp, currencyMap, scopedBranchIds, branchAllowed, denyOutOfScope }) {
+  /* عملة الباقة = عملة فرعها. الباقة العامة (بلا فرع) تُعرض بعملة الفرع
+     الذي تُقرأ منه (فرع المشترك أو فرع العقد)، وإلا بعملة النظام —
+     فسعرُ باقة عمّان بالدينار لا يظهر بالشيكل لمجرد أن الإعداد العام تغيّر. */
+  const withCurrency = (cur, contextBranch) => (p) => ({
+    ...p, currency: cur.of(p.branchId || contextBranch || null),
+  });
+
   /* ============================================================
      الباقات (Packages)
      ============================================================ */
   app.get('/api/packages', auth, h(async (req, res) => {
     await ensureDefaultPackages();
     let list = await Store.all('packages');
-    if (req.query.branch) {
-      const b = Number(req.query.branch);
-      list = list.filter((p) => !p.branchId || p.branchId === b);
-    }
+    const b = Number(req.query.branch) || null;
+    /* «عند اختيار الباقات بطلع كل الباقات لكل الافرع» — القائمة تُقصر
+       على باقات الفرع المطلوب (والباقات العامة التي تخصّ كل الفروع). */
+    if (b) list = list.filter((p) => !p.branchId || p.branchId === b);
     // الباقة بلا فرع باقةُ الشركة كلها فتظهر للجميع؛ وباقة الفرع لأهله
     const mine = scopedBranchIds(req);
     if (mine) list = list.filter((p) => !p.branchId || mine.includes(Number(p.branchId)));
     if (req.query.active === '1' || !canSeePrices(req.user)) list = list.filter((p) => p.active !== false);
     if (PACKAGE_CATEGORIES.includes(req.query.category)) list = list.filter((p) => catOf(p) === req.query.category);
-    list = list.sort((a, b) => (a.sessions || 0) - (b.sessions || 0)).map(withCategory);
+    const cur = await currencyMap();
+    list = list.sort((a, b2) => (a.sessions || 0) - (b2.sessions || 0)).map(withCategory).map(withCurrency(cur, b));
     res.json(canSeePrices(req.user) ? list : list.map(stripPackagePrice));
   }));
 
@@ -85,14 +93,15 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     if (price === undefined || Number(price) < 0) return res.status(400).json({ error: 'سعر الباقة مطلوب.' });
     // باقة بلا فرع تخصّ الشركة كلها — إنشاؤها صلاحية إدارة
     if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
-    res.json(withCategory(await Store.insert('packages', {
+    const cur = await currencyMap();
+    res.json(withCurrency(cur)(withCategory(await Store.insert('packages', {
       name: clean(name, 120), sessions: Number(sessions), price: Number(price),
       durationDays: Number(durationDays) || 30, branchId: Number(branchId) || null,
       sessionsPerWeek: Number(sessionsPerWeek) || null,
       category: PACKAGE_CATEGORIES.includes(req.body.category) ? req.body.category : 'personal',
       description: clean(description, 500), features: clean(features, 1000),
       active: true, createdBy: req.user.id,
-    })));
+    }))));
   }));
 
   app.put('/api/packages/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -109,7 +118,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     if (req.body.branchId !== undefined) patch.branchId = Number(req.body.branchId) || null;
     if (req.body.active !== undefined) patch.active = !!req.body.active;
     if (PACKAGE_CATEGORIES.includes(req.body.category)) patch.category = req.body.category;
-    res.json(withCategory(await Store.update('packages', pkg.id, patch)));
+    const cur = await currencyMap();
+    res.json(withCurrency(cur)(withCategory(await Store.update('packages', pkg.id, patch))));
   }));
 
   app.delete('/api/packages/:id', auth, requireRole('admin'), h(async (req, res) => {
@@ -120,9 +130,10 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
   /* ============================================================
      العقد الإلكتروني — رابط تسجيل ذاتي للزبون الجديد
      ============================================================ */
-  const contractView = (c, branches) => ({
+  const contractView = (c, branches, cur) => ({
     ...c,
     branchName: (branches.find((b) => b.id === c.branchId) || {}).name || 'كل الفروع',
+    currency: cur ? cur.of(c.branchId) : undefined,
     url: `/#/contract/${c.token}`,
   });
 
@@ -134,6 +145,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       return res.status(403).json({ error: 'ليست لديك صلاحية للاطّلاع على العقود.' });
     }
     const { contracts, branches } = await Store.load('contracts', 'branches');
+    const cur = await currencyMap();
     let list = contracts;
     if (req.query.status) list = list.filter((c) => c.status === req.query.status);
     // العقد بلا فرع عقدُ الشركة — يبقى للإدارة
@@ -143,13 +155,16 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     if (req.user.role === 'trainer' && req.user.branchId != null) {
       list = list.filter((c) => c.branchId == null || Number(c.branchId) === Number(req.user.branchId));
     }
-    res.json(list.map((c) => contractView(c, branches)).sort((a, b) => b.id - a.id));
+    res.json(list.map((c) => contractView(c, branches, cur)).sort((a, b) => b.id - a.id));
   }));
 
   app.post('/api/contracts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const branches = await Store.all('branches');
     const branchId = Number(req.body.branchId) || null;
-    if (branchId && !branches.some((b) => b.id === branchId)) return res.status(400).json({ error: 'الفرع غير موجود.' });
+    /* العقد لفرعٍ بعينه دائمًا: باقاته باقاتُ ذلك الفرع وعملتُه عملتُه.
+       عقدٌ «لكل الفروع» كان يعرض للزبون باقات الأفرع كلها بعملة النظام. */
+    if (!branchId) return res.status(400).json({ error: 'اختر فرع العقد — تُعرض للزبون باقات هذا الفرع بعملته.' });
+    if (!branches.some((b) => b.id === branchId)) return res.status(400).json({ error: 'الفرع غير موجود.' });
     if (!branchAllowed(req.user, branchId)) return denyOutOfScope(res);
     const days = Math.min(Math.max(Number(req.body.validDays) || 14, 1), 180);
     const contract = await Store.insert('contracts', {
@@ -162,7 +177,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       leadId: Number(req.body.leadId) || null,
       submission: null, traineeId: null, convertedAt: null,
     });
-    res.json(contractView(contract, branches));
+    res.json(contractView(contract, branches, await currencyMap()));
   }));
 
   app.put('/api/contracts/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
@@ -184,7 +199,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     }
     if (req.body.validDays !== undefined) patch.expiresAt = addDays(Math.min(Math.max(Number(req.body.validDays) || 14, 1), 180));
     const branches = await Store.all('branches');
-    res.json(contractView(await Store.update('contracts', contract.id, patch), branches));
+    res.json(contractView(await Store.update('contracts', contract.id, patch), branches, await currencyMap()));
   }));
 
   app.delete('/api/contracts/:id', auth, requireRole('admin'), h(async (req, res) => {
@@ -206,12 +221,16 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
 
     const { branches, packages, settings } = await Store.load('branches', 'packages', 'settings');
     const s = settings[0] || {};
+    const cur = await currencyMap();
     const expired = contract.expiresAt && contract.expiresAt < todayStr();
     const status = expired && contract.status === 'open' ? 'expired' : contract.status;
+    /* العقد بعملة فرعه: عقدُ عمّان بالدينار مهما كانت عملة النظام —
+       وكل باقة تحمل عملتها بنفسها (باقةُ الفرع بعملته). */
     const list = packages
       .filter((p) => p.active !== false && (!p.branchId || !contract.branchId || p.branchId === contract.branchId))
       .sort((a, b) => (a.sessions || 0) - (b.sessions || 0))
-      .map(withCategory);
+      .map(withCategory)
+      .map(withCurrency(cur, contract.branchId));
 
     /* الزبون يختار نوع التدريب أولًا: شخصي / مجموعات / توفير — ثم الباقة
        داخل النوع، فتظهر الباقة المختارة في العقد. */
@@ -225,7 +244,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       prospectName: contract.prospectName || '',
       prospectPhone: contract.prospectPhone || '',
       expiresAt: contract.expiresAt,
-      currency: s.currency || 'ILS',
+      currency: cur.of(contract.branchId),
       slogan: 'change your life',
       terms: s.contractTerms || seedData.DEFAULT_CONTRACT_TERMS,
       packages: list, // بكل الأسعار — الزبون يرى كل شيء قبل أن يشترك
@@ -261,6 +280,7 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
       address: clean(address, 200),
       packageId: pkg.id, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price,
       packageCategory: catOf(pkg), packageCategoryLabel: CATEGORY_LABELS[catOf(pkg)],
+      currency: (await currencyMap()).of(pkg.branchId || contract.branchId),
       durationDays: pkg.durationDays || 30,
       healthNotes: clean(healthNotes, 500), emergencyPhone: clean(emergencyPhone, 30),
       notes: clean(notes, 500), agreedAt: new Date().toISOString(),
@@ -271,7 +291,8 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     for (const u of users.filter((x) => ['admin', 'accountant'].includes(x.role) && x.active !== false)) {
       await notify(u.id, `📝 عقد جديد: ${submission.name} عبّأ بياناته واختار «${submission.packageName}» (${submission.packageCategoryLabel}) — راجعه في صفحة الباقات والعقود.`, 'contract');
     }
-    res.json({ ok: true, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price, categoryLabel: CATEGORY_LABELS[catOf(pkg)] });
+    res.json({ ok: true, packageName: pkg.name, sessions: pkg.sessions, price: pkg.price,
+      currency: submission.currency, categoryLabel: CATEGORY_LABELS[catOf(pkg)] });
   }));
 
   /* ============================================================

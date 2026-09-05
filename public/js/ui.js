@@ -94,9 +94,10 @@ function progressBar(pct) {
 }
 
 /* رقم يصعد لقيمته — حركة التقارير */
-function countUp(node, value, { money, suffix = '', duration = 900 } = {}) {
+function countUp(node, value, { money, currency, suffix = '', duration = 900 } = {}) {
   const target = Number(value) || 0;
-  const fmt = (v) => (money ? fmtMoney(Math.round(v)) : String(Math.round(v))) + suffix;
+  // المال بعملة صاحبه (رقم فرع أو رمز عملة) — لا بعملة النظام دائمًا
+  const fmt = (v) => (money ? fmtMoney(Math.round(v), currency) : String(Math.round(v))) + suffix;
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) { node.textContent = fmt(target); return node; }
   const t0 = performance.now();
   const step = (now) => {
@@ -109,7 +110,7 @@ function countUp(node, value, { money, suffix = '', duration = 900 } = {}) {
 }
 
 /* عدّاد هدف متحرك: شريط يتقدم ورقم يصعد — للتقرير الشهري وأمثاله */
-function goalMeter({ title, sub, pct, actual, money, targetText }, i = 0) {
+function goalMeter({ title, sub, pct, actual, money, currency, targetText }, i = 0) {
   const p = pct === null || pct === undefined ? null : Math.max(0, Math.min(Number(pct), 120));
   const tone = p === null ? 'var(--app-muted)'
     : p >= 100 ? 'var(--accent)' : p >= 70 ? 'var(--blue-500)' : p >= 40 ? 'var(--status-warning)' : 'var(--status-danger)';
@@ -120,7 +121,7 @@ function goalMeter({ title, sub, pct, actual, money, targetText }, i = 0) {
   const fill = el('span', { class: 'goalmeter__fill', style: `background:${tone};transition-delay:${Math.min(i, 10) * 80}ms` });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     fill.style.width = Math.min(p || 0, 100) + '%';
-    countUp(actualEl, actual || 0, { money });
+    countUp(actualEl, actual || 0, { money, currency });
     if (p !== null) countUp(pctEl, p, { suffix: '%' });
   }));
   return el('div', { class: 'goalmeter' },
@@ -548,6 +549,10 @@ function fmtMoneyMap(byCurrency) {
   if (!parts.length) return fmtMoney(0);
   return parts.map(([code, v]) => fmtMoney(v, code)).join(' · ');
 }
+/* عملة هدفٍ (Target): هدفُ فرعٍ بعملة فرعه، وهدفُ موظفٍ بعملة فرعه إن
+   عُرف، وهدفُ الشركة بعملة النظام. */
+const targetCurrency = (t) => (t && t.scope === 'branch' && t.refId != null ? branchCurrency(Number(t.refId))
+  : t && t.branchId != null ? branchCurrency(Number(t.branchId)) : ACTIVE_CURRENCY);
 /* هل يتجاوز المجموع عملةً واحدة؟ (لتنبيه الواجهة أن الرقم غير قابل للجمع) */
 const isMultiCurrency = (m) => !!m && typeof m === 'object'
   && Object.values(m).filter((v) => Number(v)).length > 1;

@@ -356,10 +356,11 @@ test('sessions: measurements can be added AFTER recording — saved to InBody, u
 });
 
 test('targets: trainer-performance metrics become measurable goals (hours, office, stories, referred)', async () => {
-  const month = '2026-08';
+  // «زبائن عن طريقه» يُقاس بتاريخ الانضمام (اليوم) — فالشهر شهرُ اليوم لا شهرٌ ثابت
+  const month = new Date().toISOString().slice(0, 7);
   // سجل يوم للمدرب عمر: حضور 5 ساعات + 4 ستوريات + 2 ريلز
   assert.equal((await req('POST', '/api/trainer-logs', { token: S.admin, body: {
-    trainerId: 2, date: '2026-08-20', checkIn: '09:00', checkOut: '14:00', stories: 4, reels: 2,
+    trainerId: 2, date: month + '-20', checkIn: '09:00', checkOut: '14:00', stories: 4, reels: 2,
   } })).status, 200);
   // زبون جاء عن طريق المدرب — Onboarding بمصدره
   await req('POST', '/api/onboard', { token: S.admin, body: {
@@ -374,7 +375,13 @@ test('targets: trainer-performance metrics become measurable goals (hours, offic
   const targets = (await req('GET', '/api/targets', { token: S.admin })).json;
   const of = (m) => targets.find((t) => t.scope === 'trainer' && t.refId === 2 && t.metric === m && t.period === month);
   assert.equal(of('hours').metricLabel, 'ساعات التدريب');
-  assert.ok(of('hours').actual >= 1, 'hours computed from delivered sessions');
+  // حصة منفَّذة هذا الشهر حتى يكون للساعات رقم مهما كان شهر التشغيل
+  await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: 10, trainerId: 2, date: month + '-21', time: '10:00', duration: 60, style: 'قوة',
+  } });
+  const again = (await req('GET', '/api/targets', { token: S.admin })).json;
+  assert.ok(again.find((t) => t.scope === 'trainer' && t.refId === 2 && t.metric === 'hours' && t.period === month).actual >= 1,
+    'hours computed from delivered sessions');
   assert.ok(of('officeHours').actual >= 5, 'office hours include the check-in/out log');
   assert.ok(of('stories').actual >= 4, 'stories include the day log');
   assert.ok(of('reels').actual >= 2, 'reels include the day log');
@@ -823,4 +830,168 @@ test('targets: the metric list is grouped, and the combined metric is retired fr
   assert.equal(val('newSubs'), val('newOnly') + val('renewals'),
     'and it still equals exactly the sum of the two that replaced it');
   assert.ok(of('newSubs').deprecated, 'existing targets on it are flagged so they can be migrated');
+});
+
+/* ============================================================
+   تعديلات العميل: العملة بالفرع، الباقات بالفرع ونوعها، التحصيل
+   (المطلوب/المحصَّل/المتبقي)، غيابٌ بلا اشتراك فعّال، والهدف الحرّ.
+   ============================================================ */
+test('currency: each branch keeps its own currency — changing the system currency does not flip Amman', async () => {
+  const before = (await req('GET', '/api/branches', { token: S.admin })).json;
+  const amman = before.find((b) => b.id === 3);
+  assert.equal(amman.currency, 'JOD', 'Amman is explicitly JOD (seed or backfill)');
+  assert.ok(before.every((b) => ['ILS', 'JOD', 'USD'].includes(b.currency)), 'every branch carries an explicit currency');
+
+  assert.equal((await req('PUT', '/api/settings', { token: S.admin, body: { currency: 'ILS' } })).status, 200);
+  const after = (await req('GET', '/api/branches', { token: S.admin })).json;
+  assert.equal(after.find((b) => b.id === 3).currency, 'JOD', 'system currency change leaves Amman on JOD');
+
+  // فرع جديد بلا عملة يأخذ عملة النظام مكتوبةً عليه — لا «اتبع النظام»
+  const nb = (await req('POST', '/api/branches', { token: S.admin, body: { name: 'فرع اختبار العملة' } })).json;
+  assert.equal(nb.currency, 'ILS');
+  await req('DELETE', '/api/branches/' + nb.id, { token: S.admin });
+});
+
+test('contract: requires a branch, and is served in that branch\'s currency with per-package currency', async () => {
+  const noBranch = await req('POST', '/api/contracts', { token: S.admin, body: { validDays: 10 } });
+  assert.equal(noBranch.status, 400, 'a contract for «all branches» is refused');
+
+  const c = (await req('POST', '/api/contracts', { token: S.admin, body: { branchId: 3, validDays: 10 } })).json;
+  assert.equal(c.currency, 'JOD', 'the contract row carries its branch currency');
+  const pub = (await req('GET', '/api/public/contract/' + c.token)).json;
+  assert.equal(pub.currency, 'JOD', 'the public contract is priced in the branch currency');
+  assert.ok(pub.packages.length, 'packages are offered');
+  assert.ok(pub.packages.every((p) => p.currency === 'JOD'), 'every offered package is in the branch currency');
+  assert.ok(pub.packages.every((p) => !p.branchId || p.branchId === 3), 'only this branch\'s (and company-wide) packages');
+});
+
+test('packages: ?branch narrows the list to that branch, and every package carries a currency and a category', async () => {
+  const pkg = (await req('POST', '/api/packages', { token: S.admin, body: {
+    name: 'باقة عمّان فقط', sessions: 10, price: 150, branchId: 3, category: 'group',
+  } })).json;
+  assert.equal(pkg.currency, 'JOD');
+  assert.equal(pkg.categoryLabel, 'تدريب مجموعات');
+
+  const b1 = (await req('GET', '/api/packages?branch=1', { token: S.admin })).json;
+  assert.ok(!b1.some((p) => p.id === pkg.id), 'an Amman-only package is not offered to Beit Sahour');
+  assert.ok(b1.every((p) => p.currency === 'ILS'), 'Beit Sahour packages are priced in ILS');
+  const b3 = (await req('GET', '/api/packages?branch=3', { token: S.admin })).json;
+  assert.ok(b3.some((p) => p.id === pkg.id), 'and it is offered to Amman');
+  assert.ok(b3.every((p) => p.category && p.categoryLabel), 'every package says which type it is');
+  await req('DELETE', '/api/packages/' + pkg.id, { token: S.admin });
+});
+
+test('trainee overview: packages are grouped by type, priced in the trainee\'s branch currency', async () => {
+  const ov = (await req('GET', '/api/trainee/10/overview', { token: S.admin })).json;
+  assert.ok(ov.currency, 'the overview names the trainee currency');
+  assert.ok(Array.isArray(ov.packageCategories), 'categories with counts are returned');
+  assert.ok(ov.packages.every((p) => p.categoryLabel && p.currency === ov.currency));
+});
+
+test('collection: required / collected / remaining from active subs (and frozen ones that paid)', async () => {
+  const dash = (await req('GET', '/api/dashboard/accountant', { token: S.admin })).json;
+  const col = dash.kpis.collection;
+  assert.ok(col && col.required && col.collected && col.remaining, 'the three figures are present');
+  assert.ok(Array.isArray(col.byBranch), 'and a per-branch breakdown');
+  for (const c of Object.keys(col.required)) {
+    assert.ok(Math.abs((col.required[c] - (col.collected[c] || 0)) - col.remaining[c]) < 0.01,
+      `remaining = required − collected (${c})`);
+  }
+  // اشتراك مجمّد دُفع عليه شيء يدخل المطلوب — والمجمّد بلا دفعة لا يدخل
+  const subs = dash.subscriptions.filter((s) => s.status === 'active' && s.paid > 0);
+  assert.ok(subs.length, 'fixture has an active paid subscription');
+  // سقف التجميد قد يرفض فرعًا بلغه اختبارٌ سابق — نجمّد أول اشتراك يقبله الخادم
+  let target = null;
+  for (const s of subs) {
+    const fr = await req('POST', `/api/subscriptions/${s.id}/action`, { token: S.admin, body: { action: 'freeze', reason: 'سفر' } });
+    if (fr.status === 200) { target = s; break; }
+  }
+  assert.ok(target, 'one paid active subscription could be frozen');
+  const dash2 = (await req('GET', '/api/dashboard/accountant', { token: S.admin })).json;
+  assert.equal(dash2.kpis.collection.frozenPaid, col.frozenPaid + 1, 'a frozen subscription that paid still counts');
+  await req('POST', `/api/subscriptions/${target.id}/action`, { token: S.admin, body: { action: 'unfreeze', reason: '' } });
+  const admin = (await req('GET', '/api/dashboard/admin', { token: S.admin })).json;
+  assert.ok(admin.kpis.collection && admin.kpis.collection.required, 'the admin dashboard has the same block');
+});
+
+test('absence: recorded even without an active subscription (no deduction), and listed on the trainee file', async () => {
+  // مشترك جديد بلا اشتراك فعّال (اشتراكه منتهٍ)
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب غياب', phone: '0599777901', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 4, price: 200, startDate: '2025-01-01', endDate: '2025-02-01' },
+  } })).json;
+  const tid = ob.user ? ob.user.id : ob.traineeId || (ob.trainee && ob.trainee.id);
+  assert.ok(tid, 'onboarded');
+  const before = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(before.attendance.missed, 0);
+
+  const r = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-09-01', time: '10:00', duration: 60, kind: 'absence', absenceReason: 'لم يحضر',
+  } });
+  assert.equal(r.status, 200, 'the absence is accepted although no subscription is active');
+  assert.equal(r.json.deducted, false, 'nothing is deducted — there is no balance');
+
+  const after = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(after.attendance.missed, 1, 'the file shows the absence');
+  assert.equal(after.attendance.absences.length, 1);
+  assert.equal(after.attendance.absences[0].deducted, false);
+  assert.equal(after.attendance.owedMakeups, 0, 'an undeducted absence does not earn a free makeup');
+});
+
+test('absence: with an active subscription it deducts, shows on the file, and a makeup settles it', async () => {
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب غياب ٢', phone: '0599777902', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 8, price: 400, startDate: '2026-09-01', endDate: '2027-09-01' },
+  } })).json;
+  const tid = ob.user ? ob.user.id : ob.traineeId || (ob.trainee && ob.trainee.id);
+  const r = await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-09-02', time: '10:00', duration: 60, kind: 'absence',
+  } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.remaining, 7, 'one session deducted');
+  let ov = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(ov.attendance.missed, 1);
+  assert.equal(ov.attendance.owedMakeups, 1);
+  assert.equal(ov.attendance.absences[0].deducted, true);
+  await req('POST', '/api/sessions', { token: S.admin, body: {
+    traineeId: tid, trainerId: 2, date: '2026-09-03', time: '10:00', duration: 60, kind: 'makeup',
+  } });
+  ov = (await req('GET', `/api/trainee/${tid}/overview`, { token: S.admin })).json;
+  assert.equal(ov.attendance.owedMakeups, 0, 'the makeup settled it');
+  assert.equal(ov.attendance.absences[0].compensatedOn, '2026-09-03');
+  assert.equal(ov.subscription.remaining, 7, 'the makeup did not deduct again');
+});
+
+test('targets: management can add a free (manual) goal on any scope and update its achieved value', async () => {
+  const metrics = (await req('GET', '/api/targets/metrics', { token: S.admin })).json;
+  const custom = metrics.metrics.find((m) => m.key === 'custom');
+  assert.ok(custom && custom.manual, 'the free goal is offered');
+  assert.ok(metrics.groups.some((g) => g.key === custom.group));
+
+  const month = new Date().toISOString().slice(0, 7);
+  const bad = await req('POST', '/api/targets', { token: S.admin, body: { scope: 'company', metric: 'custom', period: month, value: 10 } });
+  assert.equal(bad.status, 400, 'a free goal needs a name');
+  const t = (await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'branch', refId: 1, metric: 'custom', label: 'حملة الصيف', period: month, value: 10, actual: 3,
+  } })).json;
+  assert.equal(t.label, 'حملة الصيف');
+  const t2 = (await req('POST', '/api/targets', { token: S.admin, body: {
+    scope: 'branch', refId: 1, metric: 'custom', label: 'تجهيز الصالة', period: month, value: 5,
+  } })).json;
+  assert.notEqual(t.id, t2.id, 'two free goals can live in the same period');
+
+  const list = (await req('GET', '/api/targets', { token: S.admin })).json;
+  const row = list.find((x) => x.id === t.id);
+  assert.equal(row.metricLabel, 'حملة الصيف');
+  assert.equal(row.actual, 3);
+  assert.equal(row.pct, 30);
+
+  const upd = await req('PUT', '/api/targets/' + t.id, { token: S.admin, body: { actual: 8 } });
+  assert.equal(upd.status, 200);
+  assert.equal(upd.json.pct, 80, 'progress follows the manually updated value');
+  // المؤشر المحسوب لا يقبل محقَّقًا يدويًا
+  const rev = list.find((x) => x.metric !== 'custom');
+  if (rev) assert.equal((await req('PUT', '/api/targets/' + rev.id, { token: S.admin, body: { actual: 1 } })).status, 400);
+  await req('DELETE', '/api/targets/' + t.id, { token: S.admin });
+  await req('DELETE', '/api/targets/' + t2.id, { token: S.admin });
 });

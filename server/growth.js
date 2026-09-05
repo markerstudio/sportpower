@@ -257,7 +257,8 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     const actual = ops.computeActual(t, { ...data, subStatus }) || 0;
     const effective = ops.effectiveTarget(t, data.targets, data, subStatus);
     return {
-      scopeName: nameOf(t), metric: t.metric, metricLabel: ops.METRIC_LABELS[t.metric] || t.metric,
+      scope: t.scope, refId: t.refId,
+      scopeName: nameOf(t), metric: t.metric, metricLabel: t.label || ops.METRIC_LABELS[t.metric] || t.metric,
       value: t.value, carried: effective - t.value, effective, actual,
       pct: effective ? Math.round((actual / effective) * 100) : null,
     };
@@ -270,7 +271,8 @@ async function buildGrowthReport(month, branchArg, subStatus) {
     }
     const actualYear = ops.computeActual(t, { ...data, subStatus }) || 0;
     return {
-      scopeName: nameOf(t), metric: t.metric, metricLabel: ops.METRIC_LABELS[t.metric] || t.metric,
+      scope: t.scope, refId: t.refId,
+      scopeName: nameOf(t), metric: t.metric, metricLabel: t.label || ops.METRIC_LABELS[t.metric] || t.metric,
       value: t.value, monthlyShare: Math.round(t.value / 12), actual: actualYear,
       pct: t.value ? Math.round((actualYear / t.value) * 100) : null, months,
     };
