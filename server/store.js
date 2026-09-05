@@ -316,10 +316,29 @@ async function seedIfEmpty() {
   log(`زُرعت بيانات ${DEMO_MODE ? 'العرض' : 'الإنتاج'}.`);
 }
 
+/* ---------- عملة كل فرع: صريحة لا موروثة ----------
+   كانت عملة الفرع اختيارية و«الفارغ يتبع عملة النظام» — فتغييرُ عملة
+   النظام إلى الشيكل قلب أرقام عمّان معه (بطلب العميل: «حولتها شيكل
+   وتغيرت عند الأردن كمان»). صار لكل فرع عملته المكتوبة على صفّه:
+   فرعٌ بلا عملة يُملأ مرة واحدة هنا — عمّان/الأردن بالدينار، وسواه
+   بعملة النظام الحالية — ثم لا يمسّه إعدادٌ عام بعدها. */
+const JOD_BRANCH = /عم[اّ]?ن|الأردن|الاردن|amman|jordan/i;
+async function backfillBranchCurrencies() {
+  const [branches, settings] = await Promise.all([driver.all('branches'), driver.all('settings')]);
+  const sys = (settings[0] || {}).currency;
+  const fallback = ['ILS', 'JOD', 'USD'].includes(sys) ? sys : 'ILS';
+  for (const b of branches) {
+    if (['ILS', 'JOD', 'USD'].includes(b.currency)) continue;
+    const currency = JOD_BRANCH.test(`${b.name || ''} ${b.address || ''}`) ? 'JOD' : fallback;
+    await driver.update('branches', b.id, { currency });
+    log(`عملة الفرع «${b.name}» ضُبطت على ${currency} (كانت تتبع عملة النظام).`);
+  }
+}
+
 let ready = null;
 function initOnce() {
   if (!ready) {
-    ready = driver.init().then(seedIfEmpty).catch((e) => { ready = null; throw e; });
+    ready = driver.init().then(seedIfEmpty).then(backfillBranchCurrencies).catch((e) => { ready = null; throw e; });
   }
   return ready;
 }

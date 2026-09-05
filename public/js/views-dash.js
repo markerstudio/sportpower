@@ -220,6 +220,7 @@ async function viewAdminDash(root) {
       kpiTile(k.expiring, 'تنتهي قريبًا', 'alert', 'warn'),
       kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger'),
       kpiTile(fmtMoneyMap(k.outstanding), 'مستحقات غير محصلة', 'card', 'blue')));
+    container.append(collectionCard(k.collection, { branchFilter: !!state.branch }));
 
     // رسم الحصص اليومية
     const days = Object.keys(data.daily).sort();
@@ -670,6 +671,37 @@ async function openLogSessionModal(onDone, prefill = {}) {
 /* ============================================================
    اللوحة المالية — المحاسب
    ============================================================ */
+/* ============================================================
+   التحصيل: المطلوب والمحصَّل والمتبقي — بطلب العميل
+   «بدنا يكون المبلغ المطلوب، والمحصل، والمتبقي. التحصيل من الفعالين،
+   أو إذا حد من المجمدين دفع كمان يحسبهم». المطلوب قيمةُ الاشتراكات
+   الفعّالة الآن (والمجمّدة التي دُفع عليها)، والمحصَّل ما دُفع عليها،
+   والمتبقي الفرق — كلٌّ بعملة فرعه.
+   ============================================================ */
+function collectionCard(col, { branchFilter } = {}) {
+  if (!col) return el('span');
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, 'التحصيل — المطلوب والمحصَّل والمتبقي',
+      el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' },
+        `${col.active} اشتراكًا فعّالًا` + (col.frozenPaid ? ` + ${col.frozenPaid} مجمّدًا دفع` : ''))),
+    el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(200px,1fr))' },
+      kpiTile(fmtMoneyMap(col.required), 'المبلغ المطلوب', 'file', 'blue'),
+      kpiTile(fmtMoneyMap(col.collected), 'المحصَّل', 'wallet'),
+      kpiTile(fmtMoneyMap(col.remaining), 'المتبقي', 'alert',
+        Object.values(col.remaining || {}).some((v) => Number(v) > 0) ? 'warn' : undefined)),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:8px' },
+      'المطلوب = قيمة الاشتراكات الفعّالة الآن، ومعها اشتراكُ المجمّد إن كان قد دفع عليه شيئًا. '
+      + 'المحصَّل = ما دُفع على هذه الاشتراكات نفسها. والمتبقي = الفرق.'));
+  if ((col.byBranch || []).length > 1 && !branchFilter) {
+    card.append(el('div', { style: 'margin-top:10px' },
+      dataTable(['الفرع', 'فعّالون', 'مجمّد دفع', 'المطلوب', 'المحصَّل', 'المتبقي'],
+        col.byBranch.map((b) => [b.branch, String(b.active), String(b.frozenPaid),
+          fmtMoney(b.required, b.currency), fmtMoney(b.collected, b.currency),
+          el('b', { style: b.remaining > 0 ? 'color:var(--status-danger)' : '' }, fmtMoney(b.remaining, b.currency))]))));
+  }
+  return card;
+}
+
 async function viewAccountantDash(root) {
   const state = urlState({ month: thisMonthISO(), branch: '' });
   const container = el('div', { class: 'content' });
@@ -725,6 +757,7 @@ async function viewAccountantDash(root) {
       kpiTile(k.paymentsCount, 'عدد الدفعات', 'file'),
       kpiTile(k.renewed, 'اشتراكات مجددة', 'check'),
       kpiTile(k.expired, 'اشتراكات منتهية', 'alert', 'danger')));
+    container.append(collectionCard(k.collection, { branchFilter: !!state.branch }));
 
     /* الأهداف الشهرية لكل فرع + السنوية مقسمة على الأشهر — بوضوح أمام المحاسب */
     const year = state.month.slice(0, 4);
@@ -738,7 +771,7 @@ async function viewAccountantDash(root) {
         dataTable(['النطاق', 'المؤشر', 'الفترة', 'الهدف', 'المرحَّل', 'المطلوب فعليًا', 'المحقق', 'الإنجاز'],
           goalTargets.map((t) => {
             const money = t.metric === 'revenue';
-            const fv = (v) => (money ? fmtMoney(v) : String(v));
+            const fv = (v) => (money ? fmtMoney(v, targetCurrency(t)) : String(v));
             const annual = /^\d{4}$/.test(t.period);
             return [t.refName || '—', t.metricLabel,
               annual ? el('span', {}, 'سنوي — ', el('b', {}, fv(Math.round(t.value / 12))), ' شهريًا') : 'شهري',
@@ -784,7 +817,7 @@ async function viewAccountantDash(root) {
               r.phone ? el('a', {
                 class: 'btn btn--petrol btn--sm', target: '_blank', rel: 'noopener',
                 href: waLink(r.phone, OPS_SETTINGS.waCountryCode || '970',
-                  `مرحبًا ${r.traineeName} 👋 تذكير ودّي من سبورت باور بخصوص المتبقي على اشتراكك (${fmtMoney(r.remaining)}) — نسعد بترتيب الدفعة في أي وقت يناسبك.`,
+                  `مرحبًا ${r.traineeName} 👋 تذكير ودّي من سبورت باور بخصوص المتبقي على اشتراكك (${fmtMoney(r.remaining, r.currency)}) — نسعد بترتيب الدفعة في أي وقت يناسبك.`,
                   r.traineeName),
               }, 'واتساب') : el('span'))],
           { pageSize: 10, searchText: (r) => r.traineeName || '', searchPlaceholder: 'ابحث باسم المتدرب…',
@@ -850,7 +883,7 @@ async function viewAccountantDash(root) {
 
 async function openPaymentModal(onDone, subscriptions, existing) {
   const dates = (s) => (s.startDate ? ` · ${s.startDate} ← ${s.endDate}` : '');
-  const optOf = (s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price)} (متبقي ${fmtMoney(s.remaining)})${dates(s)}`];
+  const optOf = (s) => [s.id, `${s.traineeName} — ${fmtMoney(s.price, s.branchId)} (متبقي ${fmtMoney(s.remaining, s.branchId)})${dates(s)}`];
   /* «سداد دين» كان يعرض الاشتراكات المنتهية فقط، فمن عليه متأخرات على
      اشتراك فعّال لم يكن له خيار في القائمة — والدفعة لا تُسجَّل.
      الآن نجلب كل ما عليه دين من الخادم (فعّال ومنتهٍ)، ونُقدّم القديم. */
@@ -1124,7 +1157,7 @@ async function viewTraineePage(root, traineeId) {
   const isMoneyStaff = ['admin', 'accountant'].includes(API.user.role);
   const paidOf = (sid) => (data.payments || []).filter((p) => p.subscriptionId === sid).reduce((s, p) => s + p.amount, 0);
   const subsForPay = isMoneyStaff && data.payments ? data.subscriptions.map((s) => ({
-    id: s.id, traineeName: t.name, price: s.price, status: s.status,
+    id: s.id, traineeName: t.name, price: s.price, status: s.status, branchId: s.branchId,
     startDate: s.startDate, endDate: s.endDate, packageName: s.packageName,
     paid: paidOf(s.id), remaining: Math.max(0, s.price - paidOf(s.id)),
   })) : [];
@@ -1247,10 +1280,38 @@ async function viewTraineePage(root, traineeId) {
     kpiTile(data.attendance.pct !== null ? data.attendance.pct + '%' : '—', 'نسبة الحضور', 'pulse', 'blue'));
   if (data.finance) {
     statTiles.append(
-      kpiTile(fmtMoney(data.finance.totalPaid), 'إجمالي المدفوع', 'wallet'),
-      kpiTile(fmtMoney(data.finance.remaining), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
+      kpiTile(fmtMoney(data.finance.totalPaid, data.currency || t.branchId), 'إجمالي المدفوع', 'wallet'),
+      kpiTile(fmtMoney(data.finance.remaining, data.currency || t.branchId), 'متبقٍ عليه', 'card', data.finance.remaining > 0 ? 'warn' : undefined));
   }
   container.append(statTiles);
+
+  /* الغيابات بالتفصيل — «محطوط عنده غيابات بس بالبرنامج مش مبين ولا
+     غياب»: كل غياب بتاريخه وسببه وهل خُصم وهل عُوِّض، ومعه المواعيد
+     الفائتة بلا تسوية — فالرقم أعلاه يُقرأ من مصدره. */
+  const absences = (data.attendance.absences || []);
+  const missedAppts = (data.attendance.missedAppointments || []);
+  if (absences.length || missedAppts.length) {
+    const absCard = el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `الغيابات (${absences.length + missedAppts.length})`));
+    if (absences.length) {
+      absCard.append(dataTable(['التاريخ', 'الساعة', 'السبب', 'المدرب', 'الخصم', 'التعويض'],
+        absences.map((a) => [a.date, a.time, a.reason || '—', a.trainerName || '—',
+          a.deducted ? el('span', { class: 'tag tag--danger' }, 'خُصمت حصة')
+            : el('span', { class: 'tag tag--neutral', title: 'سُجّل بلا اشتراك فعّال يومها' }, 'بلا خصم'),
+          a.compensatedOn ? el('span', { class: 'tag tag--accent' }, 'عُوِّض ' + a.compensatedOn)
+            : a.deducted ? el('span', { class: 'tag tag--warning' }, 'بانتظار تعويض') : '—'])));
+    }
+    if (missedAppts.length) {
+      absCard.append(el('h4', { style: 'margin:12px 0 6px;font-size:13px;color:var(--app-muted)' },
+        `مواعيد فائتة بلا حصة أو غياب مسجَّل (${missedAppts.length})`),
+        dataTable(['التاريخ', 'الساعة', 'المدرب', 'الحالة'],
+          missedAppts.map((a) => [a.date, a.time, a.trainerName || '—',
+            a.status === 'missed' ? el('span', { class: 'tag tag--danger' }, 'غياب') : el('span', { class: 'tag tag--warning' }, 'فات بلا تسوية')])),
+        isStaff ? el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:6px' },
+          'الموعد الفائت يُحسب غيابًا في الحضور حتى يُسوّى: سجّل حصته أو غيابه من زر «غياب» في لوحة المدرب.') : '');
+    }
+    container.append(absCard);
+  }
 
   /* ديون ما قبل النظام على هذا المشترك — بلا اشتراك يقابلها.
      تظهر هنا كي لا يبدو الملف مسدَّدًا وعلى صاحبه متأخرات حقيقية. */
@@ -1330,8 +1391,11 @@ async function viewTraineePage(root, traineeId) {
         ? el('span', { class: 'tag tag--neutral' }, `${data.subscriptions.length} اشتراكات`) : el('span')),
     dataTable(['الباقة', 'الحصص', 'المستخدم', ...(showPrices ? ['القيمة'] : []), 'من', 'إلى', 'الحالة', ...(canEditSubs ? [''] : [])],
       data.subscriptions.slice().reverse().map((s) => [
-        s.packageName || '—', String(s.totalSessions), String(s.usedSessions),
-        ...(showPrices ? [fmtMoney(s.price)] : []),
+        s.packageCategoryLabel
+          ? el('span', {}, s.packageName || '—', ' ', el('span', { class: 'tag tag--neutral' }, s.packageCategoryLabel))
+          : (s.packageName || '—'),
+        String(s.totalSessions), String(s.usedSessions),
+        ...(showPrices ? [fmtMoney(s.price, s.currency || s.branchId)] : []),
         s.startDate, s.endDate, statusTag(s.status, s.expiring),
         ...(canEditSubs ? [el('div', { class: 'row-actions' },
           el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openEditSubscriptionModal(refreshPage, s, t.name) }, 'تعديل'),

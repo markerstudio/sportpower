@@ -412,11 +412,21 @@ async function openOnboardModal(onDone, prefill = {}) {
   };
   sourceTypeSel.addEventListener('change', syncSource);
 
-  /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي */
+  /* الباقة تملأ الحصص والقيمة وتاريخ الانتهاء تلقائيًا — مع إمكانية التعديل اليدوي.
+     «عند اختيار الباقات بطلع كل الباقات لكل الافرع» — القائمة باقاتُ الفرع
+     المختار وحده (والباقات العامة)، وتُعاد حين يتغيّر الفرع. */
   const active = packages.filter((p) => p.active !== false);
-  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
-    ...active.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
-  { value: prefill.packageId || '' });
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)']], { value: '' });
+  const pkgLabel = (p) => `${p.name} — ${categoryLabel(p.category || 'personal')} — ${p.sessions} حصة — ${fmtMoney(p.price, p.currency || branchCurrency(p.branchId || Number(branchSel.value) || null))}`;
+  const fillPackages = (keep) => {
+    const bid = Number(branchSel.value) || null;
+    const list = active.filter((p) => !p.branchId || !bid || p.branchId === bid);
+    pkgSel.innerHTML = '';
+    pkgSel.append(el('option', { value: '' }, 'باقة مخصّصة (إدخال يدوي)'));
+    list.forEach((p) => pkgSel.append(el('option', { value: p.id }, pkgLabel(p))));
+    pkgSel.value = list.some((p) => String(p.id) === String(keep)) ? String(keep) : '';
+  };
+  fillPackages(prefill.packageId || '');
   const totalSel = input({ type: 'number', min: 1, value: prefill.totalSessions || 12 });
   const priceIn = input({ type: 'number', min: 0, value: prefill.price !== undefined ? prefill.price : 1200 });
   // عنوان القيمة والدفعة يتبع عملة الفرع المختار (عمّان بالدينار)
@@ -425,6 +435,7 @@ async function openOnboardModal(onDone, prefill = {}) {
   branchSel.addEventListener('change', () => {
     const c = branchCurrency(Number(branchSel.value) || null);
     priceLabel.setCurrency(c); payLabel.setCurrency(c);
+    fillPackages(pkgSel.value);
   });
   const startIn = input({ type: 'date', value: todayISO() });
   const endDefault = new Date(); endDefault.setMonth(endDefault.getMonth() + 1);
@@ -617,7 +628,7 @@ async function viewSubscriptions(root) {
             el('span', { class: 'num' }, String(s.totalSessions)),
             el('span', { class: 'num' }, String(s.usedSessions)),
             el('b', { class: 'num', style: s.remaining <= 2 ? 'color:var(--status-danger)' : 'color:var(--accent-hover)' }, String(s.remaining)),
-            fmtMoney(s.price), s.startDate, s.endDate, statusTag(s.status, s.expiring),
+            fmtMoney(s.price, s.branchId), s.startDate, s.endDate, statusTag(s.status, s.expiring),
             el('div', { class: 'row-actions' },
               // تعديل تواريخ الاشتراك وحصصه وقيمته — للإدارة والمحاسبة وحدهما
               canOnboard
@@ -673,15 +684,27 @@ async function viewSubscriptions(root) {
 async function openSubModal(onDone, trainees, preselectId, presetPackage) {
   const packages = (await API.get('/api/packages').catch(() => [])).filter((p) => p.active !== false);
   const traineeSel = searchSelect(trainees.map(traineeOption), { value: preselectId || '' });
-  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)'],
-    ...packages.map((p) => [p.id, `${p.name} — ${p.sessions} حصة — ${fmtMoney(p.price)}`])],
-  { value: presetPackage ? presetPackage.id : '' });
+  /* باقات فرع المتدرب وحده (والباقات العامة) — لا باقات الأفرع كلها؛
+     وتُعاد القائمة حين يتغيّر المتدرب المختار. */
+  const traineeOf = () => trainees.find((x) => String(x.id) === String(traineeSel.value));
+  const traineeBranchId = () => { const t = traineeOf(); return t && t.branchId != null ? Number(t.branchId) : null; };
+  const pkgSel = select([['', 'باقة مخصّصة (إدخال يدوي)']], { value: '' });
+  const fillPackages = (keep) => {
+    const bid = traineeBranchId();
+    const list = packages.filter((p) => !p.branchId || !bid || p.branchId === bid);
+    pkgSel.innerHTML = '';
+    pkgSel.append(el('option', { value: '' }, 'باقة مخصّصة (إدخال يدوي)'));
+    list.forEach((p) => pkgSel.append(el('option', { value: p.id },
+      `${p.name} — ${categoryLabel(p.category || 'personal')} — ${p.sessions} حصة — ${fmtMoney(p.price, p.currency || branchCurrency(p.branchId || bid))}`)));
+    pkgSel.value = list.some((p) => String(p.id) === String(keep)) ? String(keep) : '';
+  };
+  fillPackages(presetPackage ? presetPackage.id : '');
   const totalIn = input({ type: 'number', min: 1, value: presetPackage ? presetPackage.sessions : 12 });
   const priceIn = input({ type: 'number', value: presetPackage ? presetPackage.price : 1200, min: 0 });
   // القيمة تتبع عملة فرع المتدرب المختار
-  const subTraineeBranch = () => { const t = trainees.find((x) => String(x.id) === String(traineeSel.value)); return t ? branchCurrency(t.branchId) : ACTIVE_CURRENCY; };
+  const subTraineeBranch = () => { const t = traineeOf(); return t ? branchCurrency(t.branchId) : ACTIVE_CURRENCY; };
   const subPriceLabel = curLabel('القيمة', subTraineeBranch());
-  traineeSel.addEventListener('change', () => subPriceLabel.setCurrency(subTraineeBranch()));
+  traineeSel.addEventListener('change', () => { subPriceLabel.setCurrency(subTraineeBranch()); fillPackages(pkgSel.value); });
   const startIn = input({ type: 'date', value: todayISO() });
   const end = new Date();
   end.setDate(end.getDate() + (presetPackage ? presetPackage.durationDays || 30 : 30));
@@ -876,8 +899,9 @@ function openBranchModal(onDone) {
   const addrIn = input({ placeholder: 'العنوان' });
   const phoneIn = input({ placeholder: 'الهاتف', dir: 'ltr', style: 'text-align:end' });
   const freezeIn = input({ type: 'number', min: 0, placeholder: 'اتركه فارغًا = بلا سقف' });
-  const curSel = select([['', `عملة النظام (${curInfo().name})`],
-    ...Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`])]);
+  /* لكل فرع عملته الصريحة — لا «اتبع عملة النظام»: تغييرُ الإعداد العام
+     كان يقلب أرقام عمّان مع الضفة. الافتراضي عملة النظام الحالية. */
+  const curSel = select(Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`]), { value: ACTIVE_CURRENCY });
   const close = modal('فرع جديد', [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -886,7 +910,7 @@ function openBranchModal(onDone) {
         try {
           await API.post('/api/branches', {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
-            freezeLimit: freezeIn.value || null, currency: curSel.value || null,
+            freezeLimit: freezeIn.value || null, currency: curSel.value,
           });
           toast('تمت إضافة الفرع.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
@@ -1466,14 +1490,14 @@ async function viewTraineeRoster(root) {
             s ? el('b', { class: 'num' }, String(s.remaining)) : '—',
             s ? s.startDate : '—', s ? s.endDate : '—',
             s ? statusTag(s.status) : el('span', { class: 'tag tag--danger' }, 'بلا اشتراك'),
-            s ? fmtMoney(s.price) : '—', fmtMoney(r.paidCurrent),
-            el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent)),
+            s ? fmtMoney(s.price, r.branchId) : '—', fmtMoney(r.paidCurrent, r.branchId),
+            el('span', { style: r.dueCurrent > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueCurrent, r.branchId)),
             // المتبقي على كل اشتراكاته — يشمل دَين اشتراك سابق لم يُسدَّد
-            el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll)),
-            fmtMoney(r.paidTotal),
+            el('span', { style: r.dueAll > 0 ? 'color:var(--status-danger);font-weight:700' : '' }, fmtMoney(r.dueAll, r.branchId)),
+            fmtMoney(r.paidTotal, r.branchId),
             ...(state.month
               ? [el('b', { class: 'num', style: r.paidInMonth ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
-                fmtMoney(r.paidInMonth || 0)), String(r.paymentsInMonth || 0)]
+                fmtMoney(r.paidInMonth || 0, r.branchId)), String(r.paymentsInMonth || 0)]
               : []),
             r.lastPayment || '—'];
         },
@@ -1580,9 +1604,9 @@ async function viewReports(root) {
         ...goals.map((t, i) => goalMeter({
           title: `${t.refName || 'الشركة كاملة'} — ${t.metricLabel}`,
           sub: periodLabel(t.period)
-            + (t.carried > 0 ? ` · مُرحَّل من السابق +${t.metric === 'revenue' ? fmtMoney(t.carried) : t.carried}` : ''),
-          pct: t.pct, actual: t.actual, money: t.metric === 'revenue',
-          targetText: t.metric === 'revenue' ? fmtMoney(t.effective) : String(t.effective),
+            + (t.carried > 0 ? ` · مُرحَّل من السابق +${t.metric === 'revenue' ? fmtMoney(t.carried, targetCurrency(t)) : t.carried}` : ''),
+          pct: t.pct, actual: t.actual, money: t.metric === 'revenue', currency: targetCurrency(t),
+          targetText: t.metric === 'revenue' ? fmtMoney(t.effective, targetCurrency(t)) : String(t.effective),
         }, i))));
     }
     container.append(goalsCard);
@@ -1612,9 +1636,9 @@ async function viewReports(root) {
                 : '—'];
           })))));
 
-    const delta = (cur, prevVal, money) => {
+    const delta = (cur, prevVal, money, branchId) => {
       const d = cur - prevVal;
-      const txt = (d > 0 ? '+' : '') + (money ? fmtMoney(d) : d);
+      const txt = (d > 0 ? '+' : '') + (money ? fmtMoney(d, branchId) : d);
       return el('span', { class: 'tag ' + (d > 0 ? 'tag--accent' : d < 0 ? 'tag--danger' : 'tag--neutral') }, txt);
     };
     container.append(el('div', { class: 'card' },
@@ -1622,10 +1646,10 @@ async function viewReports(root) {
       dataTable(['الفرع', 'الحصص', 'ساعات', 'فعالون', 'التحصيل', 'الغيابات', 'نسبة الحضور', 'الحصص ±', 'التحصيل ±'],
         report.branches.map((b) => [b.branch,
           el('span', { class: 'num' }, String(b.sessions)), el('span', { class: 'num' }, String(b.hours)),
-          el('span', { class: 'num' }, String(b.activeTrainees)), fmtMoney(b.collected),
+          el('span', { class: 'num' }, String(b.activeTrainees)), fmtMoney(b.collected, b.branchId),
           el('span', { class: 'num', style: b.missed ? 'color:var(--status-danger)' : '' }, String(b.missed)),
           b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
-          delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true)]))));
+          delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true, b.branchId)]))));
 
     /* نتائج المشتركين ومشاكلهم — قسم ثابت في التقرير الشهري (سرّي عن المتدرب) */
     if (report.flags) {
@@ -1766,8 +1790,9 @@ async function viewSettings(root) {
       el('div', { class: 'filters' },
         field('عملة النظام', currencySel),
         el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:460px' },
-          'العملة الافتراضية للنظام — يتبعها كل فرع لم تُحدَّد له عملة خاصة. '
-          + 'لفرعٍ بعملة مختلفة (عمّان بالدينار مثلًا) اضبطها من تعديل الفرع نفسه.'))));
+          'العملة الافتراضية للفروع الجديدة والمبالغ العامة (بلا فرع) فقط. '
+          + 'لكل فرع عملته الخاصة المكتوبة عليه — تغيير هذا الإعداد لا يغيّر عملة أي فرع قائم '
+          + '(عمّان تبقى بالدينار). لتغيير عملة فرع: من تعديل الفرع في الجدول أدناه.'))));
 
     /* --- 2) الفروع --- */
     container.append(el('div', { class: 'card' },
@@ -1775,9 +1800,7 @@ async function viewSettings(root) {
         el('button', { class: 'btn btn--accent btn--sm', onclick: () => openBranchModal(render) }, '+ فرع جديد')),
       dataTable(['الفرع', 'العملة', 'العنوان', 'الهاتف', 'المتدربون', 'المدربون', 'سقف التجميد', ''],
         branches.map((b) => [b.name,
-          b.currency
-            ? el('span', { class: 'tag tag--petrol' }, curInfo(b.currency).name)
-            : el('span', { class: 'tag tag--neutral', title: 'يتبع عملة النظام' }, curInfo().name),
+          el('span', { class: 'tag tag--petrol' }, curInfo(b.currency || ACTIVE_CURRENCY).name),
           b.address || '—', b.phone || '—',
           String(users.filter((u) => u.role === 'trainee' && u.branchId === b.id).length),
           String(users.filter((u) => u.role === 'trainer' && u.branchId === b.id).length),
@@ -1901,9 +1924,8 @@ function openBranchEditModal(onDone, branch) {
   const freezeIn = input({ type: 'number', min: 0, value: branch.freezeLimit ?? '', placeholder: 'اتركه فارغًا = بلا سقف' });
   /* عملة الفرع: عمّان بالدينار وفروع الضفة بالشيكل — تغييرها هنا لا يمسّ
      بقية الفروع (كانت العملة إعدادًا عامًا يقلب النظام كله). */
-  const curSel = select([['', `عملة النظام (${curInfo().name})`],
-    ...Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`])],
-  { value: branch.currency || '' });
+  const curSel = select(Object.entries(CURRENCIES).map(([code, c]) => [code, `${c.name} ${c.symbol}`]),
+    { value: branch.currency || ACTIVE_CURRENCY });
   const close = modal(`تعديل «${branch.name}»`, [
     el('form', {
       style: 'display:flex;flex-direction:column;gap:14px',
@@ -1913,7 +1935,7 @@ function openBranchEditModal(onDone, branch) {
           await API.put('/api/branches/' + branch.id, {
             name: nameIn.value, address: addrIn.value, phone: phoneIn.value,
             freezeLimit: freezeIn.value === '' ? null : freezeIn.value,
-            currency: curSel.value || null,
+            currency: curSel.value,
           });
           toast('تم حفظ الفرع — وتسري عملته على مبالغه وحده.'); close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
@@ -1921,7 +1943,8 @@ function openBranchEditModal(onDone, branch) {
     }, field('الاسم', nameIn), field('العنوان', addrIn), field('الهاتف', phoneIn),
       field('عملة الفرع', curSel),
       el('div', { style: 'font-size:12px;color:var(--app-muted)' },
-        'تسري على مبالغ هذا الفرع وحده — اشتراكاته ودفعاته وديونه. والمجاميع '
+        'تسري على مبالغ هذا الفرع وحده — اشتراكاته ودفعاته وديونه وباقاته وعقوده. '
+        + 'ولا يغيّرها تغييرُ عملة النظام من الإعدادات. والمجاميع '
         + 'التي تضمّ فروعًا بعملتين تُعرض مفصَّلة لا مجموعة في رقم واحد.'),
       field('سقف التجميد المسموح للفرع', freezeIn),
       el('div', { style: 'font-size:12px;color:var(--app-muted)' },

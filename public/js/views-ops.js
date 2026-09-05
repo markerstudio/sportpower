@@ -332,10 +332,17 @@ async function viewKpi(root) {
           periodLabel(x.period),
           targetValueText(x, x.value), targetValueText(x, x.actual),
           progressBar(x.pct),
-          API.user.role === 'admin' ? el('button', {
-            class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
-            onclick: async () => { await API.del('/api/targets/' + x.id); toast('حُذف الهدف.'); render(); },
-          }, 'حذف') : el('span')],
+          API.user.role === 'admin' ? el('div', { class: 'row-actions' },
+            el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openTargetEditModal(render, x) },
+              x.manual ? 'تحديث المحقَّق' : 'تعديل'),
+            el('button', {
+              class: 'btn btn--ghost btn--sm', style: 'color:var(--status-danger)',
+              onclick: async () => {
+                if (!confirm(`حذف هدف «${x.metricLabel}»؟`)) return;
+                try { await API.del('/api/targets/' + x.id); toast('حُذف الهدف.'); render(); }
+                catch (ex) { toast(ex.message, true); }
+              },
+            }, 'حذف')) : el('span')],
         { pageSize: 12, emptyText: 'لا أهداف بعد — أضف هدفًا شهريًا أو نصف سنوي أو سنويًا.' })));
 
     // KPI الموظفين
@@ -365,7 +372,7 @@ async function viewKpi(root) {
 /* قيمة هدفٍ معروضة بوحدتها: مال بالعملة، ونسبةٌ بعلامة % */
 function targetValueText(t, v) {
   if (v === null || v === undefined) return '—';
-  if (t.money || t.metric === 'revenue') return fmtMoney(v);
+  if (t.money || t.metric === 'revenue') return fmtMoney(v, targetCurrency(t));
   if (t.pctMetric) return v + '%';
   return String(v);
 }
@@ -392,7 +399,7 @@ async function renderKpiBoard(container, b) {
           el('span', { class: 'cell-name' }, t.branch),
           num(t.officeHours), num(t.trainingHours), num(t.sessions),
           el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
-          num(t.trainedPeople), fmtMoney(t.collected),
+          num(t.trainedPeople), fmtMoney(t.collected, t.branchId != null ? Number(t.branchId) : undefined),
           num(t.stories), num(t.reels),
           el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.newClients} · ${t.newClientsTotal}`),
           num(t.freezes), num(t.renewals),
@@ -478,8 +485,8 @@ async function renderKpiBoard(container, b) {
         ...st.map((x, i) => goalMeter({
           title: `${x.name} — ${x.metricLabel}`,
           sub: `${STAFF_ROLE_LABELS[x.role] || x.role} · ${x.branch} · ${periodLabel(x.period)}`,
-          pct: x.pct, actual: x.actual, money: x.money,
-          targetText: x.money ? fmtMoney(x.target) : x.pctMetric ? x.target + '%' : String(x.target),
+          pct: x.pct, actual: x.actual, money: x.money, currency: targetCurrency(x),
+          targetText: x.money ? fmtMoney(x.target, targetCurrency(x)) : x.pctMetric ? x.target + '%' : String(x.target),
         }, i))),
       el('div', { class: 'sidebar__caption', style: 'padding:8px 0 0' },
         `${Object.keys(byPerson).length} موظفًا لهم أهداف هذا الشهر · ${st.length} هدفًا.`)));
@@ -508,6 +515,33 @@ function periodLabel(p) {
   return 'سنوي — ' + p;
 }
 
+/* تعديل هدف قائم: قيمته — وللهدف الحرّ اسمُه ومحقَّقُه اليدوي */
+function openTargetEditModal(onDone, t) {
+  const valueIn = input({ type: 'number', min: 0, step: 'any', value: t.value });
+  const labelIn = input({ value: t.label || t.metricLabel || '' });
+  const actualIn = input({ type: 'number', min: 0, step: 'any', value: t.actual || 0 });
+  const close = modal(`تعديل الهدف — ${t.refName || 'الشركة كاملة'} · ${periodLabel(t.period)}`, [
+    el('form', {
+      class: 'form-grid',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await API.put('/api/targets/' + t.id, {
+            value: Number(valueIn.value),
+            ...(t.manual ? { label: labelIn.value, actual: Number(actualIn.value) || 0 } : {}),
+          });
+          toast('حُفظ التعديل.'); close(); onDone && onDone();
+        } catch (ex) { toast(ex.message, true); }
+      },
+    },
+      t.manual ? el('div', { class: 'span-2' }, field('اسم الهدف', labelIn)) : el('div', { class: 'span-2 sidebar__caption', style: 'padding:0' }, t.metricLabel),
+      field('قيمة الهدف', valueIn),
+      t.manual ? field('المحقَّق حتى الآن', actualIn)
+        : el('div', { class: 'sidebar__caption', style: 'padding:22px 0 0' }, 'المحقَّق يحسبه النظام من بياناته.'),
+      el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ'))),
+  ]);
+}
+
 async function openTargetModal(onDone, branches, trainers, staff) {
   const { groups, metrics } = await loadMetrics();
   /* «كل حدا بنحسب»: الهدف يُضبط للشركة أو لفرع أو لمدرب — أو لأي موظف
@@ -525,6 +559,12 @@ async function openTargetModal(onDone, branches, trainers, staff) {
   const yearIn = input({ type: 'number', value: thisMonthISO().slice(0, 4), min: 2024, max: 2100 });
   const valueIn = input({ type: 'number', min: 0, step: 'any', placeholder: 'مثال: 70000' });
   const hint = el('div', { class: 'sidebar__caption', style: 'padding:0' });
+  /* الهدف الحرّ: «الإدارة تضيف أهداف زي ما بدها» — اسمٌ تكتبه الإدارة
+     ومحقَّقٌ يُحدَّث يدويًا، لما لا يقيسه النظام من بياناته. */
+  const labelIn = input({ placeholder: 'مثال: حملة رمضان · تجهيز الصالة الجديدة · دورة للمدربين' });
+  const actualIn = input({ type: 'number', min: 0, step: 'any', value: 0 });
+  const labelField = el('div', { class: 'span-2' }, field('اسم الهدف الحرّ *', labelIn));
+  const actualField = field('المحقَّق حتى الآن (يُحدَّث لاحقًا من الجدول)', actualIn);
 
   const branchField = field('الفرع', branchSel); branchField.style.display = 'none';
   const trainerField = field('المدرب', trainerSel); trainerField.style.display = 'none';
@@ -558,12 +598,16 @@ async function openTargetModal(onDone, branches, trainers, staff) {
   }
   function syncHint() {
     const m = metrics.find((x) => x.key === metricSel.value);
+    labelField.style.display = m && m.manual ? '' : 'none';
+    actualField.style.display = m && m.manual ? '' : 'none';
     if (!m) { hint.textContent = ''; return; }
     valueIn.placeholder = m.pct ? 'نسبة مئوية — مثال: 35' : m.money ? 'مثال: 70000' : 'مثال: 40';
-    hint.textContent = scopeSel.value !== 'user' ? ''
-      : m.by === 'branch'
-        ? 'يُقاس على فروع هذا الموظف (المحاسبة تُقاس بفرعها لا بما سجّلته بيدها).'
-        : 'يُقاس على عمله هو: ما سجّله وما نفّذه باسمه.';
+    hint.textContent = m.manual
+      ? 'هدفٌ لا يقيسه النظام بنفسه: تكتب اسمه وقيمته، وتحدّث المحقَّق يدويًا من جدول الأهداف. يظهر في KPI صاحبه كأي هدف.'
+      : scopeSel.value !== 'user' ? ''
+        : m.by === 'branch'
+          ? 'يُقاس على فروع هذا الموظف (المحاسبة تُقاس بفرعها لا بما سجّلته بيدها).'
+          : 'يُقاس على عمله هو: ما سجّله وما نفّذه باسمه.';
   }
 
   scopeSel.addEventListener('change', () => {
@@ -597,16 +641,23 @@ async function openTargetModal(onDone, branches, trainers, staff) {
         const period = kindSel.value === 'month' ? monthIn.value : kindSel.value === 'H' ? halfSel.value : String(yearIn.value);
         const refId = refFor(scope);
         if (scope !== 'company' && !refId) { toast('اختر صاحب الهدف أولًا.', true); return; }
+        const m = metrics.find((x) => x.key === metricSel.value) || {};
         try {
-          await API.post('/api/targets', { scope, refId, metric: metricSel.value, period, value: Number(valueIn.value) });
-          toast('حُفظ الهدف — وستُحسب نسبة الإنجاز تلقائيًا.'); close(); onDone && onDone();
+          await API.post('/api/targets', {
+            scope, refId, metric: metricSel.value, period, value: Number(valueIn.value),
+            ...(m.manual ? { label: labelIn.value, actual: Number(actualIn.value) || 0 } : {}),
+          });
+          toast(m.manual ? 'حُفظ الهدف الحرّ — حدّث محقَّقه من جدول الأهداف.' : 'حُفظ الهدف — وستُحسب نسبة الإنجاز تلقائيًا.');
+          close(); onDone && onDone();
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('النطاق', scopeSel), field('المؤشر', metricSel),
+      labelField,
       branchField, trainerField, staffField,
       field('نوع الفترة', kindSel), monthField, halfField, yearField,
-      el('div', { class: 'span-2' }, field('قيمة الهدف', valueIn), hint),
+      field('قيمة الهدف', valueIn), actualField,
+      el('div', { class: 'span-2' }, hint),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الهدف'))),
   ]);
 }

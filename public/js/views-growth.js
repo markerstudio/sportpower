@@ -192,7 +192,7 @@ function renderGrowthReport(container, g) {
         kpiTile(fmtMoneyMap(g.finance.expensesTotal), 'المصاريف', 'card', 'warn'),
         kpiTile(fmtMoneyMap(g.finance.netProfit), 'صافي الربح', 'chart', Object.values(g.finance.netProfit || {}).every((v) => Number(v) >= 0) ? 'blue' : 'danger')),
       dataTable(['المصروف', 'التصنيف', 'المبلغ'],
-        g.finance.expenses.map((e) => [e.label, e.category, fmtMoney(e.amount)]),
+        g.finance.expenses.map((e) => [e.label, e.category, fmtMoney(e.amount, e.branchId != null ? Number(e.branchId) : undefined)]),
         'لا مصاريف مسجلة لهذا الشهر.'))));
 
   // مقارنة النتائج بالهدف الشهري والسنوي
@@ -202,7 +202,7 @@ function renderGrowthReport(container, g) {
       dataTable(['النطاق', 'المؤشر', 'الهدف الأساسي', 'المرحَّل من السابق', 'الهدف الفعلي', 'المحقق', 'نسبة الإنجاز'],
         g.goals.monthly.map((t) => {
           const money = t.metric === 'revenue';
-          const fv = (v) => (money ? fmtMoney(v) : String(v));
+          const fv = (v) => (money ? fmtMoney(v, targetCurrency(t)) : String(v));
           return [t.scopeName, t.metricLabel, fv(t.value),
             t.carried > 0 ? el('span', { class: 'tag tag--warning' }, '+' + fv(t.carried)) : '—',
             el('b', {}, fv(t.effective)), fv(t.actual), progressBar(t.pct)];
@@ -210,7 +210,7 @@ function renderGrowthReport(container, g) {
   }
   g.goals.annual.forEach((t) => {
     const money = t.metric === 'revenue';
-    const fv = (v) => (money ? fmtMoney(v) : String(v));
+    const fv = (v) => (money ? fmtMoney(v, targetCurrency(t)) : String(v));
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `الهدف السنوي — ${t.scopeName} · ${t.metricLabel}`,
         el('span', { style: 'min-width:130px' }, progressBar(t.pct))),
@@ -231,14 +231,19 @@ function renderGrowthReport(container, g) {
    المصاريف الشهرية — بطاقة إدارة (لوحة المحاسب)
    ============================================================ */
 function expensesCard(expenses, branches, month, onDone) {
-  const total = expenses.reduce((s, e) => s + e.amount, 0);
+  // المجموع لكل عملة على حدة — مصروفُ عمّان بالدينار لا يُجمع على الشيكل
+  const totalByCur = {};
+  expenses.forEach((e) => {
+    const c = branchCurrency(e.branchId != null ? Number(e.branchId) : null);
+    totalByCur[c] = Math.round(((totalByCur[c] || 0) + Number(e.amount || 0)) * 100) / 100;
+  });
   return el('div', { class: 'card' },
-    el('h3', { class: 'card__title' }, `المصاريف الشهرية — ${month} (${fmtMoney(total)})`,
+    el('h3', { class: 'card__title' }, `المصاريف الشهرية — ${month} (${fmtMoneyMap(totalByCur)})`,
       el('button', { class: 'btn btn--accent btn--sm', onclick: () => openExpenseModal(onDone, branches, month) }, '+ مصروف')),
     dataTable(['البيان', 'التصنيف', 'الفرع', 'المبلغ', 'ملاحظة', ''],
       expenses.map((x) => [x.label, x.category,
         x.branchId ? (branches.find((b) => b.id === x.branchId) || {}).name || '—' : 'عام',
-        fmtMoney(x.amount), x.note || '—',
+        fmtMoney(x.amount, x.branchId != null ? Number(x.branchId) : undefined), x.note || '—',
         el('div', { class: 'row-actions' },
           el('button', { class: 'btn btn--ghost btn--sm', onclick: () => openExpenseModal(onDone, branches, month, x) }, 'تعديل'),
           el('button', {

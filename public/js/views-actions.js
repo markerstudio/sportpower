@@ -205,7 +205,7 @@ function actionCard(a, onDone) {
 
     a.metrics && a.metrics.length
       ? el('div', { class: 'macros' }, ...a.metrics.map((m) => el('span', { class: 'macro' },
-        m.label + ' ', el('b', {}, m.money ? fmtMoney(m.value) : m.value))))
+        m.label + ' ', el('b', {}, m.money ? fmtMoney(m.value, a.branchId != null ? Number(a.branchId) : undefined) : m.value))))
       : '',
 
     buttons.length ? el('div', { class: 'ac-card__actions' }, ...buttons) : '',

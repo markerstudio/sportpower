@@ -101,6 +101,7 @@ const METRIC_GROUPS = [
   ['freeze', 'تجميد'],
   ['outcomes', 'نتائج ومتابعة'],
   ['sales', 'مبيعات'],
+  ['custom', 'أهداف حرّة'],
 ];
 
 const METRICS = {
@@ -146,6 +147,11 @@ const METRICS = {
   tests: { label: 'حصص تجريبية (test)', group: 'sales', scopes: BRANCH_SCOPES, by: 'person' },
   closedLeads: { label: 'عملاء أُغلقوا (اشتركوا)', group: 'sales', scopes: BRANCH_SCOPES, by: 'person' },
   closingRate: { label: 'نسبة الإغلاق %', group: 'sales', scopes: BRANCH_SCOPES, by: 'person', pct: true },
+
+  /* --- هدف حرّ: «الإدارة تضيف أهداف زي ما بدها» ---
+     ما لا يقيسه النظام بنفسه (حملة، تدريب داخلي، تجهيز صالة…) يُكتب
+     باسمه ويُحدَّث محقَّقُه يدويًا — على أي نطاق وأي فترة. */
+  custom: { label: 'هدف حرّ — يُحدَّث يدويًا', group: 'custom', scopes: ALL_SCOPES, by: 'person', manual: true },
 };
 
 const METRIC_KEYS = Object.keys(METRICS);
@@ -207,6 +213,8 @@ function computeActual(t, { payments, sessions, subscriptions, subEvents, subSta
     && scopeBranch(l.branchId) && scopePerson(l.createdBy));
 
   switch (t.metric) {
+    // الهدف الحرّ: محقَّقُه ما كتبته الإدارة عليه — لا حساب له من البيانات
+    case 'custom': return Number(t.actual) || 0;
     case 'revenue': {
       // الفرع محفوظ على الدفعة نفسها؛ الرجوع للاشتراك للبيانات القديمة فقط.
       // (المطابقة بالبحث لكل دفعة كانت تكلّف عدد الدفعات × عدد الاشتراكات.)
@@ -435,8 +443,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       ...t, actual,
       effective, carried: effective - t.value, // المتبقي المرحَّل من الأشهر السابقة
       pct: effective ? Math.round((actual / effective) * 100) : null,
-      refName, metricLabel: meta.label || t.metric,
-      money: !!meta.money, pctMetric: !!meta.pct,
+      // الهدف الحرّ يظهر باسمه الذي كتبته الإدارة
+      refName, metricLabel: t.label || meta.label || t.metric,
+      money: !!meta.money, pctMetric: !!meta.pct, manual: !!meta.manual,
       // مؤشرٌ لم يعد يُعرض في قائمة الاختيار — يُوسَم ليُستبدل بمرور الوقت
       deprecated: !!meta.deprecated,
     };
@@ -495,9 +504,52 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     const all = await Store.all('targets');
     const body = { scope, refId: scope === 'company' ? null : ref, metric, period, value: num };
-    const dup = all.find((t) => t.scope === scope && t.refId === body.refId && t.metric === metric && t.period === period);
+    /* الهدف الحرّ: اسمه مطلوب، ومحقَّقُه الابتدائي اختياري — ويتكرر بالاسم
+       لا بالمؤشر، فللإدارة أكثر من هدف حرّ في الفترة نفسها. */
+    if (METRICS[metric].manual) {
+      body.label = String(req.body.label || '').trim().slice(0, 120);
+      if (!body.label) return res.status(400).json({ error: 'اكتب اسم الهدف الحرّ (مثال: حملة رمضان، تجهيز الصالة الجديدة…).' });
+      const act = Number(req.body.actual);
+      body.actual = Number.isFinite(act) && act >= 0 ? act : 0;
+    }
+    const dup = all.find((t) => t.scope === scope && t.refId === body.refId && t.metric === metric && t.period === period
+      && (!METRICS[metric].manual || (t.label || '') === body.label));
     const saved = dup ? await Store.update('targets', dup.id, body) : await Store.insert('targets', body);
     res.json(saved);
+  }));
+
+  /* تعديل هدف قائم: قيمتُه، واسمُ الهدف الحرّ ومحقَّقُه — بلا حذفٍ وإعادة
+     إدخال، وبلا فقدان تاريخه. المحقَّق يُقبل للهدف الحرّ وحده؛ بقية
+     المؤشرات يحسبها النظام من بياناته. */
+  app.put('/api/targets/:id', auth, requireRole('admin'), h(async (req, res) => {
+    const t = await Store.get('targets', req.params.id);
+    if (!t) return res.status(404).json({ error: 'الهدف غير موجود.' });
+    const meta = METRICS[t.metric] || {};
+    const patch = {};
+    if (req.body.value !== undefined) {
+      const num = Number(req.body.value);
+      if (!Number.isFinite(num) || num <= 0) return res.status(400).json({ error: 'قيمة الهدف مطلوبة.' });
+      if (meta.pct && num > 100) return res.status(400).json({ error: 'النسبة المئوية لا تتجاوز ١٠٠.' });
+      patch.value = num;
+    }
+    if (meta.manual) {
+      if (req.body.label !== undefined) {
+        const label = String(req.body.label || '').trim().slice(0, 120);
+        if (!label) return res.status(400).json({ error: 'اسم الهدف مطلوب.' });
+        patch.label = label;
+      }
+      if (req.body.actual !== undefined) {
+        const act = Number(req.body.actual);
+        if (!Number.isFinite(act) || act < 0) return res.status(400).json({ error: 'المحقَّق رقمٌ غير سالب.' });
+        patch.actual = act;
+      }
+    } else if (req.body.actual !== undefined) {
+      return res.status(400).json({ error: 'هذا المؤشر يحسبه النظام من بياناته — المحقَّق يُدخل يدويًا للهدف الحرّ وحده.' });
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'لا شيء لتعديله.' });
+    const data = await Store.load(...TARGET_SOURCES);
+    const saved = await Store.update('targets', t.id, patch);
+    res.json(decorateTarget(saved, { ...data, targets: data.targets.map((x) => (x.id === saved.id ? saved : x)) }));
   }));
 
   app.delete('/api/targets/:id', auth, requireRole('admin'), h(async (req, res) => {
@@ -781,8 +833,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         return {
           targetId: x.id, userId: u.id, name: u.name,
           role: u.role, roleLabel: ROLE_LABELS[u.role] || u.role,
+          branchId: u.branchId || null,
           branch: (branches.find((b) => b.id === u.branchId) || {}).name || '—',
-          metric: x.metric, metricLabel: meta.label || x.metric,
+          metric: x.metric, metricLabel: x.label || meta.label || x.metric,
           money: !!meta.money, pctMetric: !!meta.pct,
           period: x.period, target: x.value, actual,
           pct: x.value ? Math.min(Math.round((actual / x.value) * 100), 120) : null,
