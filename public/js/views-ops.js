@@ -345,27 +345,92 @@ async function viewKpi(root) {
             }, 'حذف')) : el('span')],
         { pageSize: 12, emptyText: 'لا أهداف بعد — أضف هدفًا شهريًا أو نصف سنوي أو سنويًا.' })));
 
-    // KPI الموظفين
-    container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `KPI الموظفين — ${state.month}`,
-        el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' },
-          'كل من له مهامٌ أو هدفٌ هذا الشهر — لا المدربين وحدهم')),
-      dataTable(['الموظف', 'الدور', 'حصص', 'ساعات تدريب', 'متدربون فريدون', 'المهام', 'إنجاز المهام', 'إنجاز الأهداف', 'KPI النهائي'],
-        kpis.map((k) => [k.name,
-          el('span', { class: 'tag tag--neutral' }, STAFF_ROLE_LABELS[k.role] || k.role || '—'),
-          // أرقام التدريب للمدربين وحدهم — ليست عمل المحاسبة ولا التغذية
-          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.sessions)) : '—',
-          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.hours)) : '—',
-          k.role === 'trainer' ? el('span', { class: 'num' }, String(k.uniqueTrainees)) : '—',
-          k.tasksTotal ? `${k.tasksDone}/${k.tasksTotal}` : '—',
-          k.tasksPct !== null ? progressBar(k.tasksPct) : '—',
-          k.targetsPct !== null ? progressBar(k.targetsPct) : '—',
-          k.kpi !== null
-            ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger'), style: 'font-size:13px' }, k.kpi + '%')
-            : el('span', { class: 'tag tag--neutral' }, 'لا مهام/أهداف')]),
-        'لا موظفين لهم مهام أو أهداف هذا الشهر.')));
+    /* جدول «KPI الموظفين» أُزيل بطلب العميل — أهداف كل موظف ونسبته في
+       «أهداف الموظفين» أعلاه، وأرقام المدربين في جدول KPI المدربين. */
   }
 
+  await render();
+}
+
+/* أعمدة KPI المدربين — مصدرٌ واحد للوحة KPI والتقرير الشهري وصفحة
+   المدرب، فلا يختلف عمود بين شاشة وأخرى. */
+const KPI_TRAINER_COLUMNS = ['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'عدد الأشخاص', 'ستوريات', 'ريلز',
+  'زبائن جدد', 'نتائج', 'مشاكل', 'أهداف وُضعت'];
+function kpiTrainerRow(t) {
+  const num = (v) => el('span', { class: 'num' }, String(v ?? 0));
+  return [
+    el('span', { class: 'cell-name' }, t.name || t.trainer),
+    el('span', { class: 'cell-name' }, t.branch || '—'),
+    num(t.officeHours), num(t.trainingHours ?? t.hours), num(t.trainedPeople ?? t.uniqueTrainees),
+    num(t.stories), num(t.reels),
+    el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.newClients ?? 0} · ${t.newClientsTotal ?? 0}`),
+    el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results ?? 0)),
+    el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems ?? 0)),
+    el('b', { class: 'num', style: t.goalsCreated ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' }, String(t.goalsCreated || 0)),
+  ];
+}
+
+/* ============================================================
+   صفحة KPI عند المدرب — «تظهر الأهداف المطلوبة التي تضعها الإدارة
+   ويتابع الملف حسب إدخاله للوصول للهدف»: الإدارة تضبط الهدف شهريًا
+   من صفحتها، وهنا يراه صاحبه مع المحقَّق ونسبة الإنجاز — محسوبةً من
+   حصصه وسجل يومه وما رصده، لا من إدخال يدوي.
+   ============================================================ */
+async function viewMyKpi(root) {
+  const state = urlState({ month: thisMonthISO() });
+  const container = el('div', { class: 'content' });
+  root.append(container);
+  const render = (...a) => keepScroll(() => build(...a));
+
+  async function build() {
+    state.sync();
+    container.innerHTML = '';
+    container.append(spinnerCard());
+    let data;
+    try { data = await API.get('/api/kpi/mine?month=' + state.month); }
+    catch (ex) { container.innerHTML = ''; container.append(el('div', { class: 'alert alert--warning' }, ex.message)); return; }
+    container.innerHTML = '';
+
+    const monthIn = input({ type: 'month', value: state.month, onchange: (e) => { state.month = e.target.value; render(); } });
+    container.append(el('div', { class: 'card filters' }, field('الشهر', monthIn)));
+
+    const k = data.kpi;
+    if (k && k.kpi !== null && k.kpi !== undefined) {
+      container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
+        kpiHero(k.kpi + '%', `KPI ${state.month}`, 'target', k.kpi >= 80 ? 'green' : k.kpi >= 50 ? undefined : 'blue'),
+        kpiHero(k.targetsPct !== null ? k.targetsPct + '%' : '—', 'إنجاز الأهداف', 'chart', 'green'),
+        kpiHero(k.tasksPct !== null ? k.tasksPct + '%' : '—', `إنجاز المهام (${k.tasksDone}/${k.tasksTotal})`, 'check')));
+    }
+
+    /* الأهداف التي وضعتها الإدارة لي — كل هدف بمحقَّقه ونسبته */
+    const goalsCard = el('div', { class: 'card' },
+      el('h3', { class: 'card__title' }, `أهدافي — ${state.month}`,
+        el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' }, 'تضعها الإدارة شهريًا — والمحقَّق يُحسب من إدخالاتك')));
+    if (!data.targets.length) {
+      goalsCard.append(el('div', { class: 'empty' }, 'لا أهداف مضبوطة لك تشمل هذا الشهر بعد — تضعها الإدارة من صفحة «الأهداف وKPI».'));
+    } else {
+      goalsCard.append(el('div', { class: 'goalgrid' },
+        ...data.targets.map((t, i) => goalMeter({
+          title: t.metricLabel,
+          sub: periodLabel(t.period) + (t.carried > 0 ? ` · مُرحَّل من السابق +${targetValueText(t, t.carried)}` : ''),
+          pct: t.pct, actual: t.actual, money: t.money, currency: targetCurrency(t),
+          targetText: targetValueText(t, t.effective),
+        }, i))),
+      dataTable(['المؤشر', 'الفترة', 'الهدف', 'المحقَّق', 'المتبقي', 'الإنجاز'],
+        data.targets.map((t) => [t.metricLabel, periodLabel(t.period), targetValueText(t, t.effective), targetValueText(t, t.actual),
+          targetValueText(t, Math.max(0, Math.round(((t.effective || 0) - (t.actual || 0)) * 100) / 100)), progressBar(t.pct)])));
+    }
+    container.append(goalsCard);
+
+    /* أرقامي كما تراها الإدارة في جدول KPI المدربين — الأعمدة نفسها */
+    if (data.row) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `أرقامي هذا الشهر — كما تظهر في KPI المدربين`),
+        el('div', { style: 'overflow-x:auto' }, dataTable(KPI_TRAINER_COLUMNS, [kpiTrainerRow(data.row)])),
+        el('div', { style: 'font-size:12px;color:var(--app-muted);margin-top:8px' },
+          'الساعات المكتبية والستوريات والريلز من «سجل اليوم»، وساعات التدريب وعدد الأشخاص من حصصك المسجَّلة، والنتائج والمشاكل من رصدك على متدربيك الذين أنت مدرّبهم الأساسي، والأهداف من أهداف المشتركين التي وضعتها.')));
+    }
+  }
   await render();
 }
 
@@ -391,35 +456,10 @@ async function renderKpiBoard(container, b) {
       'الساعة المميزة: أربعة متدربين في الساعة نفسها = ساعة تدريب واحدة على المدرب. '
       + 'والغياب مخصوم من رصيد المتدرب لكنه لا يُحتسب حصةً منفَّذة للمدرب.'),
     el('div', { style: 'overflow-x:auto' },
-      dataTable(['المدرب', 'الفرع', 'ساعات مكتبية', 'ساعات تدريب', 'حصص', 'غياب', 'درّبهم', 'التحصيل',
-        'ستوريات', 'ريلز', 'زبائن جدد', 'تجميد', 'تجديد', 'نتائج', 'مشاكل',
-        'أهداف وضعها', 'متدربوه بلا هدف', 'توزّع أهدافهم', 'برامج أكل', 'برامج تدريب', 'المهام'],
-        b.trainers.map((t) => [
-          el('span', { class: 'cell-name' }, t.name),
-          el('span', { class: 'cell-name' }, t.branch),
-          num(t.officeHours), num(t.trainingHours), num(t.sessions),
-          el('span', { class: 'num', style: t.absences ? 'color:var(--status-danger)' : '' }, String(t.absences)),
-          num(t.trainedPeople), fmtMoney(t.collected, t.branchId != null ? Number(t.branchId) : undefined),
-          num(t.stories), num(t.reels),
-          el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.newClients} · ${t.newClientsTotal}`),
-          num(t.freezes), num(t.renewals),
-          el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results)),
-          el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems)),
-          /* «كم هدفًا تدريبيًا وضعه» — من جدول الأهداف، ومقابله من بقي
-             من متدربيه بلا هدف (يظهر باسمه عند المرور عليه). */
-          el('b', { class: 'num', style: t.goalsCreated ? 'color:var(--accent-hover)' : 'color:var(--app-muted)' },
-            String(t.goalsCreated || 0)),
-          (t.traineesWithoutGoal || []).length
-            ? el('span', {
-              class: 'tag tag--danger',
-              title: t.traineesWithoutGoal.join('، '),
-            }, String(t.traineesWithoutGoal.length))
-            : el('span', { class: 'tag tag--accent' }, '0'),
-          Object.entries(t.traineeGoalMix || {})
-            .map(([k, n]) => `${GOAL_LABELS[k] || k} ${n}`).join(' · ') || '—',
-          num(t.mealPlans), num(t.programs),
-          t.tasksTotal ? `${t.tasksDone}/${t.tasksTotal}` : '—']),
-        'لا مدربين.'))));
+      /* الأعمدة كما طلبها العميل حرفيًا: المدرب – الفرع – ساعات مكتبية –
+         ساعات تدريب – عدد الأشخاص – الستوريات – الريلز – زبائن جدد –
+         نتائج – مشاكل – أهداف وُضعت. */
+      dataTable(KPI_TRAINER_COLUMNS, b.trainers.map(kpiTrainerRow), 'لا مدربين.'))));
 
   /* تغطية الأهداف التدريبية — من بقي من المشتركين بلا هدف */
   container.append(await goalCoverageCard(b.month));
@@ -431,7 +471,7 @@ async function renderKpiBoard(container, b) {
       'سقف التجميد يُضبط لكل فرع من صفحة الإعدادات — وتجاوزه يظهر هنا بالأحمر.'),
     el('div', { style: 'overflow-x:auto' },
       dataTable(['الفرع', 'مشتركون جدد', 'تجديد', 'عائد من التجميد', 'تجميد الشهر', 'مجمّدون الآن', 'سقف التجميد',
-        'التحصيل', 'الفعّالون', 'نسبة التجديد', 'حصص', 'نتائج', 'مشاكل'],
+        'التحصيل', 'الفعّالون', 'نسبة التجديد', 'نتائج', 'مشاكل'],
         b.branches.map((x) => [el('span', { class: 'cell-name' }, x.branch),
           num(x.newSubs), num(x.renewals), num(x.returnedFromFreeze), num(x.freezesMonth),
           el('span', {
@@ -442,7 +482,7 @@ async function renderKpiBoard(container, b) {
           x.freezeLimit === null ? el('span', { class: 'tag tag--neutral' }, 'بلا سقف') : num(x.freezeLimit),
           fmtMoney(x.collected, x.branchId), num(x.activeTrainees),
           x.retentionPct !== null ? progressBar(x.retentionPct) : '—',
-          num(x.sessions), num(x.results),
+          num(x.results),
           el('span', { class: 'num', style: x.problems ? 'color:var(--status-danger)' : '' }, String(x.problems))]),
         'لا فروع.'))));
 
@@ -824,6 +864,9 @@ async function renderTrainerOps(container) {
   const state = urlState({ date: todayISO() }, 'log');
   const checkIn = input({ type: 'time' });
   const checkOut = input({ type: 'time' });
+  /* الساعات المكتبية رقمًا مباشرًا — «سجل اليوم ناقصه الساعات المكتبية».
+     إن تُركت فارغة حُسبت من الحضور والانصراف. */
+  const officeIn = input({ type: 'number', min: 0, step: '0.5', placeholder: 'مثال: 4 — أو اتركه ليُحسب من الحضور/الانصراف' });
   const goals = input({ type: 'number', min: 0 });
   const stories = input({ type: 'number', min: 0 });
   const reels = input({ type: 'number', min: 0 });
@@ -838,7 +881,7 @@ async function renderTrainerOps(container) {
       el('span', { class: 'macro' }, 'حصص اليوم ', el('b', {}, String(a.sessions ?? '—'))),
       el('span', { class: 'macro' }, 'ساعات تدريب ', el('b', {}, String(a.trainingHours ?? '—'))),
       el('span', { class: 'macro' }, 'متدربون فريدون ', el('b', {}, String(a.uniqueTrainees ?? '—'))),
-      el('span', { class: 'macro' }, 'ساعات عمل ', el('b', {}, log.workHours != null ? log.workHours + ' س' : '—')));
+      el('span', { class: 'macro' }, 'ساعات مكتبية ', el('b', {}, log.workHours != null ? log.workHours + ' س' : '—')));
   }
 
   async function loadDay() {
@@ -849,6 +892,7 @@ async function renderTrainerOps(container) {
     log = logs[0] || {};
     checkIn.value = log.checkIn || '';
     checkOut.value = log.checkOut || '';
+    officeIn.value = log.workHours != null ? log.workHours : '';
     goals.value = log.goalsCreated || 0;
     stories.value = log.stories || 0;
     reels.value = log.reels || 0;
@@ -891,15 +935,18 @@ async function renderTrainerOps(container) {
         try {
           const saved = await API.post('/api/trainer-logs', {
             date: state.date, checkIn: checkIn.value, checkOut: checkOut.value,
+            officeHours: officeIn.value,
             goalsCreated: goals.value, stories: stories.value, reels: reels.value, notes: notes.value,
           });
           log.workHours = saved.workHours;
+          officeIn.value = saved.workHours != null ? saved.workHours : '';
           drawAuto(saved.auto);
-          toast(`حُفظ سجل ${state.date}` + (saved.workHours != null ? ` — ساعات العمل: ${saved.workHours} س.` : '.'));
+          toast(`حُفظ سجل ${state.date}` + (saved.workHours != null ? ` — الساعات المكتبية: ${saved.workHours} س.` : '.'));
         } catch (ex) { toast(ex.message, true); }
       },
     },
       field('الحضور (من الساعة)', checkIn), field('الانصراف (إلى الساعة)', checkOut),
+      el('div', { class: 'span-2' }, field('الساعات المكتبية (س)', officeIn)),
       field('أهداف تدريبية أنشأتها (يدويًا)', goals), field('ستوريات نشرتها', stories),
       field('ريلز/فيديوهات صوّرتها', reels), field('ملاحظات', notes),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ السجل'))));

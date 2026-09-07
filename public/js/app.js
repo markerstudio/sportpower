@@ -99,6 +99,8 @@ const NAV = {
   trainer: [
     ['#/actions', 'مركز قراراتي', 'compass'],
     ['#/trainer', 'لوحتي', 'grid'],
+    ['#/my-kpi', 'أهدافي وKPI', 'target'],
+    ['#/packages', 'العقود الإلكترونية', 'tag'],
     ['#/calendar', 'مواعيدي', 'calendar'],
     ['#/trainees', 'المتدربون', 'users'],
     ['#/inbody', 'قراءات InBody', 'pulse'],
@@ -163,8 +165,9 @@ const ROUTE_ROLES = {
   '#/loyalty': ['admin', 'accountant'],
   '#/points': ['trainee'],
   '#/actions': ['admin', 'accountant', 'trainer'],
-  '#/packages': ['admin', 'accountant'],
+  '#/packages': ['admin', 'accountant', 'trainer'],
   '#/ratings': ['admin'],
+  '#/my-kpi': ['trainer', 'accountant', 'nutritionist', 'admin'],
 };
 
 /* ملف المتدرب مفتوح لكل الموظفين وللمتدرب على نفسه */
@@ -190,6 +193,7 @@ const TITLES = {
   '#/actions': 'مركز القرارات — القرارات اليومية',
   '#/goals': 'أهداف المشتركين',
   '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
+  '#/my-kpi': 'أهدافي وKPI',
 };
 
 /* جيل الرسم: نقرتان سريعتان على القائمة كانتا تُشغّلان رسمتين معًا،
@@ -436,6 +440,7 @@ async function route() {
     '#/points': viewMyPoints,
     '#/actions': viewActionCenter,
     '#/packages': viewPackages,
+    '#/my-kpi': viewMyKpi,
     '#/ratings': viewRatings,
   };
   const routes = Object.fromEntries(Object.entries(VIEWS).map(([h, fn]) => [h, guard(h, fn)]));

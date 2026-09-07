@@ -41,6 +41,25 @@ const delivered = (s) => s.kind !== 'absence';
    نفسها ساعةٌ واحدة على المدرب، لا أربع. */
 const hoursOf = (sessions) => new Set(sessions.filter(delivered).map((s) => `${s.trainerId}|${s.date}|${s.time.slice(0, 2)}`)).size;
 
+/* المدرب الأساسي لكل متدرب: من درّبه أكثر الحصص في النافذة المعطاة
+   (وعند التعادل الأحدث). إليه تُنسب نتائجُ المتدرب ومشاكله. */
+function primaryTrainerMap(sessions) {
+  const tally = {};
+  sessions.filter(delivered).forEach((s) => {
+    if (!s.trainerId) return;
+    const t = tally[s.traineeId] = tally[s.traineeId] || {};
+    const cur = t[s.trainerId] || { n: 0, last: '' };
+    cur.n += 1; if (s.date > cur.last) cur.last = s.date;
+    t[s.trainerId] = cur;
+  });
+  const out = {};
+  Object.entries(tally).forEach(([traineeId, byTrainer]) => {
+    const best = Object.entries(byTrainer).sort((a, b) => b[1].n - a[1].n || b[1].last.localeCompare(a[1].last))[0];
+    if (best) out[traineeId] = Number(best[0]);
+  });
+  return out;
+}
+
 const prevMonthStr = (m) => {
   const [y, mm] = m.split('-').map(Number);
   return mm === 1 ? `${y - 1}-12` : `${y}-${String(mm - 1).padStart(2, '0')}`;
@@ -351,7 +370,12 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       reels: Number(req.body.reels) || 0,
       notes: req.body.notes || '',
     };
-    patch.workHours = diffHours(patch.checkIn, patch.checkOut);
+    /* الساعات المكتبية: تُكتب رقمًا مباشرةً («سجل اليوم ناقصه الساعات
+       المكتبية»)، وإلا تُحسب من الحضور والانصراف إن كُتبا. */
+    const office = Number(req.body.officeHours);
+    patch.workHours = req.body.officeHours !== undefined && req.body.officeHours !== '' && Number.isFinite(office) && office >= 0
+      ? Math.round(office * 10) / 10
+      : diffHours(patch.checkIn, patch.checkOut);
 
     const existing = (await Store.all('trainerLogs')).find((l) => l.trainerId === trainerId && l.date === date);
     const saved = existing ? await Store.update('trainerLogs', existing.id, patch) : await Store.insert('trainerLogs', patch);
@@ -630,8 +654,11 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
   /* النطاق قائمةُ فروع لا فرعًا واحدًا — محاسبةٌ قد تتولى فرعين */
   async function buildKpiBoard(month, branch) {
     const period = { gte: month + '-01', lte: month + '-31' };
+    /* نافذة النسبة: 90 يومًا قبل نهاية الشهر — «المشاكل تظهر عند المدرب
+       الذي يدرّب المتدرب أكثر الوقت»، لا عند كل من درّبه مرة هذا الشهر. */
+    const attrFrom = (() => { const d = new Date(month + '-01T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 90); return d.toISOString().slice(0, 10); })();
     const [users, branches, subscriptions, sessionsAll, payments, subEvents,
-      trainerLogs, tasks, targets, flags, mealPlans, leads, programs, traineeGoals] = await Promise.all([
+      trainerLogs, tasks, targets, flags, mealPlans, leads, programs, traineeGoals, attrSessions] = await Promise.all([
       Store.all('users'),
       Store.all('branches'),
       Store.all('subscriptions'),
@@ -646,7 +673,9 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
       Store.find('leads', { contactDate: period }),
       Store.all('programs'),
       Store.all('traineeGoals'),
+      Store.find('sessions', { date: { gte: attrFrom, lte: month + '-31' } }),
     ]);
+    const primaryTrainer = primaryTrainerMap(attrSessions);
 
     /* نافذة أوسع للأهداف نصف السنوية والسنوية: قياسها على بيانات الشهر
        وحده كان يُظهرها متأخرة أبدًا. تُحمَّل فقط إن وُجد هدف يحتاجها. */
@@ -699,7 +728,8 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
         const mineIds = new Set(mine.map((u) => u.id));
         const collected = scopedPayments
           .filter((p) => mineIds.has(p.traineeId)).reduce((s, p) => s + p.amount, 0);
-        const myFlags = flags.filter((f) => myTraineeIds.has(f.traineeId));
+        // نتائج ومشاكل المتدربين الذين هو مدرّبهم الأساسي (الأكثر تدريبًا لهم)
+        const myFlags = flags.filter((f) => primaryTrainer[f.traineeId] === t.id);
         const myEvents = scopedEvents.filter((e) => myTraineeIds.has(e.traineeId) || mineIds.has(e.traineeId));
         const goalMix = {};
         [...myTraineeIds].forEach((id) => {
@@ -847,6 +877,28 @@ module.exports = function registerOps(app, { auth, requireRole, h, notify, subSt
 
     return { month, branch: branch && branch.length === 1 ? branch[0] : null, trainers: trainerRows, branches: branchRows, accountant: accountantRows, sales, acquisition, staffTargets };
   }
+
+  module.exports.buildKpiBoard = buildKpiBoard;
+
+  /* ملف KPI عند المدرب — «تظهر الأهداف المطلوبة التي تضعها الإدارة
+     ويتابع الملف حسب إدخاله للوصول للهدف»: أهدافُه (نطاق مدرب أو موظف)
+     لهذا الشهر بنسبة إنجاز كل واحد، وصفُّه من لوحة KPI بأرقامه، ومهامه. */
+  app.get('/api/kpi/mine', auth, requireRole('trainer', 'accountant', 'nutritionist', 'admin'), h(async (req, res) => {
+    const month = req.query.month || thisMonthStr();
+    const me = req.user.id;
+    const data = await Store.load(...TARGET_SOURCES);
+    const targets = data.targets
+      .filter((t) => Number(t.refId) === me && ['trainer', 'user'].includes(t.scope) && monthInPeriod(t.period, month))
+      .map((t) => decorateTarget(t, data))
+      .sort((a, b) => String(a.period).localeCompare(String(b.period)) || String(a.metricLabel).localeCompare(String(b.metricLabel), 'ar'));
+    const [board, kpis] = await Promise.all([buildKpiBoard(month, null), computeKpis(month)]);
+    res.json({
+      month,
+      targets,
+      row: board.trainers.find((t) => t.trainerId === me) || null,
+      kpi: kpis.find((k) => k.trainerId === me) || null,
+    });
+  }));
 
   app.get('/api/kpi/board', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     const month = req.query.month || thisMonthStr();
@@ -1166,3 +1218,4 @@ module.exports.METRIC_LABELS = METRIC_LABELS;
 module.exports.METRICS = METRICS;
 module.exports.METRIC_GROUPS = METRIC_GROUPS;
 module.exports.periodRange = periodRange;
+module.exports.primaryTrainerMap = primaryTrainerMap;

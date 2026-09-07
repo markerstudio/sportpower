@@ -140,10 +140,17 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
   /* «افتح عند المدرب العقود مع الباقات مع الأسعار»: المدرب المخوَّل
      يقرأ العقود ويرى أسعار باقاتها — لكنه لا يفتح عقدًا ولا يعدّله؛
      الإنشاء والتعديل يبقيان للإدارة والمحاسبة. */
+  /* «إضافة إنشاء العقد الإلكتروني وتحويل العقد لمشترك» في صفحة المدرب:
+     كل مدرب يفتح عقودًا لفرعه ويتابعها ويحوّلها — والسعر الذي اختاره
+     الزبون يبقى محجوبًا عمّن لم يُمنح رؤية الأسعار. */
+  const trainerBranchOnly = (req) => req.user.role === 'trainer';
+  const hidePriceFor = (user) => (c) => {
+    if (canSeePrices(user) || !c.submission) return c;
+    const { price, ...rest } = c.submission;
+    return { ...c, submission: rest };
+  };
+
   app.get('/api/contracts', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
-    if (req.user.role === 'trainer' && !canSeePrices(req.user)) {
-      return res.status(403).json({ error: 'ليست لديك صلاحية للاطّلاع على العقود.' });
-    }
     const { contracts, branches } = await Store.load('contracts', 'branches');
     const cur = await currencyMap();
     let list = contracts;
@@ -151,16 +158,19 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     // العقد بلا فرع عقدُ الشركة — يبقى للإدارة
     const mine = scopedBranchIds(req);
     if (mine) list = list.filter((c) => mine.includes(Number(c.branchId)));
-    // المدرب المخوَّل يرى عقود فرعه هو
-    if (req.user.role === 'trainer' && req.user.branchId != null) {
-      list = list.filter((c) => c.branchId == null || Number(c.branchId) === Number(req.user.branchId));
+    // المدرب يرى عقود فرعه هو — ومدرّبٌ بلا فرع لا يرى عقدًا
+    if (trainerBranchOnly(req)) {
+      list = req.user.branchId == null ? [] : list.filter((c) => Number(c.branchId) === Number(req.user.branchId));
     }
-    res.json(list.map((c) => contractView(c, branches, cur)).sort((a, b) => b.id - a.id));
+    res.json(list.map((c) => contractView(c, branches, cur)).map(hidePriceFor(req.user)).sort((a, b) => b.id - a.id));
   }));
 
-  app.post('/api/contracts', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  app.post('/api/contracts', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     const branches = await Store.all('branches');
     const branchId = Number(req.body.branchId) || null;
+    if (trainerBranchOnly(req) && (req.user.branchId == null || Number(branchId) !== Number(req.user.branchId))) {
+      return res.status(403).json({ error: 'تفتح العقود لفرعك أنت فقط.' });
+    }
     /* العقد لفرعٍ بعينه دائمًا: باقاته باقاتُ ذلك الفرع وعملتُه عملتُه.
        عقدٌ «لكل الفروع» كان يعرض للزبون باقات الأفرع كلها بعملة النظام. */
     if (!branchId) return res.status(400).json({ error: 'اختر فرع العقد — تُعرض للزبون باقات هذا الفرع بعملته.' });
@@ -180,11 +190,12 @@ module.exports = function registerClients(app, { auth, requireRole, h, notify,
     res.json(contractView(contract, branches, await currencyMap()));
   }));
 
-  app.put('/api/contracts/:id', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+  app.put('/api/contracts/:id', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
     const contract = await Store.get('contracts', req.params.id);
     if (!contract) return res.status(404).json({ error: 'العقد غير موجود.' });
     // المحاسب مقيّد بفرعه — لا يعدّل عقد فرعٍ آخر (كالإنشاء تمامًا)
     if (!branchAllowed(req.user, contract.branchId)) return denyOutOfScope(res);
+    if (trainerBranchOnly(req) && Number(contract.branchId) !== Number(req.user.branchId)) return denyOutOfScope(res);
     const patch = {};
     if (req.body.note !== undefined) patch.note = clean(req.body.note, 300);
     if (req.body.status !== undefined) {

@@ -1273,11 +1273,17 @@ app.post('/api/users/:id/anonymize', auth, requireRole('admin'), h(async (req, r
    Onboarding — تسجيل زبون جديد بخطوة واحدة:
    حساب + اشتراك + دفعة أولى + أول موعد (اختياريان)
    ============================================================ */
-app.post('/api/onboard', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+app.post('/api/onboard', auth, requireRole('admin', 'accountant', 'trainer'), h(async (req, res) => {
   const { name, phone, birthDate, residence, branchId, goal, subscription, payment, appointment, sourceTrainerId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'اسم المتدرب مطلوب.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'رقم الجوال مطلوب (يُستخدم لاسم المستخدم وواتساب).' });
   if (!branchAllowed(req.user, Number(branchId) || null)) return denyOutOfScope(res);
+  /* المدرب يفتح زبونًا جديدًا لفرعه هو فقط (تحويل عقد إلكتروني لمشترك
+     من صفحته) — ومدرّبٌ بلا فرع مُسنَد لا يفتح لأحد. */
+  if (req.user.role === 'trainer') {
+    if (req.user.branchId == null) return res.status(403).json({ error: 'حسابك بلا فرع مُسنَد — راجع الإدارة لإسناد فرعك أولًا.' });
+    if (Number(branchId) !== Number(req.user.branchId)) return denyOutOfScope(res);
+  }
   if (!subscription || !subscription.startDate || !subscription.endDate) {
     return res.status(400).json({ error: 'بيانات الاشتراك (الحصص والقيمة والتواريخ) مطلوبة.' });
   }
@@ -2855,10 +2861,26 @@ app.get('/api/dashboard/admin', auth, requireRole('admin'), h(async (req, res) =
 
 app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, res) => {
   const month = req.query.month || thisMonthStr();
-  const { sessions, appointments, users } = await Store.load('sessions', 'appointments', 'users');
+  const { sessions, appointments, users, traineeFlags } = await Store.load('sessions', 'appointments', 'users', 'traineeFlags');
   const mine = sessions.filter((s) => s.trainerId === req.user.id);
-  const monthAll = mine.filter((s) => monthOf(s.date) === month);
+  /* «أقدر أبحث بتاريخ بالحصص المنفذة وساعات التدريب»: from/to يحدّدان
+     نافذة الأرقام بدل الشهر — والشهر يبقى الافتراضي. */
+  const isDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const from = isDate(req.query.from) ? req.query.from : null;
+  const to = isDate(req.query.to) ? req.query.to : null;
+  const inRange = (s) => ((from || to) ? ((!from || s.date >= from) && (!to || s.date <= to)) : monthOf(s.date) === month);
+  const monthAll = mine.filter(inRange);
   const monthSessions = monthAll.filter(delivered);
+
+  /* نتائج ومشاكل متدربيه: من كان هو مدرّبهم الأساسي (الأكثر تدريبًا لهم
+     في آخر 90 يومًا) — لا كل من مرّ به مرة. */
+  const attrFrom = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0, 10); })();
+  const primary = require('./ops').primaryTrainerMap(sessions.filter((s) => s.date >= attrFrom));
+  const nameOfT = (id) => (users.find((u) => u.id === id) || {}).name || '#' + id;
+  const myFlags = traineeFlags
+    .filter((f) => primary[f.traineeId] === req.user.id)
+    .sort((a, b) => b.id - a.id)
+    .map((f) => ({ ...f, traineeName: nameOfT(f.traineeId) }));
   const todayAppts = appointments
     .filter((a) => a.trainerId === req.user.id && a.date === todayStr() && a.status === 'scheduled')
     .sort((a, b) => a.time.localeCompare(b.time));
@@ -2874,7 +2896,7 @@ app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, re
   const apptName = (a) => (a.traineeId ? nameOf(a.traineeId) : (a.prospectName || 'زائر Test'));
 
   res.json({
-    month,
+    month, from, to,
     kpis: {
       sessionsMonth: monthSessions.length,
       persons: monthSessions.length,
@@ -2882,6 +2904,11 @@ app.get('/api/dashboard/trainer', auth, requireRole('trainer'), h(async (req, re
       hours: trainerHours(monthSessions),
       today: todayAppts.length,
       absences: monthAll.length - monthSessions.length,
+    },
+    flags: {
+      openProblems: myFlags.filter((f) => f.kind === 'problem' && f.status !== 'closed'),
+      results: myFlags.filter((f) => f.kind === 'result').slice(0, 20),
+      problemsTotal: myFlags.filter((f) => f.kind === 'problem').length,
     },
     todayAppointments: todayAppts.map((a) => ({ ...a, traineeName: apptName(a) })),
     upcomingSoon: soon.map((a) => ({ ...a, traineeName: apptName(a) })),
@@ -3222,6 +3249,20 @@ async function buildMonthlyReport(month, branch) {
     };
   };
 
+  /* «تقرير المدربين تعديله يطابق KPI المدربين»: صفوف المدربين هنا هي
+     صفوف لوحة KPI نفسها (المصدر واحد فلا يختلف رقم بين الشاشتين)، ومعها
+     تقرير المحاسب وتقرير المبيعات من اللوحة ذاتها. */
+  const board = await require('./ops').buildKpiBoard(month, branch);
+  const kpiTrainers = board.trainers.map((t) => ({
+    trainerId: t.trainerId, trainer: t.name, branch: t.branch, branchId: t.branchId,
+    officeHours: t.officeHours, hours: t.trainingHours, sessions: t.sessions, persons: t.sessions,
+    uniqueTrainees: t.trainedPeople, stories: t.stories, reels: t.reels,
+    newClients: t.newClients, newClientsTotal: t.newClientsTotal,
+    referredMonth: t.newClients, referredTotal: t.newClientsTotal,
+    results: t.results, problems: t.problems, goalsCreated: t.goalsCreated,
+    tasksPct: t.tasksPct, targetsPct: t.targetsPct,
+  }));
+
   const scoped = branches.filter((b) => inBranchScope(branch, b.id));
   const prev = prevMonthOf(month);
   const branchRows = scoped.map((b) => {
@@ -3250,11 +3291,37 @@ async function buildMonthlyReport(month, branch) {
     })),
   };
 
+  /* تقرير المحاسب: بالفرع — التحصيل والاشتراكات الجديدة والتجديد
+     والتجميد والعائد منه والمجمّدون الآن، ومعه المطلوب/المحصَّل/المتبقي. */
+  const cur = await currencyMap();
+  const paidBySub = await Store.groupSum('payments', 'amount', 'subscriptionId', null);
+  const subRows = subscriptions.map((x) => ({ ...x, status: subStatus(x), paid: paidBySub[x.id] || 0 }));
+  const collection = collectionSummary(subRows.filter((x) => inBranchScope(branch, x.branchId)), cur, scoped);
+  const accountant = board.branches.map((b) => ({
+    branchId: b.branchId, branch: b.branch, currency: cur.of(b.branchId),
+    collected: b.collected, newSubs: b.newSubs, renewals: b.renewals,
+    returnedFromFreeze: b.returnedFromFreeze, freezesMonth: b.freezesMonth, frozenNow: b.frozenNow,
+    freezeLimit: b.freezeLimit, freezeOverLimit: b.freezeOverLimit,
+    activeTrainees: b.activeTrainees, retentionPct: b.retentionPct,
+    ...(() => {
+      const c = (collection.byBranch || []).find((x) => x.branchId === b.branchId);
+      return c ? { required: c.required, collectedActive: c.collected, remaining: c.remaining, activePaid: c.active, frozenPaid: c.frozenPaid }
+        : { required: 0, collectedActive: 0, remaining: 0, activePaid: 0, frozenPaid: 0 };
+    })(),
+  }));
+
   return {
-    month, prevMonth: prev, trainers, branches: branchRows,
+    month, prevMonth: prev,
+    trainers: kpiTrainers,
+    /* الصفوف القديمة (حصص/أشخاص) تبقى لمن يحتاجها برمجيًا */
+    trainersLegacy: trainers,
+    branches: branchRows,
     totalSessions: monthSessions.length,
     totalAbsences: monthAll.length - monthSessions.length,
     flags: flagsSection,
+    accountant,
+    collection,
+    sales: board.sales,
   };
 }
 
@@ -3515,11 +3582,32 @@ app.get('/api/reports/export.csv', auth, requireRole('admin', 'accountant'), h(a
   const lines = [];
   lines.push(`تقرير شهر ${month}`);
   lines.push('');
-  lines.push('المدرب,الفرع,عدد الحصص,عدد الأشخاص,متدربون فريدون,ساعات التدريب,ساعات مكتبية,ستوري,ريلز,نتائج,مشاكل,زبائن عن طريقه (الشهر),زبائن عن طريقه (الكل),إنجاز المهام %');
-  r.trainers.forEach((t) => lines.push(`${cell(t.trainer)},${cell(t.branch)},${t.sessions},${t.persons},${t.uniqueTrainees},${t.hours},${t.officeHours},${t.stories},${t.reels},${t.results},${t.problems},${t.referredMonth},${t.referredTotal},${t.tasksPct ?? '-'}`));
+  // أعمدة KPI المدربين نفسها — التقرير يطابق اللوحة
+  lines.push('المدرب,الفرع,ساعات مكتبية,ساعات تدريب,عدد الأشخاص,ستوريات,ريلز,زبائن جدد (الشهر),زبائن جدد (الكل),نتائج,مشاكل,أهداف وضعها');
+  r.trainers.forEach((t) => lines.push(`${cell(t.trainer)},${cell(t.branch)},${t.officeHours},${t.hours},${t.uniqueTrainees},${t.stories},${t.reels},${t.newClients},${t.newClientsTotal},${t.results},${t.problems},${t.goalsCreated}`));
   lines.push('');
-  lines.push(`الفرع,عدد الحصص,ساعات التدريب,متدربون فعالون,التحصيل,الغيابات,نسبة الحضور %,حصص ${r.prevMonth},تحصيل ${r.prevMonth}`);
-  r.branches.forEach((b) => lines.push(`${cell(b.branch)},${b.sessions},${b.hours},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevSessions},${b.prevCollected}`));
+  lines.push(`الفرع,متدربون فعالون,التحصيل,الغيابات,نسبة الحضور %,تحصيل ${r.prevMonth}`);
+  r.branches.forEach((b) => lines.push(`${cell(b.branch)},${b.activeTrainees},${b.collected},${b.missed},${b.attendancePct ?? '-'},${b.prevCollected}`));
+
+  // تقرير المحاسب — بالفرع
+  lines.push('');
+  lines.push('تقرير المحاسب — الفرع,العملة,تحصيل الشهر,المطلوب من الفعّالين,المحصَّل منهم,المتبقي عليهم,مشتركون جدد,تجديد,عائد من التجميد,تجميد الشهر,مجمّدون الآن,سقف التجميد,الفعّالون,نسبة التجديد %');
+  (r.accountant || []).forEach((a) => lines.push(`${cell(a.branch)},${a.currency},${a.collected},${a.required},${a.collectedActive},${a.remaining},${a.newSubs},${a.renewals},${a.returnedFromFreeze},${a.freezesMonth},${a.frozenNow},${a.freezeLimit ?? '-'},${a.activeTrainees},${a.retentionPct ?? '-'}`));
+
+  // تقرير المبيعات
+  if (r.sales) {
+    const sl = r.sales;
+    lines.push('');
+    lines.push('تقرير المبيعات,القيمة');
+    lines.push(`أرقام جديدة,${sl.newNumbers}`);
+    lines.push(`حصص تجريبية (test),${sl.tests}`);
+    lines.push(`حضروا التجربة,${sl.testsAttended}`);
+    lines.push(`لم يحضروا (no-show),${sl.noShow}`);
+    lines.push(`عملاء أُغلقوا (اشتركوا),${sl.newClients}`);
+    lines.push(`نسبة الإغلاق %,${sl.closingRate ?? '-'}`);
+    lines.push(`عائد من التجميد,${sl.returnedFromFreeze}`);
+    Object.entries(sl.byChannel || {}).forEach(([k, v]) => lines.push(`قناة: ${cell(k)},${v}`));
+  }
 
   // Branch Health Score — صحة كل فرع من 100
   try {
