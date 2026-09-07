@@ -257,10 +257,16 @@ async function viewTrainerDash(root) {
   const container = el('div', { class: 'content' });
   root.append(container);
 
+  /* «أقدر أبحث بتاريخ بالحصص المنفذة وساعات التدريب»: نافذة من/إلى
+     تُحدّث أرقام اللوحة — والفارغ يعني الشهر الحالي. تبقى في العنوان. */
+  const state = urlState({ from: '', to: '' }, 'kp');
+
   async function render() {
+    state.sync();
     container.innerHTML = '';
     container.append(spinnerCard());
-    const data = await API.get('/api/dashboard/trainer');
+    const rangeQ = (state.from || state.to) ? `?from=${state.from}&to=${state.to}` : '';
+    const data = await API.get('/api/dashboard/trainer' + rangeQ);
     container.innerHTML = '';
 
     // تنبيه قبل الحصة
@@ -269,10 +275,22 @@ async function viewTrainerDash(root) {
         `⏰ تنبيه: لديك حصة قريبة مع ${a.traineeName} اليوم الساعة ${a.time}.`));
     });
 
+    const fromIn = input({ type: 'date', value: state.from, style: 'width:150px', onchange: (e) => { state.from = e.target.value; render(); } });
+    const toIn = input({ type: 'date', value: state.to, style: 'width:150px', onchange: (e) => { state.to = e.target.value; render(); } });
+    const monthShift = (n) => { const d = new Date(); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
+    const setRange = (f, t) => { state.from = f; state.to = t; render(); };
+    const ranged = !!(state.from || state.to);
+    const rangeLabel = ranged ? `${state.from || '…'} ← ${state.to || '…'}` : 'هذا الشهر';
+    container.append(el('div', { class: 'card filters' },
+      field('من تاريخ', fromIn), field('إلى تاريخ', toIn),
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => setRange(monthShift(-1), todayISO()) }, 'آخر ٣٠ يومًا'),
+      el('button', { class: 'btn btn--outline btn--sm', onclick: () => setRange(monthShift(-3), todayISO()) }, 'آخر ٣ أشهر'),
+      ranged ? el('button', { class: 'btn btn--ghost btn--sm', onclick: () => setRange('', '') }, 'هذا الشهر') : el('span')));
+
     const k = data.kpis;
     container.append(el('div', { class: 'kpis', style: 'grid-template-columns:repeat(auto-fit,minmax(230px,1fr))' },
-      kpiHero(k.sessionsMonth, 'حصة نفذتها هذا الشهر', 'dumbbell'),
-      kpiHero(k.hours, 'ساعة تدريب', 'clock', 'green')));
+      kpiHero(k.sessionsMonth, `حصة منفذة — ${rangeLabel}`, 'dumbbell'),
+      kpiHero(k.hours, `ساعة تدريب — ${rangeLabel}`, 'clock', 'green')));
     container.append(el('div', { class: 'kpis' },
       kpiTile(k.today, 'مواعيد اليوم', 'calendar'),
       kpiTile(k.persons, 'أشخاص دربتهم', 'users'),
@@ -282,11 +300,12 @@ async function viewTrainerDash(root) {
       'إن درّبت أكثر من متدرب في الساعة نفسها فهي ساعة تدريب واحدة عليك — والعدد الفعلي للأشخاص يُحتسب كما هو. '
       + 'وتسجيل الغياب يخصم حصة من المتدرب دون أن يُحتسب حصة منفَّذة لك.'));
 
+    /* مشاكل متدربيه ونتائجهم — «المشاكل تظهر عند المدرب في حال إنه
+       يدرّب أكثر الوقت عند المتدرب»: من هو مدرّبهم الأساسي يراها هنا. */
+    renderTrainerFlags(container, data.flags);
+
     // المتابعة اليومية: سجل اليوم + مهامي (KPI)
     await renderTrainerOps(container);
-
-    // البرامج التدريبية — تُربط تلقائيًا بكل المتدربين
-    await renderTrainerPrograms(container, render);
 
     /* جدول اليوم: برنامج الفرع كاملًا مع اختيار المدرب — لا مواعيد المدرب وحده */
     const schedCard = el('div', { class: 'card' });
@@ -297,6 +316,30 @@ async function viewTrainerDash(root) {
   }
 
   await render();
+}
+
+/* مشاكل متدربي المدرب الأساسي ونتائجهم — سرّية عن المتدرب */
+function renderTrainerFlags(container, flags) {
+  if (!flags) return;
+  const open = flags.openProblems || [];
+  const results = flags.results || [];
+  if (!open.length && !results.length) return;
+  const link = (f) => el('a', { href: '#/trainee/' + f.traineeId, style: 'color:var(--action);text-decoration:none;font-weight:600' }, f.traineeName);
+  const card = el('div', { class: 'card' },
+    el('h3', { class: 'card__title' }, `متدربوك — مشاكل مفتوحة (${open.length}) ونتائج (${results.length}) 🔒`,
+      el('a', { class: 'btn btn--outline btn--sm', href: '#/my-kpi' }, 'أهدافي وKPI ←')),
+    el('div', { style: 'font-size:12px;color:var(--app-muted);margin-bottom:8px' },
+      'تظهر لك مشاكل ونتائج المتدربين الذين أنت مدرّبهم الأساسي (الأكثر تدريبًا لهم في آخر ٩٠ يومًا) — وتُحسب في KPI الخاص بك. لا يراها المتدرب.'));
+  if (open.length) {
+    card.append(dataTable(['المتدرب', 'المشكلة', 'التفصيل', 'الخطورة', 'التاريخ'],
+      open.map((f) => [link(f), f.title, f.note || '—', flagTag(f), f.date])));
+  }
+  if (results.length) {
+    card.append(el('h4', { style: 'margin:12px 0 6px;font-size:13px;color:var(--app-muted)' }, '🎯 نتائج حقّقوها'),
+      dataTable(['المتدرب', 'النتيجة', 'التفصيل', 'التاريخ'],
+        results.map((f) => [link(f), f.title, f.note || '—', f.date])));
+  }
+  container.append(card);
 }
 
 /* جدول اليوم للمدرب — البرنامج لكل الفرع مع فلتر المدرب.
@@ -1829,17 +1872,21 @@ function openPhotosUploadModal(onDone, traineeId) {
   const preview = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' });
   let images = [];
 
-  fileIn.addEventListener('change', () => {
+  const status = el('div', { style: 'font-size:12px;color:var(--app-muted);min-height:16px' });
+  fileIn.addEventListener('change', async () => {
     images = [];
     preview.innerHTML = '';
-    [...fileIn.files].slice(0, 8).forEach((f) => {
-      const r = new FileReader();
-      r.onload = () => {
-        images.push(r.result);
-        preview.append(el('img', { src: r.result, style: 'height:90px;border-radius:8px;border:1px solid var(--app-line)' }));
-      };
-      r.readAsDataURL(f);
-    });
+    const files = [...fileIn.files].slice(0, 8);
+    status.textContent = files.length ? 'جارٍ تجهيز الصور…' : '';
+    // تصغير وتحويل في المتصفح — صور الجوال الكبيرة كانت تُرفض عند الخادم
+    for (const f of files) {
+      try {
+        const data = await compressImage(f);
+        images.push(data);
+        preview.append(el('img', { src: data, style: 'height:90px;border-radius:8px;border:1px solid var(--app-line)' }));
+      } catch (ex) { toast(ex.message, true); }
+    }
+    status.textContent = images.length ? `${images.length} صورة جاهزة للرفع.` : '';
   });
 
   const close = modal('إضافة صور متابعة', [
@@ -1861,7 +1908,7 @@ function openPhotosUploadModal(onDone, traineeId) {
     },
       field('تاريخ الالتقاط', dateIn),
       field('ملاحظة', notesIn),
-      el('div', { class: 'span-2' }, field('الصور (حتى 8 صور)', fileIn), preview),
+      el('div', { class: 'span-2' }, field('الصور (حتى 8 صور)', fileIn), status, preview),
       el('div', { class: 'span-2' }, el('button', { class: 'btn btn--accent btn--full', type: 'submit' }, 'حفظ الصور'))),
   ], { wide: true });
 }

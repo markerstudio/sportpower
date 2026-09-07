@@ -38,7 +38,8 @@ async function viewPackages(root) {
       API.get('/api/packages'),
       API.get('/api/contracts'),
       API.get('/api/branches'),
-      API.get('/api/settings').catch(() => ({})),
+      // مفتاح الواتساب من الإعدادات — للإدارة والمحاسبة؛ المدرب يأخذ الافتراضي
+      ['admin', 'accountant'].includes(API.user.role) ? API.get('/api/settings').catch(() => ({})) : Promise.resolve({}),
     ]);
     OPS_SETTINGS.waCountryCode = settings.waCountryCode || OPS_SETTINGS.waCountryCode || '970';
     container.innerHTML = '';
@@ -52,15 +53,19 @@ async function viewPackages(root) {
       value: state.branch || '', style: 'width:180px',
       onchange: (e) => { state.branch = e.target.value; state.sync(); render(); },
     });
+    /* المدرب: عقود فرعه فقط — يفتح عقدًا ويحوّله لمشترك، بلا إدارة للباقات */
+    const isTrainer = API.user.role === 'trainer';
     container.append(el('div', { class: 'card filters' },
-      branches.length > 1 ? field('الفرع', branchFilter) : el('span'),
+      branches.length > 1 && !isTrainer ? field('الفرع', branchFilter) : el('span'),
       el('div', { style: 'flex:1' }),
       el('button', { class: 'btn btn--accent', onclick: () => openContractModal(render, branches) }, '+ فتح عقد لزبون جديد'),
-      el('button', { class: 'btn btn--outline', onclick: () => openPackageModal(render, branches) }, '+ باقة جديدة')));
+      isTrainer ? el('span') : el('button', { class: 'btn btn--outline', onclick: () => openPackageModal(render, branches) }, '+ باقة جديدة')));
 
     container.append(el('div', { class: 'alert alert--info' },
-      'الباقات تظهر للزبون داخل العقد الإلكتروني بكل أسعارها قبل أن يشترك، وتظهر على ملف كل مشترك للتجديد أو الترقية. '
-      + 'المدرب لا يرى الأسعار إطلاقًا.'));
+      isTrainer
+        ? 'أرسل رابط العقد لزبون جديد على واتساب — يختار باقته ويعبّي بياناته، ثم حوّله لمشترك في فرعك بضغطة.'
+        : 'الباقات تظهر للزبون داخل العقد الإلكتروني بكل أسعارها قبل أن يشترك، وتظهر على ملف كل مشترك للتجديد أو الترقية. '
+        + 'المدرب لا يرى الأسعار إطلاقًا.'));
 
     /* --- الباقات: قائمةُ الأنواع على جنب والباقاتُ إلى جانبها ---
        «تعديل الباقات انو تظهر الباقات ع جنب وفيها الباقات»: كانت كل
@@ -115,10 +120,12 @@ async function viewPackages(root) {
       railItem('', 'كل الباقات', packages.length, null),
       ...PACKAGE_CATEGORIES.map(([key, label]) => railItem(key, label, counts[key] || 0, activeCount(key))));
 
-    container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`),
-      el('div', { class: 'pkg-layout' }, rail, grid)));
-    paint();
+    if (!isTrainer) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `باقات الاشتراك (${packages.length})`),
+        el('div', { class: 'pkg-layout' }, rail, grid)));
+      paint();
+    }
 
     /* --- العقود --- */
     const pending = contracts.filter((c) => c.status === 'submitted');
@@ -259,6 +266,7 @@ function openContractModal(onDone, branches) {
   /* العقد لفرعٍ بعينه: باقاتُه باقاتُ الفرع وعملتُه عملةُ الفرع — لا «كل الفروع» */
   const branchSel = select(branches.map((b) => [b.id, b.name]),
     API.user.branchId && branches.some((b) => b.id === API.user.branchId) ? { value: API.user.branchId } : {});
+  if (API.user.role === 'trainer') branchSel.disabled = true; // عقود فرعه هو
   const contractCurLabel = el('div', { style: 'font-size:12px;color:var(--app-muted)' });
   const syncContractCur = () => { contractCurLabel.textContent = `تُعرض للزبون باقات هذا الفرع بعملته: ${curInfo(branchCurrency(Number(branchSel.value) || null)).name}.`; };
   branchSel.addEventListener('change', syncContractCur); syncContractCur();
@@ -328,7 +336,7 @@ function submittedContractCard(c, onDone) {
       el('span', { class: 'macro' }, 'الجوال ', el('b', { dir: 'ltr' }, s.phone || '—')),
       el('span', { class: 'macro' }, 'الفرع ', el('b', {}, c.branchName)),
       el('span', { class: 'macro' }, 'الحصص ', el('b', {}, String(s.sessions))),
-      el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(s.price, s.currency || c.currency || c.branchId))),
+      s.price !== undefined ? el('span', { class: 'macro' }, 'القيمة ', el('b', {}, fmtMoney(s.price, s.currency || c.currency || c.branchId))) : '',
       s.packageCategoryLabel ? el('span', { class: 'macro' }, 'النوع ', el('b', {}, s.packageCategoryLabel)) : '',
       el('span', { class: 'macro' }, 'الهدف ', el('b', {}, GOAL_LABELS[s.goal] || '—')),
       s.birthDate ? el('span', { class: 'macro' }, 'الميلاد ', el('b', {}, s.birthDate)) : ''),

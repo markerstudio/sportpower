@@ -34,7 +34,7 @@ async function req(method, p, { token, body } = {}) {
   let json = null; try { json = await res.json(); } catch (e) {}
   return { status: res.status, json };
 }
-const login = async (username, password) => (await req('POST', '/api/login', { body: { username, password } })).json;
+const login = async (username, password) => (await req('POST', '/api/login', { body: { username, password: (S.trainerPass || {})[username] || password } })).json;
 
 test('health check responds ok', async () => {
   const r = await req('GET', '/api/health');
@@ -525,11 +525,16 @@ test('trainer permissions: prices and renewal are granted by name, not to every 
   await req('POST', '/api/me/password', { token: d.token, body: { current: 'trainer-pass-1', next: 'trainer-own-pass-1' } });
   d = await login(t.username, 'trainer-own-pass-1');
   const tok = d.token;
+  S.trainerPass = { [t.username]: 'trainer-own-pass-1' };
 
   const pkgs = (await req('GET', '/api/packages', { token: tok })).json;
   assert.ok(pkgs.length, 'a trainer still sees the packages');
   assert.ok(pkgs.every((p) => p.price === undefined), 'but never their prices');
-  assert.equal((await req('GET', '/api/contracts', { token: tok })).status, 403, 'and no contracts');
+  /* العقود صارت لكل مدرب (يفتح ويحوّل لفرعه) — لكن السعر الذي اختاره
+     الزبون يبقى محجوبًا عنه ما لم يُمنح رؤية الأسعار. */
+  const contractsNoGrant = await req('GET', '/api/contracts', { token: tok });
+  assert.equal(contractsNoGrant.status, 200, 'contracts open for every trainer');
+  assert.ok(contractsNoGrant.json.every((c) => !c.submission || c.submission.price === undefined), 'but the chosen price is hidden');
 
   const trainees = (await req('GET', '/api/users?role=trainee', { token: S.admin })).json;
   const withSub = (await req('GET', '/api/subscriptions?limit=1', { token: S.admin })).json.rows[0];
@@ -994,4 +999,127 @@ test('targets: management can add a free (manual) goal on any scope and update i
   if (rev) assert.equal((await req('PUT', '/api/targets/' + rev.id, { token: S.admin, body: { actual: 1 } })).status, 400);
   await req('DELETE', '/api/targets/' + t.id, { token: S.admin });
   await req('DELETE', '/api/targets/' + t2.id, { token: S.admin });
+});
+
+/* ============================================================
+   صفحة المدرب: العقود، KPI الخاص به، الساعات المكتبية، نسبة المشاكل
+   لمدرّبه الأساسي، نافذة التاريخ، ورفعُ الصور. ولوحة KPI والتقرير الشهري.
+   ============================================================ */
+test('trainer: opens a contract for own branch only, and converts it to a subscriber', async () => {
+  const omar = (await login('omar', '123456')).token;
+  assert.equal((await req('POST', '/api/contracts', { token: omar, body: { branchId: 2, validDays: 5 } })).status, 403, 'not another branch');
+  const c = (await req('POST', '/api/contracts', { token: omar, body: { branchId: 1, validDays: 5, prospectName: 'زبون المدرب' } }));
+  assert.equal(c.status, 200, 'own branch is fine');
+  const list = (await req('GET', '/api/contracts', { token: omar })).json;
+  assert.ok(list.some((x) => x.id === c.json.id), 'the trainer sees the contract');
+  assert.ok(list.every((x) => Number(x.branchId) === 1), 'and only own-branch contracts');
+
+  // الزبون يعبّي العقد — ثم يحوّله المدرب لمشترك في فرعه
+  const pub = (await req('GET', '/api/public/contract/' + c.json.token)).json;
+  const pkg = pub.packages[0];
+  assert.equal((await req('POST', '/api/public/contract/' + c.json.token, { body: {
+    name: 'زبون المدرب', phone: '0599777911', goal: 'loss', packageId: pkg.id, agreed: true,
+  } })).status, 200);
+  const submitted = (await req('GET', '/api/contracts', { token: omar })).json.find((x) => x.id === c.json.id);
+  assert.equal(submitted.status, 'submitted');
+  const me = (await req('GET', '/api/me', { token: omar })).json;
+  const granted = me.canSeePrices || me.canRenew;
+  assert.equal(submitted.submission.price === undefined, !granted, 'the chosen price is hidden exactly when the trainer has no price grant');
+
+  const wrongBranch = await req('POST', '/api/onboard', { token: omar, body: {
+    name: 'زبون المدرب', phone: '0599777911', branchId: 2, goal: 'loss',
+    subscription: { totalSessions: pkg.sessions, price: 100, startDate: '2026-09-01', endDate: '2026-10-01' },
+  } });
+  assert.equal(wrongBranch.status, 403, 'a trainer cannot onboard into another branch');
+  const ok = await req('POST', '/api/onboard', { token: omar, body: {
+    name: 'زبون المدرب', phone: '0599777911', branchId: 1, goal: 'loss', contractId: c.json.id,
+    subscription: { totalSessions: pkg.sessions, price: 100, startDate: '2026-09-01', endDate: '2026-10-01' },
+  } });
+  assert.equal(ok.status, 200, 'own branch onboarding by the trainer succeeds');
+});
+
+test('trainer: daily log accepts office hours directly', async () => {
+  const omar = (await login('omar', '123456')).token;
+  const r = await req('POST', '/api/trainer-logs', { token: omar, body: { date: '2026-09-06', officeHours: 4.5, stories: 2 } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.workHours, 4.5, 'office hours stored as entered');
+  const r2 = await req('POST', '/api/trainer-logs', { token: omar, body: { date: '2026-09-07', checkIn: '09:00', checkOut: '12:00' } });
+  assert.equal(r2.json.workHours, 3, 'and still computed from check-in/out when left empty');
+});
+
+test('trainer: problems are attributed to the trainer who trains the trainee most, and reach their dashboard', async () => {
+  // متدرب جديد: عمر درّبه ثلاث مرات وهدى مرة — عمر مدرّبه الأساسي
+  const ob = (await req('POST', '/api/onboard', { token: S.admin, body: {
+    name: 'متدرب النسبة', phone: '0599777921', branchId: 1, goal: 'loss',
+    subscription: { totalSessions: 20, price: 500, startDate: '2026-08-01', endDate: '2027-08-01' },
+  } })).json;
+  const tid = ob.user ? ob.user.id : ob.traineeId || (ob.trainee && ob.trainee.id);
+  const today = new Date();
+  const d = (n) => { const x = new Date(today); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  for (const [trainerId, day] of [[2, 3], [2, 5], [2, 8], [3, 4]]) {
+    assert.equal((await req('POST', '/api/sessions', { token: S.admin, body: {
+      traineeId: tid, trainerId, date: d(day), time: '09:00', duration: 60, style: 'قوة',
+    } })).status, 200);
+  }
+  assert.equal((await req('POST', '/api/trainee-flags', { token: S.admin, body: {
+    traineeId: tid, kind: 'problem', title: 'انقطاع متكرر', severity: 'medium', date: d(1),
+  } })).status, 200);
+
+  const month = d(1).slice(0, 7);
+  const board = (await req('GET', '/api/kpi/board?month=' + month, { token: S.admin })).json;
+  const omarRow = board.trainers.find((t) => t.trainerId === 2);
+  const hudaRow = board.trainers.find((t) => t.trainerId === 3);
+  assert.ok(omarRow.problems >= 1, 'the primary trainer carries the problem');
+  const hudaProblems = hudaRow ? hudaRow.problems : 0;
+  // هدى درّبته مرة واحدة — لا يُنسب إليها
+  const flagsHuda = (await req('GET', '/api/dashboard/trainer', { token: (await login('huda', '123456')).token })).json.flags;
+  assert.ok(!flagsHuda.openProblems.some((f) => f.traineeId === tid), 'the occasional trainer does not see it');
+  const omar = (await login('omar', '123456')).token;
+  const dash = (await req('GET', '/api/dashboard/trainer', { token: omar })).json;
+  assert.ok(dash.flags.openProblems.some((f) => f.traineeId === tid), 'the primary trainer sees it on the dashboard');
+  assert.ok(hudaProblems >= 0);
+
+  // نافذة التاريخ على لوحة المدرب: من/إلى تُحدّد الحصص المعدودة
+  const ranged = (await req('GET', `/api/dashboard/trainer?from=${d(6)}&to=${d(2)}`, { token: omar })).json;
+  assert.equal(ranged.from, d(6));
+  assert.ok(ranged.kpis.sessionsMonth >= 2, 'sessions inside the window are counted');
+  const narrow = (await req('GET', `/api/dashboard/trainer?from=${d(30)}&to=${d(20)}`, { token: omar })).json;
+  assert.ok(narrow.kpis.sessionsMonth < ranged.kpis.sessionsMonth || narrow.kpis.sessionsMonth === 0, 'a window without those sessions counts fewer');
+});
+
+test('trainer: /api/kpi/mine returns management targets with progress and the KPI row', async () => {
+  const month = new Date().toISOString().slice(0, 7);
+  await req('POST', '/api/targets', { token: S.admin, body: { scope: 'trainer', refId: 2, metric: 'sessions', period: month, value: 30 } });
+  const omar = (await login('omar', '123456')).token;
+  const mine = (await req('GET', '/api/kpi/mine?month=' + month, { token: omar })).json;
+  assert.equal(mine.month, month);
+  const t = mine.targets.find((x) => x.metric === 'sessions');
+  assert.ok(t, 'the trainer sees the target set by management');
+  assert.ok(typeof t.actual === 'number' && t.pct !== undefined, 'with actual and progress');
+  assert.ok(mine.row && mine.row.trainerId === 2, 'and their own KPI row');
+  assert.ok('officeHours' in mine.row && 'stories' in mine.row && 'goalsCreated' in mine.row);
+  // متدرب لا يصل إليه
+  assert.notEqual((await req('GET', '/api/kpi/mine', { token: S.trainee })).status, 200, 'a trainee has no KPI file');
+});
+
+test('monthly report: trainers match the KPI board columns, and accountant + sales sections exist', async () => {
+  const month = new Date().toISOString().slice(0, 7);
+  const [rep, board] = await Promise.all([
+    req('GET', '/api/reports/monthly?month=' + month, { token: S.admin }),
+    req('GET', '/api/kpi/board?month=' + month, { token: S.admin }),
+  ]);
+  assert.equal(rep.status, 200);
+  const r = rep.json;
+  for (const t of r.trainers) {
+    const b = board.json.trainers.find((x) => x.trainerId === t.trainerId);
+    assert.ok(b, 'every report trainer is on the board');
+    assert.equal(t.officeHours, b.officeHours); assert.equal(t.hours, b.trainingHours);
+    assert.equal(t.uniqueTrainees, b.trainedPeople); assert.equal(t.stories, b.stories);
+    assert.equal(t.results, b.results); assert.equal(t.problems, b.problems); assert.equal(t.goalsCreated, b.goalsCreated);
+  }
+  assert.ok(Array.isArray(r.accountant) && r.accountant.length, 'accountant report per branch');
+  assert.ok(r.accountant.every((a) => 'collected' in a && 'required' in a && 'remaining' in a && 'frozenNow' in a));
+  assert.ok(r.sales && 'newNumbers' in r.sales && 'closingRate' in r.sales && 'tests' in r.sales, 'sales report');
+  const csv = await fetch(base + '/api/reports/export.csv?month=' + month, { headers: { Authorization: 'Bearer ' + S.admin } }).then((x) => x.text());
+  assert.ok(csv.includes('تقرير المحاسب') && csv.includes('تقرير المبيعات') && csv.includes('أهداف وضعها'), 'CSV carries both new sections');
 });

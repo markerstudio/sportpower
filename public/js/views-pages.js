@@ -390,6 +390,8 @@ async function openOnboardModal(onDone, prefill = {}) {
   /* مكان السكن: يُجمَّع في تقرير المناطق — «من أي منطقة يأتي مشتركونا فعلًا» */
   const residenceIn = input({ placeholder: 'الحي / المنطقة — مثال: الرمال', value: prefill.residence || '' });
   const branchSel = select(branches.map((b) => [b.id, b.name]), prefill.branchId ? { value: prefill.branchId } : {});
+  /* المدرب يفتح الزبون لفرعه هو فقط (تحويل عقد من صفحته) */
+  if (API.user.role === 'trainer' && API.user.branchId != null) { branchSel.value = String(API.user.branchId); branchSel.disabled = true; }
   const goalSel = select(Object.entries(GOAL_LABELS), prefill.goal ? { value: prefill.goal } : {});
   const referralIn = input({ placeholder: 'مثال: SP-AHMAD (اختياري)', dir: 'ltr', style: 'text-align:end' });
   const sourceTrainerSel = select([['', 'لا — قناة أخرى'], ...trainers.map((t) => [t.id, t.name])]);
@@ -1132,11 +1134,15 @@ function openInbodyModal(onDone, traineeId, trainees, existing) {
     });
   }
 
-  fileIn.addEventListener('change', () => {
+  fileIn.addEventListener('change', async () => {
     const f = fileIn.files[0];
     if (!f) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
+    // ورقة InBody المصوَّرة بالجوال كبيرة — تُصغَّر هنا قبل الرفع والـ OCR
+    let compressed;
+    try { compressed = await compressImage(f, { maxSide: 2000, quality: 0.9 }); }
+    catch (ex) { toast(ex.message, true); return; }
+    const reader = { result: compressed };
+    await (async () => {
       imageBase64 = reader.result;
       preview.style.display = '';
       preview.innerHTML = `<img src="${imageBase64}" style="max-height:160px;border-radius:8px">`;
@@ -1166,8 +1172,7 @@ function openInbodyModal(onDone, traineeId, trainees, existing) {
           ocrStatus.textContent = res.reason;
         }
       } catch (ex) { ocrStatus.textContent = 'تعذّرت القراءة التلقائية — أدخل القيم يدويًا.'; }
-    };
-    reader.readAsDataURL(f);
+    })();
   });
 
   const close = modal(existing ? `تصحيح قراءة InBody — ${existing.date}` : 'رفع قراءة InBody', [
@@ -1294,12 +1299,11 @@ function openMealModal(onDone) {
   const prep = textarea({ placeholder: 'طريقة التحضير…' });
   const fileIn = input({ type: 'file', accept: 'image/*' });
   let imageBase64 = null;
-  fileIn.addEventListener('change', () => {
+  fileIn.addEventListener('change', async () => {
     const f = fileIn.files[0];
     if (!f) return;
-    const r = new FileReader();
-    r.onload = () => { imageBase64 = r.result; };
-    r.readAsDataURL(f);
+    try { imageBase64 = await compressImage(f, { maxSide: 1200 }); }
+    catch (ex) { toast(ex.message, true); imageBase64 = null; }
   });
 
   const close = modal('إضافة وجبة إلى المكتبة', [
@@ -1611,26 +1615,17 @@ async function viewReports(root) {
     }
     container.append(goalsCard);
 
-    const kpiOf = (name) => kpis.find((k) => k.name === name) || {};
+    /* تقرير المدربين = جدول KPI المدربين نفسه (الأعمدة والأرقام من
+       المصدر ذاته) — بطلب العميل. */
+    const kpiOf = (id) => kpis.find((k) => k.trainerId === id) || {};
     container.append(el('div', { class: 'card' },
-      el('h3', { class: 'card__title' },
-        `تقرير المدربين — ${report.month} (إجمالي الحصص: ${report.totalSessions}`
-        + (report.totalAbsences ? ` · غيابات مخصومة: ${report.totalAbsences})` : ')')),
+      el('h3', { class: 'card__title' }, `تقرير المدربين — ${report.month}`,
+        el('span', { style: 'font-size:12px;color:var(--app-muted);font-weight:400' }, 'الأعمدة نفسها في لوحة KPI المدربين')),
       el('div', { style: 'overflow-x:auto' },
-        dataTable(['المدرب', 'الفرع', 'عدد الحصص', 'عدد الأشخاص', 'متدربون فريدون', 'ساعات التدريب', 'ساعات مكتبية',
-          'ستوري', 'ريلز', 'نتائج', 'مشاكل', 'زبائن عن طريقه', 'إنجاز المهام', 'KPI'],
+        dataTable([...KPI_TRAINER_COLUMNS, 'KPI'],
           report.trainers.map((t) => {
-            const k = kpiOf(t.trainer);
-            return [t.trainer, t.branch || '—',
-              el('span', { class: 'num' }, String(t.sessions)), el('span', { class: 'num' }, String(t.persons)),
-              el('span', { class: 'num' }, String(t.uniqueTrainees)), el('span', { class: 'num' }, String(t.hours)),
-              // من سجل الحضور/الانصراف في المتابعة اليومية
-              el('span', { class: 'num' }, String(t.officeHours ?? 0)),
-              el('span', { class: 'num' }, String(t.stories ?? 0)), el('span', { class: 'num' }, String(t.reels ?? 0)),
-              el('span', { class: 'num', style: t.results ? 'color:var(--accent-hover)' : '' }, String(t.results ?? 0)),
-              el('span', { class: 'num', style: t.problems ? 'color:var(--status-danger)' : '' }, String(t.problems ?? 0)),
-              el('span', { class: 'num', title: 'هذا الشهر · الإجمالي' }, `${t.referredMonth ?? 0} · ${t.referredTotal ?? 0}`),
-              t.tasksPct !== null && t.tasksPct !== undefined ? progressBar(t.tasksPct) : '—',
+            const k = kpiOf(t.trainerId);
+            return [...kpiTrainerRow(t),
               k.kpi !== null && k.kpi !== undefined
                 ? el('span', { class: 'tag ' + (k.kpi >= 80 ? 'tag--accent' : k.kpi >= 50 ? 'tag--warning' : 'tag--danger') }, k.kpi + '%')
                 : '—'];
@@ -1641,15 +1636,54 @@ async function viewReports(root) {
       const txt = (d > 0 ? '+' : '') + (money ? fmtMoney(d, branchId) : d);
       return el('span', { class: 'tag ' + (d > 0 ? 'tag--accent' : d < 0 ? 'tag--danger' : 'tag--neutral') }, txt);
     };
+    // «تقرير الفرع: الحصص والساعات ما إلهم داعي» — أُزيلا
     container.append(el('div', { class: 'card' },
       el('h3', { class: 'card__title' }, `تقرير الفروع — ${report.month} (مقارنة بـ ${report.prevMonth})`),
-      dataTable(['الفرع', 'الحصص', 'ساعات', 'فعالون', 'التحصيل', 'الغيابات', 'نسبة الحضور', 'الحصص ±', 'التحصيل ±'],
+      dataTable(['الفرع', 'فعالون', 'التحصيل', 'الغيابات', 'نسبة الحضور', 'التحصيل ±'],
         report.branches.map((b) => [b.branch,
-          el('span', { class: 'num' }, String(b.sessions)), el('span', { class: 'num' }, String(b.hours)),
           el('span', { class: 'num' }, String(b.activeTrainees)), fmtMoney(b.collected, b.branchId),
           el('span', { class: 'num', style: b.missed ? 'color:var(--status-danger)' : '' }, String(b.missed)),
           b.attendancePct !== null ? progressBar(b.attendancePct) : '—',
-          delta(b.sessions, b.prevSessions), delta(b.collected, b.prevCollected, true, b.branchId)]))));
+          delta(b.collected, b.prevCollected, true, b.branchId)]))));
+
+    /* تقرير المحاسب — كان غائبًا: بالفرع، التحصيل والاشتراكات والتجميد
+       ومعه المطلوب/المحصَّل/المتبقي من الفعّالين. */
+    if (report.accountant && report.accountant.length) {
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `تقرير المحاسب — ${report.month}`),
+        el('div', { style: 'overflow-x:auto' },
+          dataTable(['الفرع', 'تحصيل الشهر', 'المطلوب من الفعّالين', 'المحصَّل منهم', 'المتبقي عليهم', 'مشتركون جدد', 'تجديد',
+            'عائد من التجميد', 'تجميد الشهر', 'مجمّدون الآن', 'سقف التجميد', 'الفعّالون', 'نسبة التجديد'],
+            report.accountant.map((a) => [a.branch,
+              fmtMoney(a.collected, a.currency), fmtMoney(a.required, a.currency), fmtMoney(a.collectedActive, a.currency),
+              el('b', { style: a.remaining > 0 ? 'color:var(--status-danger)' : '' }, fmtMoney(a.remaining, a.currency)),
+              el('span', { class: 'num' }, String(a.newSubs)), el('span', { class: 'num' }, String(a.renewals)),
+              el('span', { class: 'num' }, String(a.returnedFromFreeze)), el('span', { class: 'num' }, String(a.freezesMonth)),
+              el('span', { class: 'num', style: a.freezeOverLimit ? 'color:var(--status-danger);font-weight:800' : '' }, String(a.frozenNow) + (a.freezeOverLimit ? ' ⚠️' : '')),
+              a.freezeLimit === null || a.freezeLimit === undefined ? el('span', { class: 'tag tag--neutral' }, 'بلا سقف') : el('span', { class: 'num' }, String(a.freezeLimit)),
+              el('span', { class: 'num' }, String(a.activeTrainees)),
+              a.retentionPct !== null && a.retentionPct !== undefined ? progressBar(a.retentionPct) : '—'])))));
+    }
+
+    /* تقرير المبيعات — كان غائبًا: الأرقام الجديدة والـ test والإغلاق والقنوات */
+    if (report.sales) {
+      const sl = report.sales;
+      container.append(el('div', { class: 'card' },
+        el('h3', { class: 'card__title' }, `تقرير المبيعات — ${report.month}`,
+          el('a', { class: 'btn btn--outline btn--sm', href: '#/sales' }, 'ملف المتابعة ←')),
+        el('div', { class: 'kpis', style: 'margin-bottom:10px' },
+          kpiTile(sl.newNumbers, 'أرقام جديدة', 'wa'),
+          kpiTile(sl.tests, 'حصص تجريبية (test)', 'clipboard'),
+          kpiTile(sl.newClients, 'عملاء أُغلقوا (اشتركوا)', 'users', 'green'),
+          kpiTile(sl.closingRate !== null && sl.closingRate !== undefined ? sl.closingRate + '%' : '—', 'نسبة الإغلاق', 'target', 'blue'),
+          kpiTile(sl.returnedFromFreeze, 'عائد من التجميد', 'snow')),
+        dataTable(['المؤشر', 'العدد'], [
+          ['حصص تجريبية محجوزة', String(sl.tests)],
+          ['حضروا التجربة', String(sl.testsAttended)],
+          ['لم يحضروا (no-show)', String(sl.noShow)],
+          ...Object.entries(sl.byChannel || {}).map(([k, v]) => ['قناة: ' + k, String(v)]),
+        ])));
+    }
 
     /* نتائج المشتركين ومشاكلهم — قسم ثابت في التقرير الشهري (سرّي عن المتدرب) */
     if (report.flags) {

@@ -607,6 +607,42 @@ function statusTag(status, expiring) {
   return el('span', { class: 'tag tag--accent' }, 'فعّال');
 }
 
+/* ------------------------------------------------------------
+   صورة من الجوال قبل الرفع: تُصغَّر وتُحوَّل JPEG في المتصفح.
+   «المدربون لاحظوا مشاكل في رفع الصور — ما بقبل الكل»: صور الجوال
+   الحديثة 6–12 ميغابايت أو بصيغة HEIC، والخادم يقبل حتى 4 ميغابايت
+   PNG/JPG/WebP فقط، وثماني صور معًا تتجاوز حجم الطلب. التصغير إلى
+   1600 بكسل بجودة 0.85 يُبقي الصورة واضحة ويُنزل حجمها إلى مئات
+   الكيلوبايتات — ويقرأ الاتجاه المضمَّن فلا تنقلب الصورة العمودية.
+   ------------------------------------------------------------ */
+async function compressImage(file, { maxSide = 1600, quality = 0.85 } = {}) {
+  const readAsDataUrl = () => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('تعذّرت قراءة الملف.'));
+    r.readAsDataURL(file);
+  });
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (e) {
+    /* المتصفح لا يفكّ هذه الصيغة (HEIC على غير Safari مثلًا) — نرفعها
+       كما هي إن كانت صغيرة، وإلا نُخبر المستخدم بدل فشلٍ صامت. */
+    if (file.size <= 3.5 * 1024 * 1024 && /^image\/(png|jpe?g|webp)$/i.test(file.type)) return readAsDataUrl();
+    throw new Error(`«${file.name}»: صيغة لا يفتحها المتصفح — حوّلها إلى JPG أو غيّر إعداد الكاميرا إلى «الأكثر توافقًا».`);
+  }
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const hgt = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = hgt;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hgt); // خلفية PNG الشفافة تصير بيضاء لا سوداء
+  ctx.drawImage(bitmap, 0, 0, w, hgt);
+  if (bitmap.close) bitmap.close();
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
 function spinnerCard(text) {
   return el('div', { class: 'empty' }, text || 'جارٍ التحميل…');
 }
