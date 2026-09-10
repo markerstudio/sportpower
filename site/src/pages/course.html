@@ -30,7 +30,7 @@
 
     <section class="modules-section" id="modules">
       <div class="container">
-        <div class="eyebrow">{{course_modules_eyebrow}}</div>
+        <div class="kicker">{{course_modules_eyebrow}}</div>
         <h2 class="section-title">{{course_modules_title}}</h2>
         <ol class="modules" data-stagger="up">
           {{#course.modules}}
@@ -46,7 +46,7 @@
           <span class="methods__items" dir="ltr">{{#course.methods}}<span class="methods__item">{{.}}</span>{{/course.methods}}</span>
         </div>
         {{/course.methods.length}}
-        <div class="course-goal card card--accent-bar" data-reveal="up">
+        <div class="course-goal" data-reveal="up">
           <h3>{{course_goal_title}}</h3>
           <p>{{course_goal_p}}</p>
         </div>
@@ -57,11 +57,11 @@
     <section class="tiers-section on-dark" id="tiers">
       <div class="container">
         <div class="tiers-head">
-          <div class="eyebrow">{{course_tiers_eyebrow}}</div>
+          <div class="kicker kicker--light">{{course_tiers_eyebrow}}</div>
           <h2 class="section-title">{{course_tiers_title}}</h2>
           <p class="section-lead">{{course_tiers_lead}}</p>
         </div>
-        <div class="tiers" data-stagger="scale">
+        <div class="tiers" data-stagger="up">
           {{#course.tiers}}
           <article class="tier {{tierClass}}{{#highlight}} tier--highlight{{/highlight}}">
             <div class="tier__badge" aria-hidden="true">{{#highlight}}♛{{/highlight}}{{^highlight}}★{{/highlight}}</div>
@@ -82,7 +82,7 @@
     <section class="register-section" id="register">
       <div class="container register-section__inner">
         <div>
-          <div class="eyebrow">{{course_cta_title}}</div>
+          <div class="kicker">{{course_cta_title}}</div>
           <h2 class="section-title">{{course_form_title}}</h2>
           <p class="section-lead">{{course_form_lead}}</p>
         </div>

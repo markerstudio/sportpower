@@ -28,6 +28,11 @@
 <body class="page-{{page}}">
   <a class="skip-link" href="#main">{{skip}}</a>
 
+  <a class="announce" href="{{@/courses}}" data-announce>
+    <span class="announce__text">{{ann_text}}</span>
+    <span class="announce__cta">{{ann_cta}} ←</span>
+  </a>
+
   <header class="site-header">
     <div class="site-header__inner">
       <a href="{{@/}}" aria-label="{{site_name}}">
@@ -43,6 +48,7 @@
         <a class="site-nav__mobile-only" href="{{appUrl}}" rel="noopener">{{login}}</a>
       </nav>
       <div class="site-header__actions">
+        <a class="loc-pill" href="{{@/packages}}#choose" data-loc-pill title="{{loc_change}}"><span data-loc-name>{{loc_pick}}</span></a>
         <a class="lang-toggle" href="{{altUrl}}" hreflang="{{altLang}}" lang="{{altLang}}" data-lang-switch>{{altLabel}}</a>
         <button class="theme-toggle" id="themeToggle" aria-label="{{theme_toggle}}" title="{{theme_toggle}}">◐</button>
         <a class="site-header__login" href="{{appUrl}}" rel="noopener">{{login}}</a>

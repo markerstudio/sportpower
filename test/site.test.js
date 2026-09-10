@@ -39,7 +39,8 @@ test('public site bundle: branches, packages with currency, published courses, c
   assert.equal(r.status, 200);
   assert.ok(r.json.branches.length >= 3);
   assert.ok(r.json.packages.length >= 1);
-  assert.ok(r.json.packages.every((p) => p.currency && p.price !== undefined && Array.isArray(p.features)));
+  assert.ok(r.json.packages.every((p) => p.currency && Array.isArray(p.features) && p.sessions));
+  assert.ok(r.json.packages.every((p) => p.price === undefined), 'package prices never leave the system');
   assert.equal(r.json.courses.length, 1, 'the seeded coaching course is published');
   const c = r.json.courses[0];
   assert.equal(c.slug, 'coach-business');

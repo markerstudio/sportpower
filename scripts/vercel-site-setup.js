@@ -140,7 +140,8 @@ async function deploy(project, target) {
   await upsertEnv(site.id, 'SITE_APP_URL', appUrl, ['production', 'preview']);
   await upsertEnv(site.id, 'SITE_URL', SITE_URL, ['production', 'preview']);
   console.log('\nمتغيرات مشروع النظام:');
-  await upsertEnv(app.id, 'SITE_ORIGINS', `${SITE_URL},https://${DOMAINS.siteApex},https://*.vercel.app`, ['production', 'preview']);
+  /* نسخ المعاينة لمشروع الموقع وحده — لا كل تطبيقات vercel.app */
+  await upsertEnv(app.id, 'SITE_ORIGINS', `${SITE_URL},https://${DOMAINS.siteApex},https://${SITE_NAME}.vercel.app,https://${SITE_NAME}-*.vercel.app`, ['production', 'preview']);
 
   /* --- النطاقات --- */
   console.log('\nالنطاقات:');
