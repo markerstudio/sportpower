@@ -1,8 +1,14 @@
-    <section class="page-hero page-hero--dark">
-      <div class="container">
-        <div class="kicker" data-reveal="fade">{{courses_eyebrow}}</div>
-        <h1 class="section-title" data-reveal="up">{{courses_title}}</h1>
-        <p class="section-lead">{{courses_intro}}</p>
+    <section class="hero hero--figure hero--courses">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+      <div class="hero__inner">
+        <div class="hero__content">
+          <div class="kicker kicker--light" data-reveal="fade">{{courses_eyebrow}}</div>
+          <h1 class="hero__title hero__title--md" data-reveal="up">{{courses_title}}</h1>
+          <p class="hero__lead">{{courses_intro}}</p>
+        </div>
+        <figure class="hero__figure">
+          <img src="/images/instructor.webp" alt="{{alt_instructor}}" width="560" height="890" fetchpriority="high" decoding="async">
+        </figure>
       </div>
     </section>
 

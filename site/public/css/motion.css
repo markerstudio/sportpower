@@ -53,3 +53,14 @@
   .hero__title .word-in { animation: none; opacity: 1; transform: none; }
   .btn, .pkg, .course-card, .product, .tier, .tabs__indicator, .acc-item__panel { transition: none; }
 }
+
+/* الصور: ظهور بتكبير خفيف بدل الانزلاق */
+.has-motion [data-reveal="photo"] { transform: none; }
+.has-motion [data-reveal="photo"] img { transform: scale(1.05); transition: transform 1.1s var(--ease-out); }
+.has-motion [data-reveal="photo"].is-in img { transform: none; }
+.has-motion .hero__figure img { opacity: 0; transform: translateY(24px); animation: word-in .9s var(--ease-out) .25s forwards; }
+.team__grid figure img { transition: transform .6s var(--ease-out); }
+.team__grid figure:hover img { transform: scale(1.03); }
+@media (prefers-reduced-motion: reduce) {
+  .has-motion [data-reveal="photo"] img, .has-motion .hero__figure img { transform: none; opacity: 1; animation: none; transition: none; }
+}

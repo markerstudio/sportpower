@@ -54,7 +54,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .skeleton--tall { height: 300px; grid-column: 1 / -1; }
 
 /* ---------- الواجهة ---------- */
-.hero--home .hero__inner { display: grid; grid-template-columns: 1.4fr 1fr; gap: 56px; align-items: end; padding-bottom: 64px; }
 .hero__kicker { font-family: var(--font-latin); font-weight: 600; font-size: var(--text-sm); color: var(--accent); letter-spacing: 0.02em; margin: 0 0 18px; }
 .hero__loc { border-top: 1px solid rgba(255,255,255,.14); padding-top: 22px; }
 .hero__loc-q { font-family: var(--font-display); font-weight: 800; font-size: var(--text-lg); color: #fff; margin-bottom: 14px; }
@@ -84,8 +83,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .loc-panel.is-set .loc-panel__head .section-lead { display: none; }
 
 /* ---------- الدورة على الرئيسية ---------- */
-.feature { background: var(--petrol-900); color: #fff; padding: 80px 0; border-top: 4px solid var(--accent); }
-.feature__inner { display: grid; grid-template-columns: 1.15fr 1fr; gap: 64px; align-items: start; }
 .feature__title { font-family: var(--font-display); font-weight: var(--weight-black); font-size: clamp(2rem, 4.5vw, 3.25rem); line-height: 1.12; margin: 0 0 8px; color: #fff; }
 .feature__tagline { font-family: var(--font-display); font-weight: 700; font-size: var(--text-lg); color: var(--accent); margin: 0 0 16px; }
 .feature__tagline:empty { display: none; }
@@ -121,9 +118,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .packages-grid__title { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-xl); color: var(--text-strong); margin: 36px 0 14px; scroll-margin-top: 90px; }
 .packages-grid__title:first-child { margin-top: 0; }
 .packages-grid__row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
-.pkg { padding: 26px 24px 22px; display: flex; flex-direction: column; gap: 12px; border-top: 4px solid var(--petrol-700); }
-.pkg--saver { border-top-color: var(--accent); }
-.pkg--group { border-top-color: var(--blue-500); }
 .pkg__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--text-muted); }
 .pkg__name { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-xl); color: var(--text-strong); margin: 0; }
 .pkg__meta { display: flex; gap: 0; flex-wrap: wrap; border-block: 1px solid var(--border-subtle); }
@@ -141,8 +135,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .tabs-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 
 /* ---------- لماذا نحن ---------- */
-.why { padding: 88px 0; }
-.why__inner { display: grid; grid-template-columns: 1fr 1.1fr; gap: 64px; align-items: start; }
 .why__statement { font-family: var(--font-display); font-weight: var(--weight-black); font-size: clamp(2rem, 4.5vw, 3.5rem); line-height: 1.1; color: var(--text-strong); margin: 0 0 18px; }
 .why__lead { font-size: var(--text-lg); line-height: var(--leading-relaxed); color: var(--text-body); margin: 0; }
 .why__list { list-style: none; margin: 0; padding: 0; }
@@ -154,7 +146,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .why__list--3 { margin-top: 28px; }
 
 /* ---------- الفروع: صفوف ---------- */
-.branches { padding: 72px 0 88px; }
 .branch-rows { margin-top: 28px; border-top: 1px solid var(--border-strong); }
 .branch-row { display: grid; grid-template-columns: 1.2fr 1.4fr 1fr auto; gap: 20px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border-subtle); }
 .branch-row h3 { font-family: var(--font-display); font-weight: 800; font-size: var(--text-lg); color: var(--text-strong); margin: 0; }
@@ -315,7 +306,7 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 
 /* ---------- استجابة ---------- */
 @media (max-width: 960px) {
-  .hero--home .hero__inner, .feature__inner, .why__inner, .faq-section__inner, .register-section__inner, .contact-section__inner { grid-template-columns: 1fr; gap: 36px; }
+  .faq-section__inner, .register-section__inner, .contact-section__inner { grid-template-columns: 1fr; gap: 36px; }
   .how__rows { grid-template-columns: 1fr; gap: 0; }
   .how__row { padding: 22px 0; border-bottom: 1px solid var(--border-subtle); }
   .packages-grid__row, .tiers, .modules { grid-template-columns: 1fr 1fr; }
@@ -338,3 +329,139 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
   .announce { font-size: var(--text-xs); gap: 8px; }
   .loc-choose--big .loc-btn { min-width: 0; flex: 1; }
 }
+
+/* ============================================================
+   طبقة الصور الحقيقية — الواجهة، الفريق، الدورة، الباقات، الفروع، الدعوة
+   المبدأ: صورة واحدة كبيرة لكل قسم + عنوان ثقيل + تراكب بلون الهوية للقراءة
+   ============================================================ */
+
+/* ---------- الواجهة بصورة على الطرف ---------- */
+.hero--photo { background: var(--petrol-700); position: relative; overflow: hidden; }
+.hero--photo .hero__inner { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 600px); padding: 96px var(--space-6) 64px; min-height: min(86vh, 800px); align-content: center; gap: 40px; }
+.hero--photo .hero__title { font-size: clamp(2.6rem, 6.8vw, 4.6rem); line-height: 1.08; }
+.hero--photo .hero__lead { color: #dfe8e6; max-width: 520px; }
+.hero__photo { position: absolute; inset-block: 0; inset-inline-end: 0; width: 54%; margin: 0; }
+.hero__photo img, .hero__photo picture { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
+.hero__photo::before { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+[dir="rtl"] .hero__photo::before { background: linear-gradient(to left, var(--petrol-700) 0%, rgba(21,49,49,.55) 22%, rgba(21,49,49,0) 55%), linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 32%); }
+[dir="ltr"] .hero__photo::before { background: linear-gradient(to right, var(--petrol-700) 0%, rgba(21,49,49,.55) 22%, rgba(21,49,49,0) 55%), linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 32%); }
+.hero__cap { position: absolute; z-index: 2; bottom: 18px; inset-inline-end: 24px; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: #c9d6d4; padding-inline-start: 12px; border-inline-start: 2px solid var(--accent); }
+.hero--about .hero__photo img { object-position: 50% 40%; }
+.hero--about .hero__inner { min-height: min(70vh, 640px); }
+.hero--about .hero__lead + .hero__lead { margin-top: -12px; }
+
+/* ---------- واجهة بصورة مقصوصة للمدرّب (الدورة) ---------- */
+.hero--figure .hero__inner { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 40px; align-items: end; padding-bottom: 0; }
+.hero--figure .hero__content { padding-bottom: 72px; }
+.hero__figure { position: relative; margin: 0; align-self: end; }
+.hero__figure img { display: block; width: 100%; height: auto; max-height: 560px; object-fit: contain; object-position: bottom; }
+.hero__figure figcaption { position: absolute; bottom: 18px; inset-inline-start: 0; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: #c9d6d4; padding-inline-start: 12px; border-inline-start: 2px solid var(--accent); }
+.hero--figure .hero__mark { inset-inline-end: 120px; height: 620px; opacity: .1; }
+.hero--courses .hero__inner { min-height: 0; }
+.hero--courses .hero__figure img { max-height: 420px; }
+
+/* ---------- لماذا نحن: صورة الفريق ---------- */
+.why { padding: 96px 0; }
+.why__inner { display: grid; grid-template-columns: 1.05fr 1fr; gap: 64px; align-items: center; }
+.why__photo { position: relative; margin: 0; }
+.why__photo::before { content: ""; position: absolute; inset: 22px -22px -22px 22px; background: var(--accent); z-index: 0; }
+[dir="ltr"] .why__photo::before { inset: 22px 22px -22px -22px; }
+.why__photo img { position: relative; z-index: 1; display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: cover; }
+.why__photo figcaption { position: relative; z-index: 1; margin-top: 34px; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--text-muted); padding-inline-start: 12px; border-inline-start: 2px solid var(--accent); }
+.why__statement { font-size: clamp(2.2rem, 4.6vw, 3.6rem); }
+
+/* ---------- الدورة: صورة المدرّب المقصوصة على الطرف ---------- */
+.feature { position: relative; overflow: hidden; background: var(--petrol-900); color: #fff; padding: 88px 0 0; border-top: 4px solid var(--accent); }
+.feature__mark { position: absolute; inset-inline-end: -40px; bottom: -60px; height: 560px; opacity: .08; pointer-events: none; transform: scaleX(-1); }
+.feature__inner { position: relative; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .95fr) 300px; gap: 56px; align-items: start; }
+.feature__text, .feature__side { padding-bottom: 88px; }
+.feature__figure { margin: 0; align-self: end; position: relative; }
+.feature__figure img { display: block; width: 100%; height: auto; max-height: 520px; object-fit: contain; object-position: bottom; }
+.feature__title { font-size: clamp(2.2rem, 4.6vw, 3.4rem); }
+
+/* ---------- الباقات: بطاقة بصورة أعلى ---------- */
+.pkg { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pkg__media { position: relative; aspect-ratio: 16 / 8; background: var(--petrol-800) center / cover no-repeat; }
+.pkg--personal .pkg__media { background-image: url(/images/coaching.webp); background-position: 50% 30%; }
+.pkg--group .pkg__media { background-image: url(/images/hero.webp); background-position: 50% 35%; }
+.pkg--saver .pkg__media { background-image: url(/images/gym.webp); background-position: 50% 45%; }
+.pkg__media::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(12,30,30,.78), rgba(12,30,30,0) 60%); }
+.pkg__cat { position: absolute; z-index: 1; bottom: 12px; inset-inline-start: 16px; font-family: var(--font-display); font-weight: 800; font-size: var(--text-sm); color: #fff; padding-inline-start: 10px; border-inline-start: 3px solid var(--accent); }
+.pkg__body { padding: 20px 22px 22px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.pkg__head { font-size: var(--text-xs); }
+.pkg__name { font-size: var(--text-2xl); line-height: 1.15; }
+
+/* ---------- الفروع مع صورة الصالة ---------- */
+.branches { padding: 88px 0; }
+.branches__inner { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: start; }
+.branches__photo { margin: 0; position: sticky; top: 96px; }
+.branches__photo img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; object-position: 60% 40%; }
+.branch-rows { margin-top: 28px; border-top: 1px solid var(--border-strong); }
+.branch-row { grid-template-columns: 1.1fr 1.3fr auto; }
+.branch-row a.tel { grid-column: 1; }
+
+/* ---------- الفريق: ثلاث/أربع صور ---------- */
+.team { padding: 0 0 96px; }
+.team--about { padding-top: 88px; }
+.team__head { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: end; margin-bottom: 32px; }
+.team__head .section-lead { margin: 0; justify-self: end; }
+.team__grid { display: grid; grid-template-columns: 1fr 1.6fr 1fr; gap: 14px; }
+.team__grid--4 { grid-template-columns: 1fr 1fr 1fr 1.4fr; }
+.team__grid figure { margin: 0; overflow: hidden; background: var(--bg-muted); }
+.team__grid img { display: block; width: 100%; height: 100%; aspect-ratio: 4 / 5; object-fit: cover; object-position: 50% 20%; }
+.team__grid--4 img { aspect-ratio: 3 / 4; }
+
+/* ---------- الانضمام: صورة فوق الخطوات ---------- */
+.join-side { display: grid; gap: 28px; }
+.join-photo { margin: 0; }
+.join-photo img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; object-position: 50% 25%; }
+
+/* ---------- الدعوة فوق صورة ---------- */
+.join-cta--photo { position: relative; overflow: hidden; background: var(--petrol-900); padding: 120px 0; }
+.join-cta__bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 35%; opacity: .42; }
+.join-cta--photo::before { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(12,30,30,.85), rgba(12,30,30,.35)); }
+.join-cta--photo .join-cta__inner { position: relative; z-index: 1; }
+.join-cta--photo h2 { color: #fff; font-size: clamp(2.2rem, 5.5vw, 3.75rem); }
+.join-cta--photo p { color: #dfe8e6; }
+
+/* ---------- استجابة الطبقة ---------- */
+@media (max-width: 1100px) {
+  .feature__inner { grid-template-columns: 1.1fr 1fr; }
+  .feature__figure { display: none; }
+  .hero--figure .hero__inner { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+@media (max-width: 960px) {
+  .hero--photo .hero__inner { grid-template-columns: 1fr; min-height: 0; padding-top: 0; }
+  .hero__photo { position: relative; width: auto; height: min(62vw, 460px); inset: auto; }
+  [dir="rtl"] .hero__photo::before, [dir="ltr"] .hero__photo::before { background: linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 45%); }
+  .hero--photo .hero__content { margin-top: -40px; }
+  .why__inner, .branches__inner, .team__head { grid-template-columns: 1fr; gap: 40px; }
+  .team__head { gap: 12px; }
+  .team__head .section-lead { justify-self: start; }
+  .branches__photo { position: static; }
+  .branches__photo img { aspect-ratio: 16 / 10; }
+  .hero--figure .hero__inner { grid-template-columns: 1fr; }
+  .hero--figure .hero__content { padding-bottom: 0; }
+  .hero__figure { max-width: 320px; margin-inline: auto; }
+  .hero--figure .hero__mark { display: none; }
+  .team__grid--4 { grid-template-columns: 1fr 1fr; }
+  .feature__inner { grid-template-columns: 1fr; gap: 32px; }
+  .feature__text { padding-bottom: 0; }
+}
+@media (max-width: 720px) {
+  .hero--photo .hero__title { font-size: clamp(2.2rem, 10vw, 3rem); }
+  .team__grid { grid-template-columns: 1fr 1fr; }
+  .team__grid figure:nth-child(2) { grid-column: 1 / -1; }
+  .team__grid figure:nth-child(2) img { aspect-ratio: 16 / 10; }
+  .team__grid--4 figure:nth-child(2) { grid-column: auto; }
+  .team__grid--4 figure:nth-child(2) img { aspect-ratio: 3 / 4; }
+  .team__grid--4 figure:nth-child(4) { grid-column: 1 / -1; }
+  .team__grid--4 figure:nth-child(4) img { aspect-ratio: 16 / 10; }
+  .why__photo::before { display: none; }
+  .join-cta--photo { padding: 88px 0; }
+  .hero__cap { display: none; }
+}
+
+/* تنويع صور بطاقات التدريب الشخصي في الصف الواحد */
+.packages-grid__row .pkg--personal:nth-child(3n+2) .pkg__media { background-image: url(/images/gym.webp); background-position: 55% 40%; }
+.packages-grid__row .pkg--personal:nth-child(3n+3) .pkg__media { background-image: url(/images/coach-smile.webp); background-position: 50% 25%; }

@@ -1,5 +1,5 @@
-    <section class="hero hero--course">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true" data-parallax="0.18" data-parallax-base=" translateY(-50%) scaleX(-1)">
+    <section class="hero hero--course hero--figure">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
       <div class="hero__inner">
         <div class="hero__content">
           <div class="hero__tags">
@@ -19,6 +19,10 @@
             {{#course.startDate}}<div><div class="stat__value">{{course.startDate}}</div><div class="stat__label">{{starts}}</div></div>{{/course.startDate}}
           </div>
         </div>
+        <figure class="hero__figure">
+          <img src="/images/instructor.webp" alt="{{alt_instructor}}" width="560" height="890" fetchpriority="high" decoding="async">
+          <figcaption>{{feat_figure_cap}}</figcaption>
+        </figure>
       </div>
     </section>
 
