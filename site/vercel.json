@@ -30,8 +30,12 @@
       ]
     },
     {
-      "source": "/(css|js|fonts|assets|images)/(.*)",
+      "source": "/(fonts|assets|images)/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+    },
+    {
+      "source": "/(css|js)/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate, s-maxage=31536000" }]
     }
   ]
 }
