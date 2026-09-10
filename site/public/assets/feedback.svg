@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none" stroke="#79BE43" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <!-- فيدباك — chat bubble + stars -->
+  <path d="M28 44c0-8 6-14 14-14h76c8 0 14 6 14 14v52c0 8-6 14-14 14H70l-26 22v-22h-2c-8 0-14-6-14-14V44z"/>
+  <path d="M56 66l4 8 9 1-6.5 6.5 1.5 9-8-4.5-8 4.5 1.5-9L43 75l9-1 4-8z" stroke-width="5.5"/>
+  <path d="M96 66l4 8 9 1-6.5 6.5 1.5 9-8-4.5-8 4.5 1.5-9L83 75l9-1 4-8z" stroke-width="5.5"/>
+</svg>

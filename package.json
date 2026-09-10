@@ -13,6 +13,7 @@
     "db:backup": "bash scripts/db-backup.sh",
     "db:restore": "bash scripts/db-restore.sh",
     "load-test": "node scripts/load-test.js",
+    "vercel:site": "node scripts/vercel-site-setup.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

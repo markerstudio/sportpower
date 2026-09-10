@@ -1,0 +1,37 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "node build.js",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "functions": {
+    "api/course.js": { "includeFiles": "src/**", "maxDuration": 10 }
+  },
+  "rewrites": [
+    { "source": "/courses/:slug", "destination": "/api/course?slug=:slug&lang=ar" },
+    { "source": "/en/courses/:slug", "destination": "/api/course?slug=:slug&lang=en" }
+  ],
+  "redirects": [
+    { "source": "/plans-pricing", "destination": "/packages", "permanent": true },
+    { "source": "/blank-4", "destination": "/", "permanent": true },
+    { "source": "/challenge-page/:id", "destination": "/courses", "permanent": true },
+    { "source": "/book-online", "destination": "/join", "permanent": true },
+    { "source": "/index.html", "destination": "/", "permanent": true }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https://static.wixstatic.com; connect-src 'self' https://*.sport-power.net https://*.vercel.app; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://wa.me" }
+      ]
+    },
+    {
+      "source": "/(css|js|fonts|assets|images)/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+    }
+  ]
+}

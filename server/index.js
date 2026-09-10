@@ -103,7 +103,6 @@ app.get('/sw.js', (req, res) => {
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
-app.use('/marketing', express.static(path.join(__dirname, '..', 'marketing')));
 
 /* غلاف موحد لالتقاط الأخطاء في المعالجات غير المتزامنة */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -451,6 +450,10 @@ app.put('/api/settings', auth, requireRole('admin'), h(async (req, res) => {
   }
   if (req.body.frozenMessage !== undefined) patch.frozenMessage = String(req.body.frozenMessage).slice(0, 1000);
   if (req.body.waCountryCode !== undefined) patch.waCountryCode = String(req.body.waCountryCode).replace(/\D/g, '').slice(0, 4);
+  /* بيانات التواصل المعروضة على الموقع العام — نصوص قصيرة بلا تحقق آخر */
+  for (const k of require('./site').SITE_CONTACT_KEYS) {
+    if (req.body[k] !== undefined) patch[k] = String(req.body[k] || '').trim().slice(0, 200);
+  }
   // نقاط الولاء: قيم قابلة للتحكم من الإدارة
   ['ptsResult', 'ptsRenewal', 'ptsReferral', 'ptsLoyalty'].forEach((k) => {
     if (req.body[k] !== undefined) {
@@ -3685,6 +3688,9 @@ require('./trainee-goals')(app, { auth, requireRole, h, notify, ...scope });
 
 /* مركز القرارات: تحويل كل مشكلة يكتشفها النظام إلى إجراء قابل للتنفيذ */
 require('./actions')(app, { auth, requireRole, h, notify, subStatus, ...scope });
+
+/* الموقع العام: الدورات، وواجهة الموقع (باقات وفروع ودورات) واستقبال طلباته */
+require('./site')(app, { auth, requireRole, h, notify, rateLimited, clientIp, currencyMap });
 
 /* ============================================================ */
 app.use('/api', (req, res) => res.status(404).json({ error: 'المسار غير موجود.' }));

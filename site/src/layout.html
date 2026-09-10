@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="{{lang}}" dir="{{dir}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}}</title>
+  <meta name="description" content="{{description}}">
+  <link rel="canonical" href="{{canonical}}">
+  <link rel="alternate" hreflang="ar" href="{{siteUrl}}{{#isAr}}{{canonicalPath}}{{/isAr}}{{#isEn}}{{altUrl}}{{/isEn}}">
+  <link rel="alternate" hreflang="en" href="{{siteUrl}}{{#isEn}}{{canonicalPath}}{{/isEn}}{{#isAr}}{{altUrl}}{{/isAr}}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{site_name}}">
+  <meta property="og:title" content="{{title}}">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:url" content="{{canonical}}">
+  <meta property="og:image" content="{{siteUrl}}/images/og.png">
+  <meta property="og:locale" content="{{#isAr}}ar_PS{{/isAr}}{{#isEn}}en_US{{/isEn}}">
+  <meta name="theme-color" content="#153131">
+  <link rel="icon" type="image/svg+xml" href="/assets/mark-green.svg">
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/site.css">
+  <script src="/js/theme.js"></script>
+</head>
+<body class="page-{{page}}">
+  <a class="skip-link" href="#main">{{skip}}</a>
+
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a href="{{@/}}" aria-label="{{site_name}}">
+        <img class="site-header__logo" src="/assets/logo-white.svg" alt="{{site_name}} — Sport Power">
+      </a>
+      <nav class="site-nav" id="siteNav" aria-label="{{menu}}">
+        <a href="{{@/}}"{{#page_index}} aria-current="page"{{/page_index}}>{{nav_home}}</a>
+        <a href="{{@/packages}}"{{#page_packages}} aria-current="page"{{/page_packages}}>{{nav_packages}}</a>
+        <a href="{{@/courses}}"{{#page_courses}} aria-current="page"{{/page_courses}}{{#page_course}} aria-current="page"{{/page_course}}>{{nav_courses}}</a>
+        <a href="{{@/shop}}"{{#page_shop}} aria-current="page"{{/page_shop}}>{{nav_shop}}</a>
+        <a href="{{@/about}}"{{#page_about}} aria-current="page"{{/page_about}}>{{nav_about}}</a>
+        <a href="{{@/about}}#contact">{{nav_contact}}</a>
+        <a class="site-nav__mobile-only" href="{{appUrl}}" rel="noopener">{{login}}</a>
+      </nav>
+      <div class="site-header__actions">
+        <a class="lang-toggle" href="{{altUrl}}" hreflang="{{altLang}}" lang="{{altLang}}" data-lang-switch>{{altLabel}}</a>
+        <button class="theme-toggle" id="themeToggle" aria-label="{{theme_toggle}}" title="{{theme_toggle}}">◐</button>
+        <a class="site-header__login" href="{{appUrl}}" rel="noopener">{{login}}</a>
+        <a class="btn btn--accent btn--sm" href="{{@/join}}">{{join_now}}</a>
+        <button class="nav-toggle" id="navToggle" aria-label="{{menu}}" aria-expanded="false" aria-controls="siteNav">☰</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+{{{content}}}
+  </main>
+
+  <a class="wa-float" data-wa data-wa-text="wa_prefill_training" href="#" hidden target="_blank" rel="noopener" aria-label="{{wa_chat}}" title="{{wa_chat}}">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5z"/><path d="M9 8.8c.3-.7.8-.7 1.1-.1l.6 1.2c.2.4 0 .8-.3 1.1-.4.4-.3.8.1 1.3.6.8 1.3 1.4 2.2 1.8.5.2.9.2 1.2-.2.3-.4.7-.5 1.1-.2l1.1.7"/></svg>
+  </a>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="site-footer__grid">
+        <div>
+          <img class="site-footer__logo" src="/assets/logo-white.svg" alt="{{site_name}}">
+          <p class="site-footer__about">{{footer_about}}</p>
+          <div class="site-footer__social" data-render="social"></div>
+        </div>
+        <div class="site-footer__col">
+          <h4>{{footer_train}}</h4>
+          <a href="{{@/packages}}">{{nav_packages}}</a>
+          <a href="{{@/courses}}">{{nav_courses}}</a>
+          <a href="{{@/join}}">{{join_now}}</a>
+          <a href="{{@/shop}}">{{nav_shop}}</a>
+        </div>
+        <div class="site-footer__col">
+          <h4>{{footer_company}}</h4>
+          <a href="{{@/about}}">{{nav_about}}</a>
+          <a href="{{@/about}}#branches">{{branches_eyebrow}}</a>
+          <a href="{{@/privacy}}">{{footer_privacy}}</a>
+          <a href="{{appUrl}}" rel="noopener">{{footer_app}}</a>
+        </div>
+        <div class="site-footer__col">
+          <h4>{{footer_support}}</h4>
+          <a data-contact="phone" href="#" hidden></a>
+          <a data-contact="whatsapp" href="#" hidden target="_blank" rel="noopener"></a>
+          <a data-contact="email" href="#" hidden></a>
+          <span data-contact="address" hidden></span>
+        </div>
+      </div>
+      <div class="site-footer__bottom">
+        <span>© {{year}} {{footer_rights}}</span>
+        <span>{{footer_disclaimer}}</span>
+        <span><a href="{{@/privacy}}">{{footer_privacy}}</a> · <a href="{{altUrl}}" hreflang="{{altLang}}" lang="{{altLang}}">{{altLabel}}</a></span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/i18n.{{lang}}.js"></script>
+  <script src="/js/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+    <section class="hero hero--course">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+      <div class="hero__inner">
+        <div class="hero__content">
+          <div class="hero__tags">
+            <span class="tag tag--accent">{{course_eyebrow}}</span>
+            {{#course.lessons}}<span class="tag tag--petrol">{{course.lessons}} {{lessons}}</span>{{/course.lessons}}
+            <span class="tag tag--petrol">{{course.formatLabel}}</span>
+          </div>
+          <h1 class="hero__title">{{course.title}}</h1>
+          {{#course.tagline}}<p class="hero__tagline">{{course.tagline}}</p>{{/course.tagline}}
+          <p class="hero__lead">{{course.summary}}</p>
+          <div class="hero__cta">
+            <a class="btn btn--accent btn--lg" href="#register">{{course_cta_btn}}</a>
+            {{#course.hasTiers}}<a class="btn btn--outline-light btn--lg" href="#tiers">{{course_tiers_eyebrow}}</a>{{/course.hasTiers}}
+          </div>
+          <div class="hero__stats">
+            {{#course.durationText}}<div><div class="stat__label">{{course.durationText}}</div></div>{{/course.durationText}}
+            {{#course.startDate}}<div><div class="stat__value">{{course.startDate}}</div><div class="stat__label">{{starts}}</div></div>{{/course.startDate}}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {{#course.audience}}
+    <section class="course-audience">
+      <div class="container"><p><strong>{{form_interest}}</strong> {{course.audience}}</p></div>
+    </section>
+    {{/course.audience}}
+
+    <section class="modules-section" id="modules">
+      <div class="container">
+        <div class="eyebrow">{{course_modules_eyebrow}}</div>
+        <h2 class="section-title">{{course_modules_title}}</h2>
+        <ol class="modules">
+          {{#course.modules}}
+          <li class="card module">
+            <span class="module__num">{{num}}</span>
+            <div><h3>{{title}}</h3>{{#text}}<p>{{text}}</p>{{/text}}</div>
+          </li>
+          {{/course.modules}}
+        </ol>
+        {{#course.methods.length}}
+        <div class="methods">
+          <span class="methods__label">{{course_methods_label}}</span>
+          <span class="methods__items" dir="ltr">{{#course.methods}}<span class="methods__item">{{.}}</span>{{/course.methods}}</span>
+        </div>
+        {{/course.methods.length}}
+        <div class="course-goal card card--accent-bar">
+          <h3>{{course_goal_title}}</h3>
+          <p>{{course_goal_p}}</p>
+        </div>
+      </div>
+    </section>
+
+    {{#course.hasTiers}}
+    <section class="tiers-section on-dark" id="tiers">
+      <div class="container">
+        <div class="tiers-head">
+          <div class="eyebrow">{{course_tiers_eyebrow}}</div>
+          <h2 class="section-title">{{course_tiers_title}}</h2>
+          <p class="section-lead">{{course_tiers_lead}}</p>
+        </div>
+        <div class="tiers">
+          {{#course.tiers}}
+          <article class="tier {{tierClass}}{{#highlight}} tier--highlight{{/highlight}}">
+            <div class="tier__badge" aria-hidden="true">{{#highlight}}♛{{/highlight}}{{^highlight}}★{{/highlight}}</div>
+            {{#highlight}}<div class="tier__ribbon">{{best_value}}</div>{{/highlight}}
+            <h3 class="tier__name">{{name}}</h3>
+            <ul class="tier__features">
+              {{#features}}<li>{{.}}</li>{{/features}}
+            </ul>
+            <div class="tier__price"><span class="tier__amount">{{priceText}}</span> <span class="tier__cur">{{course.currencyLabel}}</span></div>
+            <a class="btn btn--lg btn--full tier__btn" href="#register" data-pick-tier="{{key}}">{{register_interest}}</a>
+          </article>
+          {{/course.tiers}}
+        </div>
+      </div>
+    </section>
+    {{/course.hasTiers}}
+
+    <section class="register-section" id="register">
+      <div class="container register-section__inner">
+        <div>
+          <div class="eyebrow">{{course_cta_title}}</div>
+          <h2 class="section-title">{{course_form_title}}</h2>
+          <p class="section-lead">{{course_form_lead}}</p>
+        </div>
+        <form class="card lead-form" data-lead data-interest="course" novalidate>
+          <input type="hidden" name="interest" value="course">
+          <input type="hidden" name="courseSlug" value="{{course.slug}}">
+          <input type="hidden" name="lang" value="{{lang}}">
+          <div class="field" data-field="name"><label class="field__label" for="c-name">{{form_name}} *</label><input class="field__input" id="c-name" name="name" required autocomplete="name"><span class="field__hint" data-hint></span></div>
+          <div class="field" data-field="phone"><label class="field__label" for="c-phone">{{form_phone}} *</label><input class="field__input" id="c-phone" name="phone" type="tel" required inputmode="tel" autocomplete="tel" dir="ltr"><span class="field__hint" data-hint></span></div>
+          <div class="field" data-field="email"><label class="field__label" for="c-email">{{form_email}}</label><input class="field__input" id="c-email" name="email" type="email" autocomplete="email" dir="ltr"><span class="field__hint" data-hint></span></div>
+          {{#course.hasTiers}}
+          <div class="field"><label class="field__label" for="c-tier">{{form_tier}}</label>
+            <select class="field__select" id="c-tier" name="tier">
+              <option value="">{{undecided}}</option>
+              {{#course.tiers}}<option value="{{key}}">{{name}} — {{priceText}} {{course.currencyLabel}}</option>{{/course.tiers}}
+            </select></div>
+          {{/course.hasTiers}}
+          <div class="field"><label class="field__label" for="c-msg">{{form_message}}</label><textarea class="field__input" id="c-msg" name="message" rows="3" placeholder="{{form_message_ph}}"></textarea></div>
+          <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+          <p class="form-error" data-form-error hidden></p>
+          <button class="btn btn--accent btn--lg btn--full" type="submit" data-submit>{{course_cta_btn}}</button>
+          <p class="form-note">{{form_privacy}}</p>
+        </form>
+      </div>
+    </section>

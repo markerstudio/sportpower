@@ -1,0 +1,14 @@
+{
+  "_note": "منتجات المتجر الأربعة كما كانت على Wix. الصور مؤقتًا من خوادم Wix — انسخها إلى public/images/shop/ وغيّر الروابط قبل إلغاء Wix (انظر README).",
+  "currency": "ILS",
+  "items": [
+    { "key": "flag",   "name": "علم سبورت باور",   "nameEn": "Sport Power Flag",   "price": 120, "badge": "limited",
+      "image": "https://static.wixstatic.com/media/cf380e_7b68f895f1ac4e55a117cb4e3e16a2b0~mv2.png/v1/fit/w_1200,h_800,q_85/file.png" },
+    { "key": "towel",  "name": "منشفة سبورت باور", "nameEn": "Sport Power Towel",  "price": 70,
+      "image": "https://static.wixstatic.com/media/cf380e_963e66c34de246e7834c6efe3c4708d1~mv2.jpg/v1/fit/w_900,h_900,q_85/file.jpg" },
+    { "key": "bag",    "name": "حقيبة سبورت باور", "nameEn": "Sport Power Bag",    "price": 100,
+      "image": "https://static.wixstatic.com/media/cf380e_60c80b585b5f4526aabf9e4f00dd78b2~mv2.png/v1/fit/w_900,h_1200,q_85/file.png" },
+    { "key": "bottle", "name": "مطرة سبورت باور",  "nameEn": "Sport Power Bottle", "price": 50, "badge": "new",
+      "image": "https://static.wixstatic.com/media/cf380e_2caf59bfe1524f93aafb49aea78ad111~mv2.png/v1/fit/w_1200,h_860,q_85/file.png" }
+  ]
+}
