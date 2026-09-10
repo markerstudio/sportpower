@@ -99,6 +99,9 @@ function applicantsLine(c) {
 async function openApplicantsModal(course, onDone) {
   const wrap = el('div');
   const close = modal(`المسجّلون في «${course.title}»`, [wrap], { wide: true });
+  /* الجدول بسبعة أعمدة — النافذة العريضة الافتراضية (760px) تقصّه */
+  const box = document.querySelector('#modal-root .modal');
+  if (box) box.style.width = 'min(1120px, 96vw)';
   const canEdit = ['admin', 'accountant'].includes(API.user.role);
   let changed = false;
   const origClose = close;
@@ -127,7 +130,7 @@ async function openApplicantsModal(course, onDone) {
     wrap.append(pagedTable(['الاسم', 'الجوال', 'الباقة', 'الفرع / السكن', 'التاريخ', 'المرحلة', 'ملاحظات'], data.applicants, (l) => [
       el('div', {}, el('b', {}, l.name), l.email ? el('div', { style: 'font-size:11px;color:var(--app-muted);direction:ltr;unicode-bidi:embed;text-align:end' }, l.email) : ''),
       l.phone ? el('div', { style: 'display:flex;gap:6px;align-items:center' },
-        el('span', { style: 'direction:ltr;unicode-bidi:embed' }, l.phone),
+        el('span', { style: 'direction:ltr;unicode-bidi:embed;white-space:nowrap' }, l.phone),
         el('a', { class: 'btn btn--ghost btn--sm', target: '_blank', rel: 'noopener', title: 'واتساب',
           href: waLink(l.phone, OPS_SETTINGS.waCountryCode || '970', waMsg, l.name) }, icon('wa'))) : '—',
       l.tierName ? el('span', { class: 'tag tag--accent' }, l.tierName) : el('span', { class: 'tag tag--neutral' }, 'لم يقرر'),
