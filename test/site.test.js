@@ -174,3 +174,33 @@ test('settings: website contact fields are saved and exposed on the public site'
   assert.equal(site.contact.email, 'hello@sport-power.net');
   assert.ok(!('uploadSecret' in site.contact));
 });
+
+test('courses: each course carries its applicant summary, and the applicant list is served per course', async () => {
+  const list = (await req('GET', '/api/courses', { token: S.admin })).json;
+  const course = list.find((c) => c.slug === 'coach-business');
+  assert.ok(course.applicants, 'summary present');
+  assert.equal(course.applicants.total, 1, 'the website lead that picked a course is counted');
+  assert.equal(course.applicants.byTier.gold, 1);
+  assert.equal(course.applicants.open, 1);
+
+  const r = await req('GET', `/api/courses/${course.id}/applicants`, { token: S.admin });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.applicants.length, 1);
+  const a = r.json.applicants[0];
+  assert.equal(a.name, 'زائر الموقع');
+  assert.equal(a.tier, 'gold');
+  assert.equal(a.tierName, 'Gold');
+  assert.equal(a.stage, 'new');
+  assert.equal(a.email, 'visitor@example.com');
+  assert.ok(r.json.course.tiers.length === 3);
+
+  // تغيير المرحلة من صفحة الدورة = تغييرها في متابعة المبيعات
+  await req('PUT', '/api/leads/' + a.id, { token: S.admin, body: { stage: 'subscribed' } });
+  const after = (await req('GET', '/api/courses', { token: S.admin })).json.find((c) => c.slug === 'coach-business');
+  assert.equal(after.applicants.subscribed, 1);
+  assert.equal(after.applicants.open, 0);
+
+  const trainer = (await login('omar', '123456')).token;
+  assert.equal((await req('GET', `/api/courses/${course.id}/applicants`, { token: trainer })).status, 403);
+  assert.equal((await req('GET', '/api/courses/9999/applicants', { token: S.admin })).status, 404);
+});

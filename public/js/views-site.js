@@ -58,7 +58,10 @@ function courseCard(c, onDone, isAdmin) {
         el('b', {}, t.name), ' — ', fmtMoney(t.price, c.currency || 'ILS'), t.highlight ? ' ★' : '')))
       : el('div', { style: 'font-size:12px;color:var(--status-warning)' }, 'بلا باقات بعد — أضف باقة واحدة على الأقل قبل النشر.'),
     el('a', { href: url, target: '_blank', rel: 'noopener', style: 'font-size:12px;color:var(--action);direction:ltr;unicode-bidi:embed;text-align:end' }, url),
+    applicantsLine(c),
     el('div', { style: 'display:flex;gap:6px;margin-top:auto;flex-wrap:wrap' },
+      el('button', { class: 'btn btn--accent btn--sm', onclick: () => openApplicantsModal(c, onDone) },
+        `المسجّلون (${(c.applicants || {}).total || 0})`),
       isAdmin ? el('button', { class: 'btn btn--outline btn--sm', onclick: () => openCourseModal(onDone, c) }, 'تعديل') : el('span'),
       isAdmin ? el('button', {
         class: 'btn btn--ghost btn--sm',
@@ -75,6 +78,78 @@ function courseCard(c, onDone, isAdmin) {
           catch (ex) { toast(ex.message, true); }
         },
       }, 'حذف') : el('span')));
+}
+
+/* ============================================================
+   المسجّلون في الدورة — من سجّل اهتمامه من الموقع (أو أضافته الإدارة)
+   السجل نفسه هو سجل متابعة المبيعات: تعديل المرحلة هنا يظهر هناك والعكس.
+   ============================================================ */
+function applicantsLine(c) {
+  const a = c.applicants || { total: 0, open: 0, subscribed: 0, byTier: {} };
+  if (!a.total) return el('div', { style: 'font-size:12px;color:var(--app-muted)' }, 'لم يسجّل أحد بعد.');
+  const tiers = (Array.isArray(c.tiers) ? c.tiers : []).map((t) => `${t.name}: ${a.byTier[t.key] || 0}`);
+  if (a.byTier.none) tiers.push(`بلا باقة: ${a.byTier.none}`);
+  return el('div', { class: 'macros' },
+    el('span', { class: 'macro' }, el('b', {}, String(a.total)), ' مسجّل'),
+    el('span', { class: 'macro' }, el('b', {}, String(a.open)), ' قيد المتابعة'),
+    a.subscribed ? el('span', { class: 'macro' }, el('b', {}, String(a.subscribed)), ' اشتركوا') : '',
+    ...tiers.map((t) => el('span', { class: 'macro', style: 'font-weight:400' }, t)));
+}
+
+async function openApplicantsModal(course, onDone) {
+  const wrap = el('div');
+  const close = modal(`المسجّلون في «${course.title}»`, [wrap], { wide: true });
+  /* الجدول بسبعة أعمدة — النافذة العريضة الافتراضية (760px) تقصّه */
+  const box = document.querySelector('#modal-root .modal');
+  if (box) box.style.width = 'min(1120px, 96vw)';
+  const canEdit = ['admin', 'accountant'].includes(API.user.role);
+  let changed = false;
+  const origClose = close;
+  const closeAll = () => { origClose(); if (changed && onDone) onDone(); };
+
+  async function build() {
+    wrap.innerHTML = '';
+    wrap.append(spinnerCard());
+    let data;
+    try { data = await API.get(`/api/courses/${course.id}/applicants`); }
+    catch (ex) { wrap.innerHTML = ''; wrap.append(el('div', { class: 'empty' }, ex.message)); return; }
+    wrap.innerHTML = '';
+    const s = data.summary;
+    wrap.append(el('div', { class: 'macros', style: 'margin-bottom:12px' },
+      el('span', { class: 'macro' }, el('b', {}, String(s.total)), ' مسجّل'),
+      el('span', { class: 'macro' }, el('b', {}, String(s.open)), ' قيد المتابعة'),
+      el('span', { class: 'macro' }, el('b', {}, String(s.subscribed)), ' اشتركوا'),
+      ...data.course.tiers.map((t) => el('span', { class: 'macro', style: 'font-weight:400' }, `${t.name}: ${s.byTier[t.key] || 0}`)),
+      el('span', { style: 'flex:1' }),
+      el('a', { href: '#/sales', class: 'btn btn--ghost btn--sm', onclick: closeAll }, 'فتح متابعة المبيعات')));
+    if (!data.applicants.length) {
+      wrap.append(el('div', { class: 'empty' }, 'لم يسجّل أحد في هذه الدورة بعد. كل من يعبّئ نموذج الدورة على الموقع يظهر هنا فورًا.'));
+      return;
+    }
+    const waMsg = `مرحبًا {الاسم}، شكرًا لتسجيل اهتمامك بدورة «${course.title}» في سبورت باور. متى الوقت المناسب لمكالمة فيديو قصيرة مع الكوتش؟`;
+    wrap.append(pagedTable(['الاسم', 'الجوال', 'الباقة', 'الفرع / السكن', 'التاريخ', 'المرحلة', 'ملاحظات'], data.applicants, (l) => [
+      el('div', {}, el('b', {}, l.name), l.email ? el('div', { style: 'font-size:11px;color:var(--app-muted);direction:ltr;unicode-bidi:embed;text-align:end' }, l.email) : ''),
+      l.phone ? el('div', { style: 'display:flex;gap:6px;align-items:center' },
+        el('span', { style: 'direction:ltr;unicode-bidi:embed;white-space:nowrap' }, l.phone),
+        el('a', { class: 'btn btn--ghost btn--sm', target: '_blank', rel: 'noopener', title: 'واتساب',
+          href: waLink(l.phone, OPS_SETTINGS.waCountryCode || '970', waMsg, l.name) }, icon('wa'))) : '—',
+      l.tierName ? el('span', { class: 'tag tag--accent' }, l.tierName) : el('span', { class: 'tag tag--neutral' }, 'لم يقرر'),
+      [l.branchName, l.residence].filter(Boolean).join(' — ') || '—',
+      l.contactDate || '—',
+      canEdit ? select(Object.entries(LEAD_STAGE_LABELS), {
+        value: l.stage, style: 'min-width:150px',
+        onchange: async (e) => {
+          try { await API.put('/api/leads/' + l.id, { stage: e.target.value }); changed = true; toast('حُدّثت المرحلة.'); }
+          catch (ex) { toast(ex.message, true); e.target.value = l.stage; }
+        },
+      }) : (LEAD_STAGE_LABELS[l.stage] || l.stage),
+      el('div', { style: 'font-size:12px;color:var(--app-muted);max-width:260px;white-space:pre-wrap' }, l.note || '—'),
+    ], { pageSize: 20, searchText: (l) => `${l.name} ${l.phone} ${l.email} ${l.tierName}`, searchPlaceholder: 'ابحث بالاسم أو الجوال…', emptyText: 'لا نتائج.' }));
+  }
+  /* زر الإغلاق في رأس النافذة يعيد رسم البطاقات إن تغيّرت مرحلة */
+  const closeBtn = document.querySelector('#modal-root .modal__close');
+  if (closeBtn) closeBtn.addEventListener('click', () => { if (changed && onDone) onDone(); });
+  await build();
 }
 
 /* المحاور تُكتب سطرًا لكل محور: «العنوان | الشرح» — والإنجليزية بالترتيب نفسه */
