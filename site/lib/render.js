@@ -21,6 +21,20 @@ const LANGS = ['ar', 'en'];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
+
+/* بصمة الملفات الثابتة: تُلحق بروابط CSS وJS (?v=…) فيجلب المتصفح النسخة
+   الجديدة بعد كل نشر بدل نسخة مخزَّنة يومًا كاملًا مع HTML جديد */
+const ASSET_VERSION = (() => {
+  const h = require('crypto').createHash('sha1');
+  const pub = path.join(ROOT, 'public');
+  for (const dir of ['css', 'js']) {
+    const d = path.join(pub, dir);
+    if (!fs.existsSync(d)) continue;
+    for (const f of fs.readdirSync(d).sort()) h.update(fs.readFileSync(path.join(d, f)));
+  }
+  for (const l of ['ar', 'en']) h.update(fs.readFileSync(path.join(SRC, 'i18n', l + '.json')));
+  return h.digest('hex').slice(0, 10);
+})();
 const i18n = Object.fromEntries(LANGS.map((l) => [l, readJson(path.join(SRC, 'i18n', l + '.json'))]));
 const layout = fs.readFileSync(path.join(SRC, 'layout.html'), 'utf8');
 const pageSrc = (name) => fs.readFileSync(path.join(SRC, 'pages', name + '.html'), 'utf8');
@@ -111,6 +125,7 @@ function baseContext(lang, config, page, extra = {}) {
     canonicalPath: localUrl(pathAr, lang),
     altUrl: localUrl(pathAr, altLang),
     year: new Date().getFullYear(),
+    v: ASSET_VERSION,
     ...extra,
   };
 }
@@ -155,4 +170,4 @@ function renderPage(name, lang, config, extra = {}) {
   return renderTemplate(layout, [...stack, { content: body }], lang);
 }
 
-module.exports = { renderPage, renderTemplate, localizeCourse, localUrl, LANGS, i18n, ROOT, SRC, esc, readJson };
+module.exports = { renderPage, renderTemplate, localizeCourse, localUrl, LANGS, i18n, ROOT, SRC, esc, readJson, ASSET_VERSION };

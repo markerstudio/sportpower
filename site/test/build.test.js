@@ -36,7 +36,8 @@ test('build: every page renders in both languages with no leftover placeholders 
       assert.ok(!/\{\{[^}]*\}\}/.test(html), `unrendered placeholder in ${lang}/${p}`);
       assert.match(html, lang === 'ar' ? /<html lang="ar" dir="rtl">/ : /<html lang="en" dir="ltr">/);
       assert.match(html, /hreflang="ar"/); assert.match(html, /hreflang="en"/);
-      assert.match(html, /js\/config\.js/);
+      assert.match(html, /js\/config\.js\?v=[0-9a-f]{10}/, 'assets are versioned so browsers never keep stale css/js after a deploy');
+      assert.match(html, /css\/site\.css\?v=[0-9a-f]{10}/);
     }
   }
   const cfg = fs.readFileSync(path.join(dist, 'js', 'config.js'), 'utf8');
