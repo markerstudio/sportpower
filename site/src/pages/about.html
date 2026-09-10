@@ -2,8 +2,8 @@
       <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
       <div class="hero__inner">
         <div class="hero__content">
-          <div class="eyebrow">{{about_eyebrow}}</div>
-          <h1 class="hero__title hero__title--md">{{about_title}}</h1>
+          <div class="eyebrow" data-reveal="fade">{{about_eyebrow}}</div>
+          <h1 class="hero__title hero__title--md" data-reveal="up">{{about_title}}</h1>
           <p class="hero__lead">{{about_p1}}</p>
           <p class="hero__lead">{{about_p2}}</p>
         </div>
@@ -13,7 +13,7 @@
     <section class="pillars">
       <div class="container">
         <h2 class="section-title">{{about_values_t}}</h2>
-        <div class="pillars__grid pillars__grid--3">
+        <div class="pillars__grid pillars__grid--3" data-stagger="up">
           <div class="card card--accent-bar pillar"><span class="icon-badge"><img src="/assets/feedback.svg" alt=""></span><h3>{{value1_t}}</h3><p>{{value1_p}}</p></div>
           <div class="card card--accent-bar pillar"><span class="icon-badge"><img src="/assets/energy.svg" alt=""></span><h3>{{value2_t}}</h3><p>{{value2_p}}</p></div>
           <div class="card card--accent-bar pillar"><span class="icon-badge"><img src="/assets/mix.svg" alt=""></span><h3>{{value3_t}}</h3><p>{{value3_p}}</p></div>
@@ -37,7 +37,7 @@
           <p class="section-lead">{{contact_lead}}</p>
           <a class="btn btn--accent btn--lg" data-wa data-wa-text="wa_prefill_training" href="#" hidden target="_blank" rel="noopener">{{wa_chat}}</a>
         </div>
-        <dl class="contact-list">
+        <dl class="contact-list" data-stagger="left">
           <div hidden data-contact-row="phone"><dt>{{contact_phone}}</dt><dd><a data-contact="phone" href="#"></a></dd></div>
           <div hidden data-contact-row="whatsapp"><dt>{{contact_wa}}</dt><dd><a data-contact="whatsapp" href="#" target="_blank" rel="noopener"></a></dd></div>
           <div hidden data-contact-row="email"><dt>{{contact_email}}</dt><dd><a data-contact="email" href="#"></a></dd></div>

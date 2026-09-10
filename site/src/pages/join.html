@@ -1,19 +1,19 @@
     <section class="page-hero">
       <div class="container">
-        <div class="eyebrow">{{join_eyebrow}}</div>
-        <h1 class="section-title">{{join_title}}</h1>
+        <div class="eyebrow" data-reveal="fade">{{join_eyebrow}}</div>
+        <h1 class="section-title" data-reveal="up">{{join_title}}</h1>
         <p class="section-lead">{{join_intro}}</p>
       </div>
     </section>
 
     <section class="register-section register-section--page">
       <div class="container register-section__inner">
-        <div class="join-steps">
+        <div class="join-steps" data-stagger="right">
           <div class="card step"><div class="step__num">01</div><h3>{{step1_t}}</h3><p>{{step1_p}}</p></div>
           <div class="card step"><div class="step__num">02</div><h3>{{step2_t}}</h3><p>{{step2_p}}</p></div>
           <div class="card step"><div class="step__num">03</div><h3>{{step3_t}}</h3><p>{{step3_p}}</p></div>
         </div>
-        <form class="card lead-form" data-lead novalidate>
+        <form class="card lead-form" data-lead novalidate data-reveal="left">
           <input type="hidden" name="lang" value="{{lang}}">
           <div class="field" data-field="name"><label class="field__label" for="j-name">{{form_name}} *</label><input class="field__input" id="j-name" name="name" required autocomplete="name"><span class="field__hint" data-hint></span></div>
           <div class="field" data-field="phone"><label class="field__label" for="j-phone">{{form_phone}} *</label><input class="field__input" id="j-phone" name="phone" type="tel" required inputmode="tel" autocomplete="tel" dir="ltr"><span class="field__hint" data-hint></span></div>
