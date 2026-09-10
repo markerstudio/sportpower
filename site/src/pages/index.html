@@ -1,47 +1,57 @@
     <!-- ======================= الواجهة ======================= -->
     <section class="hero">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true" data-parallax="0.18" data-parallax-base=" translateY(-50%) scaleX(-1)">
       <div class="hero__inner">
         <div class="hero__content">
-          <div class="hero__tags">
+          <div class="hero__tags" data-stagger="fade">
             <span class="tag tag--accent">{{hero_tag1}}</span>
             <span class="tag tag--petrol">{{hero_tag2}}</span>
             <span class="tag tag--petrol">{{hero_tag3}}</span>
           </div>
-          <h1 class="hero__title">{{hero_title_1}}<br>{{hero_title_2}}<br><em>{{hero_title_em}}</em></h1>
-          <p class="hero__lead">{{hero_lead}}</p>
-          <div class="hero__cta">
+          <h1 class="hero__title" data-words><span>{{hero_title_1}}</span><br><span>{{hero_title_2}}</span><br><em>{{hero_title_em}}</em></h1>
+          <p class="hero__lead" data-reveal="fade">{{hero_lead}}</p>
+          <div class="hero__cta" data-reveal="up">
             <a class="btn btn--accent btn--lg" href="{{@/join}}">{{hero_cta}}</a>
             <a class="btn btn--outline-light btn--lg" href="{{@/packages}}">{{hero_cta2}}</a>
           </div>
-          <div class="hero__stats">
-            <div><div class="stat__value">{{hero_fact1_v}}</div><div class="stat__label">{{hero_fact1_l}}</div></div>
+          <div class="hero__stats" data-stagger="up">
+            <div><div class="stat__value" data-count="{{hero_fact1_v}}">{{hero_fact1_v}}</div><div class="stat__label">{{hero_fact1_l}}</div></div>
             <div><div class="stat__value">{{hero_fact2_v}}</div><div class="stat__label">{{hero_fact2_l}}</div></div>
             <div><div class="stat__value">{{hero_fact3_v}}</div><div class="stat__label">{{hero_fact3_l}}</div></div>
           </div>
         </div>
       </div>
+      <div class="hero__scroll" aria-hidden="true"></div>
     </section>
+
+    <!-- ======================= الشريط المتحرك ======================= -->
+    <div class="marquee" data-marquee="42" aria-hidden="true">
+      <div class="marquee__track">
+        <span class="marquee__item">{{mq_1}}</span><span class="marquee__item">{{mq_2}}</span><span class="marquee__item">{{mq_3}}</span>
+        <span class="marquee__item">{{mq_4}}</span><span class="marquee__item">{{mq_5}}</span><span class="marquee__item">{{mq_6}}</span>
+        <span class="marquee__item">{{mq_7}}</span><span class="marquee__item">{{mq_8}}</span><span class="marquee__item">{{mq_9}}</span>
+      </div>
+    </div>
 
     <!-- ======================= ركائز النظام ======================= -->
     <section class="pillars">
       <div class="container">
-        <div class="eyebrow">{{pillars_eyebrow}}</div>
-        <h2 class="section-title">{{pillars_title}}</h2>
-        <div class="pillars__grid">
-          <div class="card card--accent-bar pillar">
+        <div class="eyebrow" data-reveal="fade">{{pillars_eyebrow}}</div>
+        <h2 class="section-title" data-reveal="up">{{pillars_title}}</h2>
+        <div class="pillars__grid" data-stagger="up">
+          <div class="card card--accent-bar pillar" data-tilt="7">
             <span class="icon-badge"><img src="/assets/energy.svg" alt=""></span>
             <h3>{{pillar1_t}}</h3><p>{{pillar1_p}}</p>
           </div>
-          <div class="card card--accent-bar pillar">
+          <div class="card card--accent-bar pillar" data-tilt="7">
             <span class="icon-badge"><img src="/assets/mix.svg" alt=""></span>
             <h3>{{pillar2_t}}</h3><p>{{pillar2_p}}</p>
           </div>
-          <div class="card card--accent-bar pillar">
+          <div class="card card--accent-bar pillar" data-tilt="7">
             <span class="icon-badge"><img src="/assets/feedback.svg" alt=""></span>
             <h3>{{pillar3_t}}</h3><p>{{pillar3_p}}</p>
           </div>
-          <div class="card card--accent-bar pillar">
+          <div class="card card--accent-bar pillar" data-tilt="7">
             <span class="icon-badge"><img src="/assets/vibes.svg" alt=""></span>
             <h3>{{pillar4_t}}</h3><p>{{pillar4_p}}</p>
           </div>
@@ -52,14 +62,14 @@
     <!-- ======================= الخدمات ======================= -->
     <section class="programs" id="services">
       <div class="container">
-        <div class="programs__head">
+        <div class="programs__head" data-reveal="up">
           <div>
             <div class="eyebrow">{{services_eyebrow}}</div>
             <h2 class="section-title">{{services_title}}</h2>
           </div>
           <a class="btn btn--outline" href="{{@/packages}}">{{packages_all}}</a>
         </div>
-        <div class="programs__grid">
+        <div class="programs__grid" data-stagger="up">
           <article class="card program-card">
             <div class="program-card__head"><span class="icon-badge"><img src="/assets/energy.svg" alt=""></span><span class="tag tag--accent">1:1</span></div>
             <div class="program-card__body">
@@ -91,7 +101,7 @@
     <!-- ======================= الباقات (من النظام) ======================= -->
     <section class="packages-section" id="packages">
       <div class="container">
-        <div class="programs__head">
+        <div class="programs__head" data-reveal="up">
           <div>
             <div class="eyebrow">{{packages_eyebrow}}</div>
             <h2 class="section-title">{{packages_title}}</h2>
@@ -106,23 +116,23 @@
     <!-- ======================= الدورة ======================= -->
     <section class="course-teaser on-dark" id="course">
       <div class="container course-teaser__inner">
-        <div>
+        <div data-reveal="right">
           <div class="eyebrow">{{course_eyebrow}}</div>
           <h2 class="section-title" data-course-teaser="title">{{course_title}}</h2>
           <p class="course-teaser__lead" data-course-teaser="summary">{{course_lead}}</p>
           <div class="course-teaser__meta" data-course-teaser="meta"></div>
           <a class="btn btn--accent btn--lg" data-course-teaser="link" href="{{@/courses}}">{{course_cta}}</a>
         </div>
-        <ol class="course-teaser__modules" data-course-teaser="modules"></ol>
+        <ol class="course-teaser__modules" data-course-teaser="modules" data-stagger="left"></ol>
       </div>
     </section>
 
     <!-- ======================= كيف نبدأ ======================= -->
     <section class="steps" id="system">
       <div class="container">
-        <div class="eyebrow">{{steps_eyebrow}}</div>
-        <h2 class="section-title">{{steps_title}}</h2>
-        <div class="steps__grid">
+        <div class="eyebrow" data-reveal="fade">{{steps_eyebrow}}</div>
+        <h2 class="section-title" data-reveal="up">{{steps_title}}</h2>
+        <div class="steps__grid" data-reveal="fade" data-stagger="up">
           <div class="card step"><div class="step__num">01</div><h3>{{step1_t}}</h3><p>{{step1_p}}</p></div>
           <div class="card step"><div class="step__num">02</div><h3>{{step2_t}}</h3><p>{{step2_p}}</p></div>
           <div class="card step"><div class="step__num">03</div><h3>{{step3_t}}</h3><p>{{step3_p}}</p></div>
@@ -133,15 +143,31 @@
     <!-- ======================= الفروع (من النظام) ======================= -->
     <section class="branches" id="branches">
       <div class="container">
-        <div class="eyebrow">{{branches_eyebrow}}</div>
-        <h2 class="section-title">{{branches_title}}</h2>
+        <div class="eyebrow" data-reveal="fade">{{branches_eyebrow}}</div>
+        <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
         <div class="branches__grid" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+      </div>
+    </section>
+
+    <!-- ======================= الأسئلة الشائعة ======================= -->
+    <section class="faq-section" id="faq">
+      <div class="container">
+        <div class="eyebrow" data-reveal="fade">{{faq_eyebrow}}</div>
+        <h2 class="section-title" data-reveal="up">{{faq_title}}</h2>
+        <div class="faq" data-accordion data-stagger="up">
+          <div class="acc-item is-open" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="true">{{faq1_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq1_a}}</div></div></div>
+          <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq2_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq2_a}}</div></div></div>
+          <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq3_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq3_a}}</div></div></div>
+          <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq4_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq4_a}}</div></div></div>
+          <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq5_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq5_a}}</div></div></div>
+          <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq6_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq6_a}}</div></div></div>
+        </div>
       </div>
     </section>
 
     <!-- ======================= دعوة الانضمام ======================= -->
     <section class="join-cta" id="join">
-      <div class="join-cta__inner">
+      <div class="join-cta__inner" data-reveal="scale">
         <h2>{{cta_title}}<br>{{cta_title2}}</h2>
         <p>{{cta_p}}</p>
         <a class="btn btn--petrol btn--lg" href="{{@/join}}">{{cta_btn}}</a>

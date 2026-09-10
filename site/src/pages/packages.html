@@ -1,14 +1,22 @@
     <section class="page-hero">
       <div class="container">
-        <div class="eyebrow">{{packages_eyebrow}}</div>
-        <h1 class="section-title">{{packages_title}}</h1>
+        <div class="eyebrow" data-reveal="fade">{{packages_eyebrow}}</div>
+        <h1 class="section-title" data-reveal="up">{{packages_title}}</h1>
         <p class="section-lead">{{packages_intro}}</p>
       </div>
     </section>
 
     <section class="packages-section packages-section--page">
       <div class="container">
-        <div class="branch-tabs" data-render="branch-tabs" role="tablist" aria-label="{{branch_label}}"></div>
+        <div class="tabs-row" data-reveal="fade">
+          <div class="tabs" data-tabs data-cat-tabs role="tablist">
+            <button type="button" role="tab" class="is-on" data-tab="all">{{cat_all}}</button>
+            <button type="button" role="tab" data-tab="personal">{{cat_personal}}</button>
+            <button type="button" role="tab" data-tab="group">{{cat_group}}</button>
+            <button type="button" role="tab" data-tab="saver">{{cat_saver}}</button>
+          </div>
+          <div class="branch-tabs" data-render="branch-tabs" role="tablist" aria-label="{{branch_label}}"></div>
+        </div>
         <div class="packages-grid" data-render="packages" data-group="category"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
         <p class="pkg-note">{{pkg_note}}</p>
       </div>

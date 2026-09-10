@@ -2,7 +2,6 @@
   "site_name": "Sport Power",
   "site_tag": "Sport Power",
   "site_desc": "Sport Power, the first personal training company in Palestine: structured training, nutrition guidance and weekly follow-up in Bethlehem, Beit Sahour and Amman. Membership packages and the “From Coach to a Complete Business” course.",
-
   "nav_home": "Home",
   "nav_packages": "Packages",
   "nav_courses": "Courses",
@@ -14,7 +13,6 @@
   "theme_toggle": "Dark / light mode",
   "menu": "Menu",
   "skip": "Skip to content",
-
   "footer_about": "We are not a gym. We are a structured health transformation system: personal training, nutrition guidance and follow-up that stays with you until change becomes a habit.",
   "footer_train": "Train",
   "footer_company": "Company",
@@ -26,7 +24,6 @@
   "wa_chat": "Message us on WhatsApp",
   "loading": "Loading…",
   "load_error": "We could not load this right now. Refresh the page or contact us directly.",
-
   "title_index": "Sport Power — Personal training in Palestine and Jordan",
   "hero_tag1": "Personal training",
   "hero_tag2": "Nutrition guidance",
@@ -43,7 +40,6 @@
   "hero_fact2_l": "personal training with a coach",
   "hero_fact3_v": "Weekly",
   "hero_fact3_l": "follow-up and measurement",
-
   "pillars_eyebrow": "Why Sport Power?",
   "pillars_title": "Not a gym. A transformation system.",
   "pillar1_t": "Structured training",
@@ -54,7 +50,6 @@
   "pillar3_p": "InBody measurements and weekly check-ins keep you on track. The system walks with you step by step.",
   "pillar4_t": "A supportive community",
   "pillar4_p": "An atmosphere that respects you from day one. Real people, real change.",
-
   "services_eyebrow": "Train with purpose",
   "services_title": "Three ways to train with us",
   "svc1_t": "Personal training",
@@ -63,7 +58,6 @@
   "svc2_p": "Small groups of up to five people: more energy and a lower cost with a progressive group program.",
   "svc3_t": "Nutrition guidance",
   "svc3_p": "A meal plan from our nutritionist, measured monthly with InBody readings.",
-
   "packages_eyebrow": "Packages",
   "packages_title": "Choose your package",
   "packages_lead": "Clear prices per branch. Sessions are deducted when delivered, and you can freeze once per subscription.",
@@ -81,7 +75,6 @@
   "branch_label": "Branch",
   "pkg_note": "Prices are all-inclusive. Subscriptions are personal and non-transferable; a session cancelled less than 4 hours ahead is counted.",
   "no_packages": "No packages are listed right now. Contact us for the current offers.",
-
   "course_eyebrow": "For coaches and academy owners",
   "course_title": "From Coach to a Complete Business",
   "course_lead": "The Sport Power course that takes your coaching career to the next level: a system, income, social media, sales, a team and modern training methods.",
@@ -97,7 +90,6 @@
   "no_courses": "No open courses right now. Leave your details and we will tell you about the next cohort.",
   "starts": "Starts",
   "from_price": "From",
-
   "course_modules_eyebrow": "What you will learn",
   "course_modules_title": "Six modules that take you from coach to business",
   "course_methods_label": "Training methods you will learn:",
@@ -120,7 +112,6 @@
   "cur_ILS": "ILS",
   "cur_JOD": "JOD",
   "cur_USD": "USD",
-
   "steps_eyebrow": "How do we start?",
   "steps_title": "Start from where you are",
   "step1_t": "Contact us",
@@ -129,17 +120,14 @@
   "step2_p": "We measure your honest starting point: an InBody reading, your condition, goals and lifestyle. No judgement.",
   "step3_t": "Plan and follow-up",
   "step3_p": "You choose your package, sign your contract online and start with a personal program and weekly follow-up.",
-
   "branches_eyebrow": "Wherever you are",
   "branches_title": "Three branches. One health mission.",
   "cta_title": "Change starts today.",
   "cta_title2": "And the system stays with you.",
   "cta_p": "Leave your details and we will contact you to schedule your starting assessment.",
   "cta_btn": "Join now",
-
   "title_packages": "Membership packages — Sport Power",
   "desc_packages": "Personal and group training packages at Sport Power, priced per branch: Bethlehem, Beit Sahour and Amman.",
-
   "title_join": "Join Sport Power",
   "desc_join": "Leave your details to join Sport Power or register for our courses. We get back to you within 24 hours.",
   "join_eyebrow": "Join",
@@ -168,7 +156,6 @@
   "choose_option": "Choose…",
   "no_branch": "Not decided yet",
   "undecided": "Not decided yet",
-
   "title_thanks": "We received your request — Sport Power",
   "thanks_title": "You are in!",
   "thanks_p": "We received your request and our team will contact you within 24 hours. Want a faster reply? Message us on WhatsApp now.",
@@ -176,7 +163,6 @@
   "thanks_home": "Back to home",
   "wa_prefill_training": "Hello Sport Power, I submitted a join request on the website and would like to schedule my starting assessment.",
   "wa_prefill_course": "Hello Sport Power, I registered my interest in the “From Coach to a Complete Business” course on the website and would like to book a video call.",
-
   "title_shop": "Sport Power shop",
   "desc_shop": "Sport Power merchandise: flag, towel, bag and bottle. Order on WhatsApp and pick up from the nearest branch.",
   "shop_eyebrow": "Shop",
@@ -186,7 +172,6 @@
   "badge_new": "New",
   "badge_limited": "Limited stock",
   "wa_prefill_shop": "Hello Sport Power, I would like to order: ",
-
   "title_about": "About — Sport Power",
   "desc_about": "Sport Power is the first personal training company in Palestine, with branches in Bethlehem, Beit Sahour and Amman and a team of coaches and a nutritionist.",
   "about_eyebrow": "About us",
@@ -208,7 +193,6 @@
   "contact_follow": "Follow us",
   "contact_address": "Address",
   "branch_phone": "Branch phone",
-
   "title_privacy": "Privacy policy — Sport Power",
   "privacy_eyebrow": "Privacy",
   "privacy_title": "Privacy policy",
@@ -223,8 +207,34 @@
   "privacy_4_p": "You can ask to see, correct or delete your data at any time by writing to the email or WhatsApp listed on the contact page.",
   "privacy_5_t": "Cookies",
   "privacy_5_p": "The website uses no advertising trackers. We only store your dark-mode and language preference in your browser.",
-
   "nf_title": "Page not found",
   "nf_p": "The link you opened does not exist or has moved. Try the home page or contact us.",
-  "nf_home": "Back to home"
+  "nf_home": "Back to home",
+  "mq_1": "1:1 personal training",
+  "mq_2": "Group training",
+  "mq_3": "Nutrition guidance",
+  "mq_4": "InBody readings",
+  "mq_5": "Bethlehem",
+  "mq_6": "Beit Sahour",
+  "mq_7": "Amman",
+  "mq_8": "Weekly follow-up",
+  "mq_9": "From coach to a complete business",
+  "faq_eyebrow": "FAQ",
+  "faq_title": "Everything you want to know before you start",
+  "faq1_q": "How do I start?",
+  "faq1_a": "Fill in the join form or message us on WhatsApp. Our reception team contacts you within 24 hours to schedule a free starting assessment, then you choose your package, sign your contract online and start.",
+  "faq2_q": "Do I need previous experience or a certain fitness level?",
+  "faq2_a": "No. The program is built on your own assessment: your current condition, your goal and your lifestyle. We start from where you are, whether it is your first time training or you are an athlete.",
+  "faq3_q": "How are sessions counted?",
+  "faq3_a": "Every package has a number of sessions and a validity period. A session is deducted when delivered, and a session cancelled less than 4 hours before its time is counted.",
+  "faq4_q": "Can I freeze my subscription?",
+  "faq4_a": "Yes, once per subscription for up to two weeks, by prior request at reception.",
+  "faq5_q": "What is InBody and why do we measure it?",
+  "faq5_a": "A device that measures body composition: fat percentage, muscle mass and water. We measure you at the start and then monthly, so your program and meal plan are built on real numbers, not the scale alone.",
+  "faq6_q": "Where are the branches and in which currency are prices?",
+  "faq6_a": "Three branches: Bethlehem and Beit Sahour in shekels, and Amman in Jordanian dinars. Prices on the packages page are shown in each branch's currency and are all-inclusive.",
+  "sticky_cta_t": "From Coach to a Complete Business",
+  "sticky_cta_s": "Book a video call with the coach",
+  "back_top": "Back to top",
+  "cat_all": "All types"
 }

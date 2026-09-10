@@ -1,16 +1,16 @@
     <section class="page-hero">
       <div class="container">
-        <div class="eyebrow">{{shop_eyebrow}}</div>
-        <h1 class="section-title">{{shop_title}}</h1>
+        <div class="eyebrow" data-reveal="fade">{{shop_eyebrow}}</div>
+        <h1 class="section-title" data-reveal="up">{{shop_title}}</h1>
         <p class="section-lead">{{shop_intro}}</p>
       </div>
     </section>
 
     <section class="shop-section">
       <div class="container">
-        <div class="shop-grid">
+        <div class="shop-grid" data-stagger="up">
           {{#items}}
-          <article class="card product">
+          <article class="card product" data-tilt="5">
             <div class="product__media">
               <img src="{{image}}" alt="{{name}}" loading="lazy">
               {{#badge}}<span class="tag tag--accent product__badge" data-badge="{{badge}}"></span>{{/badge}}

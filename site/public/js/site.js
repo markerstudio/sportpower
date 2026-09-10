@@ -77,7 +77,7 @@
     return '<article class="card pkg" id="pkg-' + p.id + '">'
       + '<div class="pkg__head"><span class="tag tag--accent">' + esc(catLabel(p.category)) + '</span><span class="pkg__branch">' + esc(branchName(data, p.branchId)) + '</span></div>'
       + '<h3 class="pkg__name">' + esc(p.name) + '</h3>'
-      + '<div class="pkg__price">' + esc(money(p.price, p.currency)) + '</div>'
+      + '<div class="pkg__price"><span data-count="' + esc(p.price) + '">' + esc(Number(p.price || 0).toLocaleString('en-US')) + '</span> ' + esc(t('cur_' + p.currency)) + '</div>'
       + '<div class="pkg__meta"><span><b>' + esc(p.sessions) + '</b> ' + esc(t('sessions')) + '</span>'
       + (p.sessionsPerWeek ? '<span><b>' + esc(p.sessionsPerWeek) + '</b> ' + esc(t('per_week')) + '</span>' : '')
       + '<span><b>' + esc(p.durationDays) + '</b> ' + esc(t('valid_days')) + '</span></div>'
@@ -88,9 +88,11 @@
       + '</article>';
   }
 
-  function renderPackages(el, data, branchId) {
+  var motion = function (el) { if (window.SPMotion) window.SPMotion.observe(el); };
+  function renderPackages(el, data, branchId, cat) {
     var list = (data.packages || []).slice();
     if (branchId) list = list.filter(function (p) { return !p.branchId || p.branchId === branchId; });
+    if (cat && cat !== 'all') list = list.filter(function (p) { return (p.category || 'personal') === cat; });
     var limit = Number(el.getAttribute('data-limit')) || 0;
     if (limit) {
       /* واجهة الرئيسية: أشهر باقة من كل نوع */
@@ -102,11 +104,12 @@
       el.innerHTML = order.map(function (cat) {
         var sub = list.filter(function (p) { return (p.category || 'personal') === cat; });
         if (!sub.length) return '';
-        return '<h2 class="packages-grid__title" id="' + cat + '">' + esc(catLabel(cat)) + '</h2><div class="packages-grid__row">' + sub.map(function (p) { return packageCard(p, data); }).join('') + '</div>';
+        return '<h2 class="packages-grid__title" id="' + cat + '">' + esc(catLabel(cat)) + '</h2><div class="packages-grid__row" data-stagger="up">' + sub.map(function (p) { return packageCard(p, data); }).join('') + '</div>';
       }).join('');
     } else {
-      el.innerHTML = '<div class="packages-grid__row">' + list.map(function (p) { return packageCard(p, data); }).join('') + '</div>';
+      el.innerHTML = '<div class="packages-grid__row" data-stagger="up">' + list.map(function (p) { return packageCard(p, data); }).join('') + '</div>';
     }
+    motion(el);
   }
 
   function renderBranchTabs(el, data, onPick) {
@@ -138,6 +141,7 @@
         + (b.phone ? '<a class="tag tag--neutral" href="tel:' + esc(b.phone.replace(/\s/g, '')) + '" dir="ltr">' + esc(b.phone) + '</a>' : '')
         + '</div>';
     }).join('');
+    el.setAttribute('data-stagger', 'up'); motion(el);
   }
 
   /* --- الدورات --- */
@@ -159,6 +163,7 @@
     var list = data.courses || [];
     if (!list.length) { el.innerHTML = '<p class="empty">' + esc(t('no_courses')) + '</p>'; return; }
     el.innerHTML = list.map(courseCard).join('');
+    el.setAttribute('data-stagger', 'up'); motion(el);
   }
   function renderCourseTeaser(data) {
     var c = (data.courses || [])[0];
@@ -174,7 +179,7 @@
       + '<span class="tag tag--petrol">' + esc(lc.format) + '</span>'
       + (lc.minPrice !== null ? '<span class="tag tag--accent">' + esc(t('from_price')) + ' ' + esc(money(lc.minPrice, lc.currency)) + '</span>' : '');
     var mods = sec.querySelector('[data-course-teaser="modules"]');
-    if (mods) mods.innerHTML = lc.modules.map(function (m, i) { return '<li><span>' + String(i + 1).padStart(2, '0') + '</span>' + esc(m) + '</li>'; }).join('');
+    if (mods) { mods.innerHTML = lc.modules.map(function (m, i) { return '<li><span>' + String(i + 1).padStart(2, '0') + '</span>' + esc(m) + '</li>'; }).join(''); motion(mods.parentNode); }
   }
 
   /* --- بيانات التواصل وواتساب --- */
@@ -304,6 +309,16 @@
     document.querySelectorAll('[data-badge]').forEach(function (n) { n.textContent = t('badge_' + n.getAttribute('data-badge')); });
   }
 
+  /* شريط الحجز الثابت في صفحة الدورة على الجوال: يظهر بعد الواجهة ويختفي عند النموذج */
+  var sticky = document.querySelector('[data-sticky-cta]');
+  if (sticky) {
+    var formVisible = false;
+    var reg = document.getElementById('register');
+    if (reg && 'IntersectionObserver' in window) new IntersectionObserver(function (es) { formVisible = es[0].isIntersecting; tick(); }, { threshold: 0.15 }).observe(reg);
+    var tick = function () { sticky.classList.toggle('is-visible', (window.scrollY || 0) > 520 && !formVisible); };
+    window.addEventListener('scroll', tick, { passive: true }); tick();
+  }
+
   setupForms();
   loadSite().then(function (data) {
     applyContact(data.contact);
@@ -313,8 +328,17 @@
     renderCourseTeaser(data);
     document.querySelectorAll('[data-render="packages"]').forEach(function (el) {
       var tabs = document.querySelector('[data-render="branch-tabs"]');
-      renderPackages(el, data, Number(qs.get('branch')) || 0);
-      if (tabs) renderBranchTabs(tabs, data, function (id) { renderPackages(el, data, id); });
+      var catTabs = document.querySelector('[data-cat-tabs]');
+      var state = { branch: Number(qs.get('branch')) || 0, cat: (location.hash || '').replace('#', '') || 'all' };
+      if (!['personal', 'group', 'saver'].includes(state.cat)) state.cat = 'all';
+      var draw = function () { renderPackages(el, data, state.branch, state.cat); };
+      draw();
+      if (tabs) renderBranchTabs(tabs, data, function (id) { state.branch = id; draw(); });
+      if (catTabs) {
+        var pre = catTabs.querySelector('[data-tab="' + state.cat + '"]');
+        if (pre) { catTabs.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.toggle('is-on', b === pre); }); }
+        catTabs.addEventListener('sp:tab', function (e) { if (e.detail !== state.cat) { state.cat = e.detail; draw(); } });
+      }
       if (location.hash) { var target = document.getElementById(location.hash.slice(1)); if (target) target.scrollIntoView(); }
     });
   }).catch(function () {

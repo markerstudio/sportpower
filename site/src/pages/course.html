@@ -1,5 +1,5 @@
     <section class="hero hero--course">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true" data-parallax="0.18" data-parallax-base=" translateY(-50%) scaleX(-1)">
       <div class="hero__inner">
         <div class="hero__content">
           <div class="hero__tags">
@@ -7,7 +7,7 @@
             {{#course.lessons}}<span class="tag tag--petrol">{{course.lessons}} {{lessons}}</span>{{/course.lessons}}
             <span class="tag tag--petrol">{{course.formatLabel}}</span>
           </div>
-          <h1 class="hero__title">{{course.title}}</h1>
+          <h1 class="hero__title" data-words><span>{{course.title}}</span></h1>
           {{#course.tagline}}<p class="hero__tagline">{{course.tagline}}</p>{{/course.tagline}}
           <p class="hero__lead">{{course.summary}}</p>
           <div class="hero__cta">
@@ -32,7 +32,7 @@
       <div class="container">
         <div class="eyebrow">{{course_modules_eyebrow}}</div>
         <h2 class="section-title">{{course_modules_title}}</h2>
-        <ol class="modules">
+        <ol class="modules" data-stagger="up">
           {{#course.modules}}
           <li class="card module">
             <span class="module__num">{{num}}</span>
@@ -41,12 +41,12 @@
           {{/course.modules}}
         </ol>
         {{#course.methods.length}}
-        <div class="methods">
+        <div class="methods" data-reveal="up">
           <span class="methods__label">{{course_methods_label}}</span>
           <span class="methods__items" dir="ltr">{{#course.methods}}<span class="methods__item">{{.}}</span>{{/course.methods}}</span>
         </div>
         {{/course.methods.length}}
-        <div class="course-goal card card--accent-bar">
+        <div class="course-goal card card--accent-bar" data-reveal="up">
           <h3>{{course_goal_title}}</h3>
           <p>{{course_goal_p}}</p>
         </div>
@@ -61,7 +61,7 @@
           <h2 class="section-title">{{course_tiers_title}}</h2>
           <p class="section-lead">{{course_tiers_lead}}</p>
         </div>
-        <div class="tiers">
+        <div class="tiers" data-stagger="scale">
           {{#course.tiers}}
           <article class="tier {{tierClass}}{{#highlight}} tier--highlight{{/highlight}}">
             <div class="tier__badge" aria-hidden="true">{{#highlight}}♛{{/highlight}}{{^highlight}}★{{/highlight}}</div>
@@ -86,7 +86,7 @@
           <h2 class="section-title">{{course_form_title}}</h2>
           <p class="section-lead">{{course_form_lead}}</p>
         </div>
-        <form class="card lead-form" data-lead data-interest="course" novalidate>
+        <form class="card lead-form" data-lead data-interest="course" novalidate data-reveal="left">
           <input type="hidden" name="interest" value="course">
           <input type="hidden" name="courseSlug" value="{{course.slug}}">
           <input type="hidden" name="lang" value="{{lang}}">
@@ -108,3 +108,8 @@
         </form>
       </div>
     </section>
+
+    <div class="sticky-cta" data-sticky-cta>
+      <div class="sticky-cta__text">{{course.title}}<small>{{sticky_cta_s}}</small></div>
+      <a class="btn btn--accent btn--sm" href="#register">{{course_cta_btn}}</a>
+    </div>
