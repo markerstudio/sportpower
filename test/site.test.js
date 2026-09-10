@@ -11,7 +11,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 for (const d of ['data', 'uploads']) { try { fs.rmSync(path.join(root, d), { recursive: true, force: true }); } catch (e) {} }
 delete process.env.DATABASE_URL; delete process.env.POSTGRES_URL;
-process.env.SITE_ORIGINS = 'https://www.sport-power.net,https://*.vercel.app';
+process.env.SITE_ORIGINS = 'https://www.sport-power.net,https://*.vercel.app,https://staging.example.org';
 
 const app = require('../server/index.js');
 let base;
@@ -58,9 +58,13 @@ test('public site: CORS is opened only for allowed origins, with preflight', asy
   const ok = await req('GET', '/api/public/site', { headers: { Origin: 'https://www.sport-power.net' } });
   assert.equal(ok.headers.get('access-control-allow-origin'), 'https://www.sport-power.net');
   const preview = await req('GET', '/api/public/site', { headers: { Origin: 'https://sportpower-site-abc123.vercel.app' } });
-  assert.equal(preview.headers.get('access-control-allow-origin'), 'https://sportpower-site-abc123.vercel.app');
+  assert.equal(preview.headers.get('access-control-allow-origin'), 'https://sportpower-site-abc123.vercel.app', 'site preview deployments are allowed by default');
+  const extra = await req('GET', '/api/public/site', { headers: { Origin: 'https://staging.example.org' } });
+  assert.equal(extra.headers.get('access-control-allow-origin'), 'https://staging.example.org', 'explicit env origins are added');
   const bad = await req('GET', '/api/public/site', { headers: { Origin: 'https://evil.example' } });
   assert.equal(bad.headers.get('access-control-allow-origin'), null);
+  const broad = await req('GET', '/api/public/site', { headers: { Origin: 'https://evil-app.vercel.app' } });
+  assert.equal(broad.headers.get('access-control-allow-origin'), null, 'a bare *.vercel.app wildcard in SITE_ORIGINS is ignored');
   const pre = await fetch(base + '/api/public/site/leads', { method: 'OPTIONS', headers: { Origin: 'https://www.sport-power.net', 'Access-Control-Request-Method': 'POST' } });
   assert.equal(pre.status, 204);
   assert.equal(pre.headers.get('access-control-allow-methods'), 'GET, POST, OPTIONS');
