@@ -24,10 +24,23 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /* الأصول المسموح لها بمخاطبة واجهة الموقع: الموقع الرسمي، ويمكن
    توسيعها بمتغير البيئة SITE_ORIGINS (فاصلة بين الأصول، ويقبل نمطًا
    مثل https://*.vercel.app لنسخ المعاينة). محليًا يُقبل localhost. */
+const DEFAULT_ORIGINS = [
+  'https://www.sport-power.net', 'https://sport-power.net',
+  // عناوين Vercel الخاصة بمشروع الموقع ونسخ معاينته — لا كل تطبيقات vercel.app
+  'https://sportpower-site.vercel.app', 'https://sportpower-site-*.vercel.app',
+];
+/* نمطٌ يبدأ فيه اسم المضيف بنجمة (https://*.vercel.app) يفتح الواجهة لكل من
+   ينشر تطبيقًا على ذلك النطاق — يُرفض ويُسجَّل تحذير مرة واحدة */
+const tooBroad = (pattern) => /^https?:\/\/\*/.test(pattern);
+let warnedBroad = false;
 function allowedOrigins() {
   const env = String(process.env.SITE_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const list = env.length ? env : ['https://www.sport-power.net', 'https://sport-power.net'];
-  return list;
+  const broad = env.filter(tooBroad);
+  if (broad.length && !warnedBroad) {
+    warnedBroad = true;
+    console.warn('[site] ⚠️ تجاهُل أصول CORS واسعة في SITE_ORIGINS: ' + broad.join(', ') + ' — اكتب اسم المشروع قبل النجمة، مثل https://sportpower-site-*.vercel.app');
+  }
+  return DEFAULT_ORIGINS.concat(env.filter((p) => !tooBroad(p)));
 }
 function originAllowed(origin) {
   if (!origin) return false;
