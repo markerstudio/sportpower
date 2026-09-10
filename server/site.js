@@ -145,7 +145,7 @@ module.exports = function registerSite(app, { auth, requireRole, h, notify, rate
   });
 
   const viewLimit = async (req, res) => {
-    if (await rateLimited('site-view:' + clientIp(req), 240, 15 * 60 * 1000)) {
+    if (await rateLimited('site-view:' + clientIp(req), 600, 15 * 60 * 1000)) {
       res.status(429).json({ error: 'محاولات كثيرة — انتظر قليلًا ثم حاول مجددًا.' });
       return false;
     }
@@ -170,7 +170,9 @@ module.exports = function registerSite(app, { auth, requireRole, h, notify, rate
       .filter((p) => p.active !== false)
       .sort((a, b) => (a.branchId || 0) - (b.branchId || 0) || (a.sessions || 0) - (b.sessions || 0))
       .map((p) => ({
-        id: p.id, name: p.name, category: p.category || 'personal', sessions: p.sessions, price: p.price,
+        /* بلا سعر: الأسعار سرّ تجاري وتختلف بين الفروع — الموقع يعرض
+           «السعر عند التواصل» ويحوّل الزائر إلى واتساب أو نموذج الانضمام */
+        id: p.id, name: p.name, category: p.category || 'personal', sessions: p.sessions,
         currency: cur.of(p.branchId || null), durationDays: p.durationDays || 30,
         sessionsPerWeek: p.sessionsPerWeek || null, description: p.description || '',
         features: String(p.features || '').split('\n').map((s) => s.trim()).filter(Boolean),

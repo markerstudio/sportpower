@@ -1,160 +1,124 @@
     <!-- ======================= الواجهة ======================= -->
-    <section class="hero">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true" data-parallax="0.18" data-parallax-base=" translateY(-50%) scaleX(-1)">
+    <section class="hero hero--home">
+      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
       <div class="hero__inner">
         <div class="hero__content">
-          <div class="hero__tags" data-stagger="fade">
-            <span class="tag tag--accent">{{hero_tag1}}</span>
-            <span class="tag tag--petrol">{{hero_tag2}}</span>
-            <span class="tag tag--petrol">{{hero_tag3}}</span>
-          </div>
+          <p class="hero__kicker">{{hero_note}}</p>
           <h1 class="hero__title" data-words><span>{{hero_title_1}}</span><br><span>{{hero_title_2}}</span><br><em>{{hero_title_em}}</em></h1>
-          <p class="hero__lead" data-reveal="fade">{{hero_lead}}</p>
-          <div class="hero__cta" data-reveal="up">
+          <p class="hero__lead">{{hero_lead}}</p>
+          <div class="hero__cta">
             <a class="btn btn--accent btn--lg" href="{{@/join}}">{{hero_cta}}</a>
-            <a class="btn btn--outline-light btn--lg" href="{{@/packages}}">{{hero_cta2}}</a>
-          </div>
-          <div class="hero__stats" data-stagger="up">
-            <div><div class="stat__value" data-count="{{hero_fact1_v}}">{{hero_fact1_v}}</div><div class="stat__label">{{hero_fact1_l}}</div></div>
-            <div><div class="stat__value">{{hero_fact2_v}}</div><div class="stat__label">{{hero_fact2_l}}</div></div>
-            <div><div class="stat__value">{{hero_fact3_v}}</div><div class="stat__label">{{hero_fact3_l}}</div></div>
+            <a class="btn btn--outline-light btn--lg" href="#packages">{{hero_cta2}}</a>
           </div>
         </div>
+        <div class="hero__loc" data-reveal="fade">
+          <div class="hero__loc-q">{{loc_q}}</div>
+          <div class="loc-choose loc-choose--dark" data-render="locations"></div>
+        </div>
       </div>
-      <div class="hero__scroll" aria-hidden="true"></div>
     </section>
 
-    <!-- ======================= الشريط المتحرك ======================= -->
-    <div class="marquee" data-marquee="42" aria-hidden="true">
-      <div class="marquee__track">
-        <span class="marquee__item">{{mq_1}}</span><span class="marquee__item">{{mq_2}}</span><span class="marquee__item">{{mq_3}}</span>
-        <span class="marquee__item">{{mq_4}}</span><span class="marquee__item">{{mq_5}}</span><span class="marquee__item">{{mq_6}}</span>
-        <span class="marquee__item">{{mq_7}}</span><span class="marquee__item">{{mq_8}}</span><span class="marquee__item">{{mq_9}}</span>
+    <!-- ======================= الدورة (من النظام) ======================= -->
+    <section class="feature" id="course">
+      <div class="container feature__inner">
+        <div class="feature__text" data-reveal="up">
+          <div class="kicker kicker--light">{{feat_kicker}}</div>
+          <h2 class="feature__title" data-course-feature="title">{{course_title}}</h2>
+          <p class="feature__tagline" data-course-feature="tagline"></p>
+          <p class="feature__lead" data-course-feature="summary">{{course_lead}}</p>
+          <div class="feature__meta" data-course-feature="meta"></div>
+          <div class="feature__cta">
+            <a class="btn btn--accent btn--lg" data-course-feature="book" href="{{@/courses}}">{{feat_book}}</a>
+            <a class="btn btn--outline-light btn--lg" data-course-feature="link" href="{{@/courses}}">{{feat_cta}}</a>
+          </div>
+        </div>
+        <div class="feature__side" data-reveal="left">
+          <div class="feature__label">{{feat_modules}}</div>
+          <ol class="feature__modules" data-course-feature="modules"></ol>
+          <div class="feature__label">{{feat_tiers}}</div>
+          <ul class="feature__tiers" data-course-feature="tiers"></ul>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- ======================= ركائز النظام ======================= -->
-    <section class="pillars">
+    <!-- ======================= كيف تبدأ ======================= -->
+    <section class="how" id="system">
       <div class="container">
-        <div class="eyebrow" data-reveal="fade">{{pillars_eyebrow}}</div>
-        <h2 class="section-title" data-reveal="up">{{pillars_title}}</h2>
-        <div class="pillars__grid" data-stagger="up">
-          <div class="card card--accent-bar pillar" data-tilt="7">
-            <span class="icon-badge"><img src="/assets/energy.svg" alt=""></span>
-            <h3>{{pillar1_t}}</h3><p>{{pillar1_p}}</p>
+        <div class="kicker" data-reveal="fade">{{how_kicker}}</div>
+        <div class="how__rows">
+          <div class="how__row" data-reveal="up">
+            <div class="how__when">{{how1_when}}</div>
+            <h3 class="how__title">{{how1_t}}</h3>
+            <p class="how__p">{{how1_p}}</p>
           </div>
-          <div class="card card--accent-bar pillar" data-tilt="7">
-            <span class="icon-badge"><img src="/assets/mix.svg" alt=""></span>
-            <h3>{{pillar2_t}}</h3><p>{{pillar2_p}}</p>
+          <div class="how__row" data-reveal="up">
+            <div class="how__when">{{how2_when}}</div>
+            <h3 class="how__title">{{how2_t}}</h3>
+            <p class="how__p">{{how2_p}}</p>
           </div>
-          <div class="card card--accent-bar pillar" data-tilt="7">
-            <span class="icon-badge"><img src="/assets/feedback.svg" alt=""></span>
-            <h3>{{pillar3_t}}</h3><p>{{pillar3_p}}</p>
-          </div>
-          <div class="card card--accent-bar pillar" data-tilt="7">
-            <span class="icon-badge"><img src="/assets/vibes.svg" alt=""></span>
-            <h3>{{pillar4_t}}</h3><p>{{pillar4_p}}</p>
+          <div class="how__row" data-reveal="up">
+            <div class="how__when">{{how3_when}}</div>
+            <h3 class="how__title">{{how3_t}}</h3>
+            <p class="how__p">{{how3_p}}</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ======================= الخدمات ======================= -->
-    <section class="programs" id="services">
-      <div class="container">
-        <div class="programs__head" data-reveal="up">
-          <div>
-            <div class="eyebrow">{{services_eyebrow}}</div>
-            <h2 class="section-title">{{services_title}}</h2>
-          </div>
-          <a class="btn btn--outline" href="{{@/packages}}">{{packages_all}}</a>
-        </div>
-        <div class="programs__grid" data-stagger="up">
-          <article class="card program-card">
-            <div class="program-card__head"><span class="icon-badge"><img src="/assets/energy.svg" alt=""></span><span class="tag tag--accent">1:1</span></div>
-            <div class="program-card__body">
-              <h3 class="program-card__title">{{svc1_t}}</h3>
-              <p class="program-card__desc">{{svc1_p}}</p>
-              <div class="program-card__foot"><a class="btn btn--ghost btn--sm" href="{{@/packages}}#personal">{{nav_packages}} ←</a></div>
-            </div>
-          </article>
-          <article class="card program-card">
-            <div class="program-card__head"><span class="icon-badge"><img src="/assets/vibes.svg" alt=""></span><span class="tag tag--accent">1:5</span></div>
-            <div class="program-card__body">
-              <h3 class="program-card__title">{{svc2_t}}</h3>
-              <p class="program-card__desc">{{svc2_p}}</p>
-              <div class="program-card__foot"><a class="btn btn--ghost btn--sm" href="{{@/packages}}#group">{{nav_packages}} ←</a></div>
-            </div>
-          </article>
-          <article class="card program-card">
-            <div class="program-card__head"><span class="icon-badge"><img src="/assets/mix.svg" alt=""></span><span class="tag tag--accent">InBody</span></div>
-            <div class="program-card__body">
-              <h3 class="program-card__title">{{svc3_t}}</h3>
-              <p class="program-card__desc">{{svc3_p}}</p>
-              <div class="program-card__foot"><a class="btn btn--ghost btn--sm" href="{{@/join}}">{{join_now}} ←</a></div>
-            </div>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <!-- ======================= الباقات (من النظام) ======================= -->
+    <!-- ======================= الباقات بحسب الفرع (من النظام) ======================= -->
     <section class="packages-section" id="packages">
       <div class="container">
-        <div class="programs__head" data-reveal="up">
+        <div class="packages-head" data-reveal="up">
           <div>
-            <div class="eyebrow">{{packages_eyebrow}}</div>
-            <h2 class="section-title">{{packages_title}}</h2>
+            <div class="kicker">{{packages_eyebrow}}</div>
+            <h2 class="section-title"><span data-loc-title>{{packages_title}}</span></h2>
             <p class="section-lead">{{packages_lead}}</p>
           </div>
-          <a class="btn btn--outline" href="{{@/packages}}">{{packages_all}}</a>
+          <div class="loc-choose loc-choose--compact" data-render="locations"></div>
         </div>
         <div class="packages-grid" data-render="packages" data-limit="3"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+        <div class="packages-foot" data-reveal="fade">
+          <a class="btn btn--outline" href="{{@/packages}}">{{packages_all}}</a>
+        </div>
       </div>
     </section>
 
-    <!-- ======================= الدورة ======================= -->
-    <section class="course-teaser on-dark" id="course">
-      <div class="container course-teaser__inner">
+    <!-- ======================= لماذا نحن ======================= -->
+    <section class="why" id="why">
+      <div class="container why__inner">
         <div data-reveal="right">
-          <div class="eyebrow">{{course_eyebrow}}</div>
-          <h2 class="section-title" data-course-teaser="title">{{course_title}}</h2>
-          <p class="course-teaser__lead" data-course-teaser="summary">{{course_lead}}</p>
-          <div class="course-teaser__meta" data-course-teaser="meta"></div>
-          <a class="btn btn--accent btn--lg" data-course-teaser="link" href="{{@/courses}}">{{course_cta}}</a>
+          <div class="kicker">{{why_kicker}}</div>
+          <h2 class="why__statement">{{why_statement}}</h2>
+          <p class="why__lead">{{why_lead}}</p>
         </div>
-        <ol class="course-teaser__modules" data-course-teaser="modules" data-stagger="left"></ol>
-      </div>
-    </section>
-
-    <!-- ======================= كيف نبدأ ======================= -->
-    <section class="steps" id="system">
-      <div class="container">
-        <div class="eyebrow" data-reveal="fade">{{steps_eyebrow}}</div>
-        <h2 class="section-title" data-reveal="up">{{steps_title}}</h2>
-        <div class="steps__grid" data-reveal="fade" data-stagger="up">
-          <div class="card step"><div class="step__num">01</div><h3>{{step1_t}}</h3><p>{{step1_p}}</p></div>
-          <div class="card step"><div class="step__num">02</div><h3>{{step2_t}}</h3><p>{{step2_p}}</p></div>
-          <div class="card step"><div class="step__num">03</div><h3>{{step3_t}}</h3><p>{{step3_p}}</p></div>
-        </div>
+        <ul class="why__list" data-stagger="up">
+          <li><img src="/assets/energy.svg" alt=""><div><h3>{{pillar1_t}}</h3><p>{{pillar1_p}}</p></div></li>
+          <li><img src="/assets/mix.svg" alt=""><div><h3>{{pillar2_t}}</h3><p>{{pillar2_p}}</p></div></li>
+          <li><img src="/assets/feedback.svg" alt=""><div><h3>{{pillar3_t}}</h3><p>{{pillar3_p}}</p></div></li>
+          <li><img src="/assets/vibes.svg" alt=""><div><h3>{{pillar4_t}}</h3><p>{{pillar4_p}}</p></div></li>
+        </ul>
       </div>
     </section>
 
     <!-- ======================= الفروع (من النظام) ======================= -->
     <section class="branches" id="branches">
       <div class="container">
-        <div class="eyebrow" data-reveal="fade">{{branches_eyebrow}}</div>
+        <div class="kicker" data-reveal="fade">{{branches_eyebrow}}</div>
         <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
-        <div class="branches__grid" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+        <p class="section-lead" data-reveal="fade">{{branches_lead}}</p>
+        <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
       </div>
     </section>
 
     <!-- ======================= الأسئلة الشائعة ======================= -->
     <section class="faq-section" id="faq">
-      <div class="container">
-        <div class="eyebrow" data-reveal="fade">{{faq_eyebrow}}</div>
-        <h2 class="section-title" data-reveal="up">{{faq_title}}</h2>
-        <div class="faq" data-accordion data-stagger="up">
+      <div class="container faq-section__inner">
+        <div data-reveal="right">
+          <div class="kicker">{{faq_eyebrow}}</div>
+          <h2 class="section-title">{{faq_title}}</h2>
+          <p class="section-lead">{{faq_lead}}</p>
+        </div>
+        <div class="faq" data-accordion data-reveal="up">
           <div class="acc-item is-open" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="true">{{faq1_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq1_a}}</div></div></div>
           <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq2_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq2_a}}</div></div></div>
           <div class="acc-item" data-acc-item><button class="acc-item__btn" type="button" data-acc-toggle aria-expanded="false">{{faq3_q}}</button><div class="acc-item__panel" data-acc-panel><div>{{faq3_a}}</div></div></div>
@@ -167,7 +131,7 @@
 
     <!-- ======================= دعوة الانضمام ======================= -->
     <section class="join-cta" id="join">
-      <div class="join-cta__inner" data-reveal="scale">
+      <div class="join-cta__inner" data-reveal="up">
         <h2>{{cta_title}}<br>{{cta_title2}}</h2>
         <p>{{cta_p}}</p>
         <a class="btn btn--petrol btn--lg" href="{{@/join}}">{{cta_btn}}</a>
