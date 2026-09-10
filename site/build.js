@@ -34,7 +34,7 @@ function build() {
   copyDir(PUBLIC, DIST);
 
   const pages = readJson(path.join(ROOT, 'src', 'pages.json'));
-  const shop = readJson(path.join(ROOT, 'src', 'data', 'shop.json'));
+  const shop = readJson(path.join(ROOT, 'src', 'content', 'shop.json'));
   const urls = [];
   for (const lang of LANGS) {
     for (const [name, meta] of Object.entries(pages)) {

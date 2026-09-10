@@ -15,7 +15,7 @@ site/
 ├── src/pages/*.html    الصفحات: الرئيسية، الباقات، الدورات، الدورة، الانضمام، المتجر، من نحن، الخصوصية، شكرًا، 404
 ├── src/i18n/ar.json    النصوص العربية   ← عدّل النصوص هنا
 ├── src/i18n/en.json    النصوص الإنجليزية (المفاتيح نفسها — الاختبار يتحقق)
-├── src/data/shop.json  منتجات المتجر الأربعة
+├── src/content/shop.json  منتجات المتجر الأربعة
 ├── public/             CSS وJS والخطوط والشعارات — تُنسخ كما هي
 └── vercel.json         إعدادات مشروع Vercel الخاص بالموقع
 ```
@@ -69,7 +69,7 @@ VERCEL_TOKEN="رمزك من Vercel → Account Settings → Tokens" npm run verc
 النطاق `sport-power.net` مسجَّل عند Wix. الترتيب الآمن:
 
 1. **قبل أي شيء**: انسخ من Wix ما تريد الاحتفاظ به — صور المنتجات الأربعة
-   (ضعها في `public/images/shop/` وحدّث الروابط في `src/data/shop.json`)،
+   (ضعها في `public/images/shop/` وحدّث الروابط في `src/content/shop.json`)،
    وأي صور أو نصوص أخرى. صفحات «challenge-page» (16 صفحة خاصة بأسماء
    متدربين من 2023–2024) ستختفي مع Wix؛ إن أردت شيئًا منها فصدّره الآن.
 2. في Vercel → مشروع الموقع → **Domains**: أضف `www.sport-power.net`
@@ -102,5 +102,5 @@ cd site && npm test                     # اختبارات البناء والق
 - **نص في صفحة**: `src/i18n/ar.json` و`src/i18n/en.json` (المفتاح نفسه في الملفين).
 - **صفحة جديدة**: أضف `src/pages/<name>.html` وسطرًا في `src/pages.json`
   ومفاتيح `title_<name>` و`desc_<name>` في ملفي اللغة.
-- **منتج في المتجر**: `src/data/shop.json`.
+- **منتج في المتجر**: `src/content/shop.json`.
 - **صورة المشاركة** (Open Graph): ضع `public/images/og.png` بقياس 1200×630.
