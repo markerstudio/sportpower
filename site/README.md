@@ -34,7 +34,19 @@ site/
 و`POST /api/public/site/leads` — عامة بلا مصادقة، محدودة المعدّل، وCORS مقصور
 على أصل الموقع (`SITE_ORIGINS` في مشروع النظام).
 
-## النشر على Vercel (مشروع ثانٍ من المستودع نفسه)
+## النشر على Vercel — الطريقة الأسرع (أمر واحد من جهازك)
+
+```bash
+VERCEL_TOKEN="رمزك من Vercel → Account Settings → Tokens" npm run vercel:site
+```
+
+يجد مشروع النظام، ينشئ مشروع الموقع من المستودع بـ Root Directory = `site`،
+يضبط كل المتغيرات على المشروعين (بما فيها `SITE_ORIGINS`)، يضيف النطاقات
+الثلاثة، ويطلق معاينةً للموقع والنظام من الفرع ويطبع روابطها وسجلات DNS.
+آمن لإعادة التشغيل. أضف `--production` لنشر الموقع إنتاجًا، و`--dry-run`
+للاطلاع دون تغيير. ثم أبطل الرمز من Vercel إن كان قد مرّ في محادثة أو بريد.
+
+## النشر على Vercel يدويًا (مشروع ثانٍ من المستودع نفسه)
 
 1. **New Project** من المستودع `markerstudio/sportpower` → **Root Directory: `site`**.
    Framework Preset: Other. (أمر البناء ومجلد الإخراج مضبوطان في `vercel.json`.)
