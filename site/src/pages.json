@@ -1,0 +1,11 @@
+{
+  "index":    { "path": "/" },
+  "packages": { "path": "/packages" },
+  "courses":  { "path": "/courses" },
+  "join":     { "path": "/join" },
+  "shop":     { "path": "/shop" },
+  "about":    { "path": "/about" },
+  "privacy":  { "path": "/privacy" },
+  "thanks":   { "path": "/thanks", "sitemap": false },
+  "404":      { "path": "/404", "sitemap": false }
+}

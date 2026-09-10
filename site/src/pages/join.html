@@ -1,0 +1,49 @@
+    <section class="page-hero">
+      <div class="container">
+        <div class="eyebrow">{{join_eyebrow}}</div>
+        <h1 class="section-title">{{join_title}}</h1>
+        <p class="section-lead">{{join_intro}}</p>
+      </div>
+    </section>
+
+    <section class="register-section register-section--page">
+      <div class="container register-section__inner">
+        <div class="join-steps">
+          <div class="card step"><div class="step__num">01</div><h3>{{step1_t}}</h3><p>{{step1_p}}</p></div>
+          <div class="card step"><div class="step__num">02</div><h3>{{step2_t}}</h3><p>{{step2_p}}</p></div>
+          <div class="card step"><div class="step__num">03</div><h3>{{step3_t}}</h3><p>{{step3_p}}</p></div>
+        </div>
+        <form class="card lead-form" data-lead novalidate>
+          <input type="hidden" name="lang" value="{{lang}}">
+          <div class="field" data-field="name"><label class="field__label" for="j-name">{{form_name}} *</label><input class="field__input" id="j-name" name="name" required autocomplete="name"><span class="field__hint" data-hint></span></div>
+          <div class="field" data-field="phone"><label class="field__label" for="j-phone">{{form_phone}} *</label><input class="field__input" id="j-phone" name="phone" type="tel" required inputmode="tel" autocomplete="tel" dir="ltr"><span class="field__hint" data-hint></span></div>
+          <div class="field" data-field="email"><label class="field__label" for="j-email">{{form_email}}</label><input class="field__input" id="j-email" name="email" type="email" autocomplete="email" dir="ltr"><span class="field__hint" data-hint></span></div>
+
+          <fieldset class="choice">
+            <legend class="field__label">{{form_interest}}</legend>
+            <label class="choice__opt"><input type="radio" name="interest" value="training" checked><span>{{interest_training}}</span></label>
+            <label class="choice__opt"><input type="radio" name="interest" value="course"><span>{{interest_course}}</span></label>
+          </fieldset>
+
+          <div data-when="training">
+            <div class="field"><label class="field__label" for="j-branch">{{form_branch}}</label>
+              <select class="field__select" id="j-branch" name="branchId" data-fill="branches"><option value="">{{no_branch}}</option></select></div>
+            <div class="field"><label class="field__label" for="j-goal">{{form_goal}}</label>
+              <select class="field__select" id="j-goal" name="goal" data-fill="goals"><option value="">{{choose_option}}</option></select></div>
+            <div class="field"><label class="field__label" for="j-res">{{form_residence}}</label><input class="field__input" id="j-res" name="residence" autocomplete="address-level2"></div>
+          </div>
+          <div data-when="course" hidden>
+            <div class="field"><label class="field__label" for="j-course">{{form_course}}</label>
+              <select class="field__select" id="j-course" name="courseSlug" data-fill="courses"><option value="">{{choose_option}}</option></select></div>
+            <div class="field"><label class="field__label" for="j-tier">{{form_tier}}</label>
+              <select class="field__select" id="j-tier" name="tier" data-fill="tiers"><option value="">{{undecided}}</option></select></div>
+          </div>
+
+          <div class="field"><label class="field__label" for="j-msg">{{form_message}}</label><textarea class="field__input" id="j-msg" name="message" rows="3" placeholder="{{form_message_ph}}"></textarea></div>
+          <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+          <p class="form-error" data-form-error hidden></p>
+          <button class="btn btn--accent btn--lg btn--full" type="submit" data-submit>{{form_submit}}</button>
+          <p class="form-note">{{form_privacy}}</p>
+        </form>
+      </div>
+    </section>

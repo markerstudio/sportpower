@@ -1,0 +1,12 @@
+{
+  "name": "sportpower-site",
+  "version": "1.0.0",
+  "description": "الموقع العام لسبورت باور — www.sport-power.net (ثابت + صفحة الدورة عند الطلب)",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "dev": "node build.js --serve",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18" }
+}

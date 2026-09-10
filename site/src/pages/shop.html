@@ -1,0 +1,27 @@
+    <section class="page-hero">
+      <div class="container">
+        <div class="eyebrow">{{shop_eyebrow}}</div>
+        <h1 class="section-title">{{shop_title}}</h1>
+        <p class="section-lead">{{shop_intro}}</p>
+      </div>
+    </section>
+
+    <section class="shop-section">
+      <div class="container">
+        <div class="shop-grid">
+          {{#items}}
+          <article class="card product">
+            <div class="product__media">
+              <img src="{{image}}" alt="{{name}}" loading="lazy">
+              {{#badge}}<span class="tag tag--accent product__badge" data-badge="{{badge}}"></span>{{/badge}}
+            </div>
+            <div class="product__body">
+              <h3 class="product__name">{{name}}</h3>
+              <div class="product__price">{{priceText}} <span>{{cur_ILS}}</span></div>
+              <a class="btn btn--accent btn--full" data-wa data-wa-text="wa_prefill_shop" data-wa-suffix="{{name}}" href="#" target="_blank" rel="noopener">{{order_wa}}</a>
+            </div>
+          </article>
+          {{/items}}
+        </div>
+      </div>
+    </section>

@@ -7,3 +7,4 @@ backups/
 .env.*
 *.pem
 *.key
+site/dist/
