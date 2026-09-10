@@ -116,7 +116,9 @@
     var waText = t('wa_prefill_package').replace('{pkg}', p.name).replace('{branch}', bName);
     var wa = waNum ? 'https://wa.me/' + waNum + '?text=' + encodeURIComponent(waText) : '';
     return '<article class="card pkg pkg--' + esc(p.category || 'personal') + '" id="pkg-' + esc(p.id) + '">'
-      + '<div class="pkg__head"><span>' + esc(catLabel(p.category)) + '</span><span>' + esc(bName) + '</span></div>'
+      + '<div class="pkg__media" aria-hidden="true"><span class="pkg__cat">' + esc(catLabel(p.category)) + '</span></div>'
+      + '<div class="pkg__body">'
+      + '<div class="pkg__head"><span>' + esc(bName) + '</span></div>'
       + '<h3 class="pkg__name">' + esc(p.name) + '</h3>'
       + '<div class="pkg__meta"><span><b>' + esc(p.sessions) + '</b>' + esc(t('sessions')) + '</span>'
       + (p.sessionsPerWeek ? '<span><b>' + esc(p.sessionsPerWeek) + '</b>' + esc(t('per_week')) + '</span>' : '')
@@ -126,7 +128,7 @@
       + '<div class="pkg__price-note">' + esc(t('pkg_no_price')) + '</div>'
       + '<div class="pkg__actions"><a class="btn btn--accent btn--full" href="' + join + '">' + esc(t('pkg_book')) + '</a>'
       + (wa ? '<a class="btn btn--outline btn--full" href="' + esc(wa) + '" target="_blank" rel="noopener">' + esc(t('pkg_ask')) + '</a>' : '') + '</div>'
-      + '</article>';
+      + '</div></article>';
   }
 
   function renderPackages(el, data, cat) {

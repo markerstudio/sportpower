@@ -1,11 +1,32 @@
-    <section class="hero hero--short">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+    <section class="hero hero--photo hero--about">
+      <figure class="hero__photo">
+        <img src="/images/team.webp" alt="{{alt_team}}" width="1400" height="932" fetchpriority="high" decoding="async">
+        <figcaption class="hero__cap">{{why_photo_cap}}</figcaption>
+      </figure>
       <div class="hero__inner">
         <div class="hero__content">
-          <div class="kicker" data-reveal="fade">{{about_eyebrow}}</div>
+          <div class="kicker kicker--light" data-reveal="fade">{{about_eyebrow}}</div>
           <h1 class="hero__title hero__title--md" data-reveal="up">{{about_title}}</h1>
           <p class="hero__lead">{{about_p1}}</p>
           <p class="hero__lead">{{about_p2}}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="team team--about" id="team">
+      <div class="container">
+        <div class="team__head" data-reveal="up">
+          <div>
+            <div class="kicker">{{team_kicker}}</div>
+            <h2 class="section-title">{{team_title}}</h2>
+          </div>
+          <p class="section-lead">{{team_lead}}</p>
+        </div>
+        <div class="team__grid team__grid--4" data-stagger="photo">
+          <figure><img src="/images/coach-smile.webp" alt="{{alt_coach}}" width="1000" height="1000" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coach-w.webp" alt="{{alt_coach}}" width="800" height="1000" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coach-s.webp" alt="{{alt_coach}}" width="800" height="1000" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coaching.webp" alt="{{alt_coaching}}" width="1400" height="933" loading="lazy" decoding="async"></figure>
         </div>
       </div>
     </section>
@@ -22,10 +43,15 @@
     </section>
 
     <section class="branches" id="branches">
-      <div class="container">
-        <div class="kicker">{{branches_eyebrow}}</div>
-        <h2 class="section-title">{{branches_title}}</h2>
-        <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+      <div class="container branches__inner">
+        <div class="branches__text">
+          <div class="kicker">{{branches_eyebrow}}</div>
+          <h2 class="section-title">{{branches_title}}</h2>
+          <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+        </div>
+        <figure class="branches__photo" data-reveal="photo">
+          <img src="/images/gym.webp" alt="{{alt_gym}}" width="1400" height="933" loading="lazy" decoding="async">
+        </figure>
       </div>
     </section>
 

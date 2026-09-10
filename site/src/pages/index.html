@@ -1,6 +1,12 @@
-    <!-- ======================= الواجهة ======================= -->
-    <section class="hero hero--home">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+    <!-- ======================= الواجهة: صورة حقيقية + عنوان كبير ======================= -->
+    <section class="hero hero--photo hero--home">
+      <figure class="hero__photo" aria-hidden="false">
+        <picture>
+          <source media="(max-width: 960px)" srcset="/images/hero-m.webp">
+          <img src="/images/hero.webp" alt="{{alt_hero}}" width="1600" height="900" fetchpriority="high" decoding="async">
+        </picture>
+        <figcaption class="hero__cap">{{hero_photo_cap}}</figcaption>
+      </figure>
       <div class="hero__inner">
         <div class="hero__content">
           <p class="hero__kicker">{{hero_note}}</p>
@@ -18,8 +24,30 @@
       </div>
     </section>
 
-    <!-- ======================= الدورة (من النظام) ======================= -->
+    <!-- ======================= لماذا نحن: صورة الفريق + البيان ======================= -->
+    <section class="why" id="why">
+      <div class="container why__inner">
+        <figure class="why__photo" data-reveal="photo">
+          <img src="/images/team.webp" alt="{{alt_team}}" width="1400" height="932" loading="lazy" decoding="async">
+          <figcaption>{{why_photo_cap}}</figcaption>
+        </figure>
+        <div class="why__text" data-reveal="up">
+          <div class="kicker">{{why_kicker}}</div>
+          <h2 class="why__statement">{{why_statement}}</h2>
+          <p class="why__lead">{{why_lead}}</p>
+          <ul class="why__list" data-stagger="up">
+            <li><img src="/assets/energy.svg" alt=""><div><h3>{{pillar1_t}}</h3><p>{{pillar1_p}}</p></div></li>
+            <li><img src="/assets/mix.svg" alt=""><div><h3>{{pillar2_t}}</h3><p>{{pillar2_p}}</p></div></li>
+            <li><img src="/assets/feedback.svg" alt=""><div><h3>{{pillar3_t}}</h3><p>{{pillar3_p}}</p></div></li>
+            <li><img src="/assets/vibes.svg" alt=""><div><h3>{{pillar4_t}}</h3><p>{{pillar4_p}}</p></div></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= الدورة (من النظام) مع صورة المدرّب ======================= -->
     <section class="feature" id="course">
+      <img class="feature__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
       <div class="container feature__inner">
         <div class="feature__text" data-reveal="up">
           <div class="kicker kicker--light">{{feat_kicker}}</div>
@@ -32,12 +60,15 @@
             <a class="btn btn--outline-light btn--lg" data-course-feature="link" href="{{@/courses}}">{{feat_cta}}</a>
           </div>
         </div>
-        <div class="feature__side" data-reveal="left">
+        <div class="feature__side" data-reveal="up">
           <div class="feature__label">{{feat_modules}}</div>
           <ol class="feature__modules" data-course-feature="modules"></ol>
           <div class="feature__label">{{feat_tiers}}</div>
           <ul class="feature__tiers" data-course-feature="tiers"></ul>
         </div>
+        <figure class="feature__figure" data-reveal="photo">
+          <img src="/images/instructor.webp" alt="{{alt_instructor}}" width="560" height="890" loading="lazy" decoding="async">
+        </figure>
       </div>
     </section>
 
@@ -83,30 +114,36 @@
       </div>
     </section>
 
-    <!-- ======================= لماذا نحن ======================= -->
-    <section class="why" id="why">
-      <div class="container why__inner">
-        <div data-reveal="right">
-          <div class="kicker">{{why_kicker}}</div>
-          <h2 class="why__statement">{{why_statement}}</h2>
-          <p class="why__lead">{{why_lead}}</p>
+    <!-- ======================= الفروع (من النظام) مع صورة الصالة ======================= -->
+    <section class="branches" id="branches">
+      <div class="container branches__inner">
+        <div class="branches__text">
+          <div class="kicker" data-reveal="fade">{{branches_eyebrow}}</div>
+          <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
+          <p class="section-lead" data-reveal="fade">{{branches_lead}}</p>
+          <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
         </div>
-        <ul class="why__list" data-stagger="up">
-          <li><img src="/assets/energy.svg" alt=""><div><h3>{{pillar1_t}}</h3><p>{{pillar1_p}}</p></div></li>
-          <li><img src="/assets/mix.svg" alt=""><div><h3>{{pillar2_t}}</h3><p>{{pillar2_p}}</p></div></li>
-          <li><img src="/assets/feedback.svg" alt=""><div><h3>{{pillar3_t}}</h3><p>{{pillar3_p}}</p></div></li>
-          <li><img src="/assets/vibes.svg" alt=""><div><h3>{{pillar4_t}}</h3><p>{{pillar4_p}}</p></div></li>
-        </ul>
+        <figure class="branches__photo" data-reveal="photo">
+          <img src="/images/gym.webp" alt="{{alt_gym}}" width="1400" height="933" loading="lazy" decoding="async">
+        </figure>
       </div>
     </section>
 
-    <!-- ======================= الفروع (من النظام) ======================= -->
-    <section class="branches" id="branches">
+    <!-- ======================= الفريق: ثلاث صور ======================= -->
+    <section class="team" id="team">
       <div class="container">
-        <div class="kicker" data-reveal="fade">{{branches_eyebrow}}</div>
-        <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
-        <p class="section-lead" data-reveal="fade">{{branches_lead}}</p>
-        <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+        <div class="team__head" data-reveal="up">
+          <div>
+            <div class="kicker">{{team_kicker}}</div>
+            <h2 class="section-title">{{team_title}}</h2>
+          </div>
+          <p class="section-lead">{{team_lead}}</p>
+        </div>
+        <div class="team__grid" data-stagger="photo">
+          <figure><img src="/images/coach-smile.webp" alt="{{alt_coach}}" width="1000" height="1000" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coaching.webp" alt="{{alt_coaching}}" width="1400" height="933" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coach-w.webp" alt="{{alt_coach}}" width="800" height="1000" loading="lazy" decoding="async"></figure>
+        </div>
       </div>
     </section>
 
@@ -129,11 +166,12 @@
       </div>
     </section>
 
-    <!-- ======================= دعوة الانضمام ======================= -->
-    <section class="join-cta" id="join">
+    <!-- ======================= دعوة الانضمام فوق صورة ======================= -->
+    <section class="join-cta join-cta--photo" id="join">
+      <img class="join-cta__bg" src="/images/coaching.webp" alt="" width="1400" height="933" loading="lazy" decoding="async">
       <div class="join-cta__inner" data-reveal="up">
         <h2>{{cta_title}}<br>{{cta_title2}}</h2>
         <p>{{cta_p}}</p>
-        <a class="btn btn--petrol btn--lg" href="{{@/join}}">{{cta_btn}}</a>
+        <a class="btn btn--accent btn--lg" href="{{@/join}}">{{cta_btn}}</a>
       </div>
     </section>

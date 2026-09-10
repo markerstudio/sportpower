@@ -8,10 +8,13 @@
 
     <section class="register-section register-section--page">
       <div class="container register-section__inner">
-        <div class="join-steps" data-stagger="right">
+        <div class="join-side">
+          <figure class="join-photo" data-reveal="photo"><img src="/images/coach-smile.webp" alt="{{alt_coach}}" width="1000" height="1000" loading="lazy" decoding="async"></figure>
+          <div class="join-steps" data-stagger="right">
           <div class="card step"><div class="step__num">01</div><h3>{{step1_t}}</h3><p>{{step1_p}}</p></div>
           <div class="card step"><div class="step__num">02</div><h3>{{step2_t}}</h3><p>{{step2_p}}</p></div>
           <div class="card step"><div class="step__num">03</div><h3>{{step3_t}}</h3><p>{{step3_p}}</p></div>
+          </div>
         </div>
         <form class="card lead-form" data-lead novalidate data-reveal="left">
           <input type="hidden" name="lang" value="{{lang}}">
