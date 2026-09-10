@@ -271,10 +271,39 @@ module.exports = function registerSite(app, { auth, requireRole, h, notify, rate
   /* ============================================================
      إدارة الدورات (الإدارة تُحرّر — المحاسبة تقرأ)
      ============================================================ */
+  /* المسجّلون في كل دورة: هم سجلات متابعة المبيعات المربوطة بالدورة
+     (من الموقع أو من الإدارة) — لا جدول ثانٍ، فالمتابعة تبقى في مكان واحد */
+  const applicantsOf = (leads, courseId) => leads
+    .filter((l) => l.courseId === courseId)
+    .sort((a, b) => (b.contactDate || '').localeCompare(a.contactDate || '') || b.id - a.id);
+  const applicantSummary = (list) => ({
+    total: list.length,
+    open: list.filter((l) => !['subscribed', 'lost'].includes(l.stage)).length,
+    subscribed: list.filter((l) => l.stage === 'subscribed').length,
+    byTier: list.reduce((m, l) => { const k = l.tier || 'none'; m[k] = (m[k] || 0) + 1; return m; }, {}),
+  });
+
   app.get('/api/courses', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
     await ensureDefaultCourses();
-    const rows = await Store.all('courses');
-    res.json(rows.sort((a, b) => (a.sort || 0) - (b.sort || 0) || a.id - b.id));
+    const { courses, leads } = await Store.load('courses', 'leads');
+    res.json(courses
+      .sort((a, b) => (a.sort || 0) - (b.sort || 0) || a.id - b.id)
+      .map((c) => ({ ...c, applicants: applicantSummary(applicantsOf(leads, c.id)) })));
+  }));
+
+  app.get('/api/courses/:id/applicants', auth, requireRole('admin', 'accountant'), h(async (req, res) => {
+    const course = await Store.get('courses', req.params.id);
+    if (!course) return res.status(404).json({ error: 'الدورة غير موجودة.' });
+    const { leads, branches } = await Store.load('leads', 'branches');
+    const tierName = (key) => ((course.tiers || []).find((t) => t.key === key) || {}).name || key || '';
+    const list = applicantsOf(leads, course.id).map((l) => ({
+      id: l.id, name: l.name, phone: l.phone || '', email: l.email || '', residence: l.residence || '',
+      tier: l.tier || '', tierName: tierName(l.tier), stage: l.stage || 'new', objection: l.objection || '',
+      channel: l.channel || '', contactDate: l.contactDate || '', note: l.note || '',
+      branchName: l.branchId ? (branches.find((b) => b.id === l.branchId) || {}).name || '' : '',
+      traineeId: l.traineeId || null,
+    }));
+    res.json({ course: { id: course.id, title: course.title, slug: course.slug, tiers: course.tiers || [], currency: course.currency || 'ILS' }, summary: applicantSummary(list), applicants: list });
   }));
 
   app.post('/api/courses', auth, requireRole('admin'), h(async (req, res) => {
