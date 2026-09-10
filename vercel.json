@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "includeFiles": "{public,assets,marketing,server}/**",
+      "includeFiles": "{public,assets,server}/**",
       "maxDuration": 60
     }
   },

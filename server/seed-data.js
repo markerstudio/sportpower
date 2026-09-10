@@ -47,6 +47,62 @@ const DEFAULT_PACKAGES = [
   { id: 5, name: 'مجموعات — 12 حصة', category: 'group', sessions: 12, price: 700, durationDays: 30, branchId: null, sessionsPerWeek: 3, description: 'تدريب في مجموعة صغيرة: حماس أعلى وكلفة أقل.', features: 'مجموعة حتى 5 أشخاص\nبرنامج جماعي متدرّج\nقراءة InBody شهرية', active: true },
 ];
 
+/* الدورات المسوَّقة على الموقع العام — تُزرع مرة واحدة على قاعدة بلا دورات،
+   ثم تُدار من صفحة «الدورات» في الإدارة. المحتوى من مادة الدورة الفعلية:
+   ستة محاور، عشرة دروس، وثلاث باقات (Silver · Gold · Premium). */
+const DEFAULT_COURSES = [{
+  id: 1,
+  slug: 'coach-business',
+  title: 'من مدرب إلى بزنس متكامل',
+  titleEn: 'From Coach to a Complete Business',
+  tagline: 'دورة تطوير المدربين وأصحاب الأكاديميات',
+  taglineEn: 'The business course for coaches and academy owners',
+  summary: 'الهدف من الدورة مش بس تطويرك ككوتش، وإنما مساعدتك تنتقل من مدرب إلى بناء بزنس متكامل قابل للنمو والتوسع: سيستم واضح، دخل أعلى، حضور قوي على السوشال ميديا، مبيعات تُغلق، فريق يعمل معك، وأساليب تدريب حديثة.',
+  summaryEn: 'This course is not only about making you a better coach. It moves you from a trainer to a complete, scalable business: a clear system, higher income, a strong social media presence, sales that close, a team that works with you, and modern training methods.',
+  audience: 'المدربون الشخصيون وأصحاب الأكاديميات والصالات الذين يريدون تحويل خبرتهم إلى شركة منظمة.',
+  audienceEn: 'Personal trainers, academy and gym owners who want to turn their expertise into an organised company.',
+  format: 'hybrid',
+  lessons: 10,
+  durationText: '10 دروس — مع متابعة بعد الدورة حسب الباقة',
+  durationTextEn: '10 lessons, with post-course follow-up depending on the tier',
+  startDate: '',
+  currency: 'ILS',
+  methods: 'A.E.P · F.T.S · P&M',
+  modules: [
+    { title: 'بناء سيستم متكامل', titleEn: 'Build a complete system',
+      text: 'بحيث يكون عندك نظام واضح وموحَّد، والمتدرب فاهم إيش بعمل وليش جاي عندك يشتغلوا وياخذ نتائج بأسرع وقت.',
+      textEn: 'A clear, unified system where every trainee knows what they are doing, why they came to you, and gets results faster.' },
+    { title: 'زيادة دخلك', titleEn: 'Increase your income',
+      text: 'تتعلم كيف تستفيد بشكل أفضل من ساعات العمل وتزيد الإيرادات.',
+      textEn: 'Get more out of your working hours and grow your revenue.' },
+    { title: 'بناء حضور قوي على السوشال ميديا', titleEn: 'A strong social media presence',
+      text: 'لأنك بتعرف اليوم إن الأشهر أحيانًا بشتغل أكثر من الأشطر. الموضوع مش بس تكون ممتاز بمجالك، لازم الناس تعرف إنك ممتاز وتثق فيك وفي الأكاديمية.',
+      textEn: 'Being excellent is not enough. People must know you are excellent and trust you and your academy.' },
+    { title: 'تطوير نظام المبيعات وإغلاق الـ Deals', titleEn: 'Sales system and closing deals',
+      text: 'كيف تتعامل مع كل نوع من الزبائن، وتفهم احتياجه، وتعرف كيف تسكّر الـ Deal بطريقة احترافية، بالإضافة إلى بناء Packages وأسعار مناسبة تزيد من قيمة الخدمة وربحية الأكاديمية.',
+      textEn: 'Handle every type of client, understand their needs, close professionally, and build packages and pricing that raise the value of your service and the profitability of your academy.' },
+    { title: 'بناء فريق يعمل معك ولأجلك', titleEn: 'Build a team that works with you and for you',
+      text: 'الهدف إنك ما تظل مجرد كوتش عنده متدربين وبس، بل تبني شركة متكاملة فيها فريق، مسؤوليات، أنظمة ومتابعة، وتقدر تكبر حتى بدون اعتماد كل شيء عليك.',
+      textEn: 'Stop being a coach with clients and build a company with a team, responsibilities, systems and follow-up, so it grows without everything depending on you.' },
+    { title: 'إضافة أساليب تدريب حديثة', titleEn: 'Modern training methods',
+      text: 'تتعرف على أساليب وأنظمة تدريب أوروبية حديثة، وتعرف كيف تدخلها كخدمات أو برامج جديدة تميزك عن المنافسين وتفتح لك مصادر دخل إضافية.',
+      textEn: 'Learn modern European training methods and systems, and turn them into new services and programs that set you apart and open extra income streams.' },
+  ],
+  tiers: [
+    { key: 'silver', name: 'Silver', nameEn: 'Silver', price: 6000, highlight: false,
+      features: ['الدورة كاملة', '10 دروس'],
+      featuresEn: ['The full course', '10 lessons'] },
+    { key: 'gold', name: 'Gold', nameEn: 'Gold', price: 7200, highlight: false,
+      features: ['الدورة كاملة', '10 دروس', 'متابعة على جروب واتساب خاص مع الكوتش والفريق لمدة شهر'],
+      featuresEn: ['The full course', '10 lessons', 'One month of follow-up in a private WhatsApp group with the coach and the team'] },
+    { key: 'premium', name: 'Premium', nameEn: 'Premium', price: 10000, highlight: true,
+      features: ['الدورة كاملة', '10 دروس', 'متابعة VIP خاصة مع الكوتش', 'حل جميع المشكلات بعد الدورة لمدة شهرين'],
+      featuresEn: ['The full course', '10 lessons', 'Private VIP follow-up with the coach', 'Two months of problem-solving support after the course'] },
+  ],
+  published: true,
+  sort: 1,
+}];
+
 /* نصّ شروط العقد الإلكتروني — تعدله الإدارة من صفحة الباقات والعقود */
 const DEFAULT_CONTRACT_TERMS = [
   'الاشتراك شخصي وغير قابل للتحويل لشخص آخر.',
@@ -82,7 +138,7 @@ function productionSeed(hash) {
     inbody: [], meals: MEALS, mealPlans: [], notifications: [], tokens: [],
     settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', contractTerms: DEFAULT_CONTRACT_TERMS, ...LOYALTY_DEFAULTS }],
     trainerLogs: [], tasks: [], targets: [], frozen: [], subEvents: [],
-    expenses: [], leads: [], programs: [], pointsLog: [], rewards: DEFAULT_REWARDS, redemptions: [], referrals: [],
+    expenses: [], courses: DEFAULT_COURSES, leads: [], programs: [], pointsLog: [], rewards: DEFAULT_REWARDS, redemptions: [], referrals: [],
     packages: DEFAULT_PACKAGES, contracts: [], sessionRatings: [], traineeFlags: [], actionLog: [],
   };
 }
@@ -346,8 +402,8 @@ function demoSeed(hash) {
   return { branches: BRANCHES, users, subscriptions, payments, sessions, appointments, inbody, meals, mealPlans, notifications, tokens: [],
     settings: [{ id: 1, currency: process.env.CURRENCY || 'ILS', frozenMessage: DEFAULT_FROZEN_MSG, waCountryCode: '970', contractTerms: DEFAULT_CONTRACT_TERMS, ...LOYALTY_DEFAULTS }],
     trainerLogs, tasks, targets, frozen, subEvents,
-    expenses, leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals,
+    expenses, courses: DEFAULT_COURSES.map((c) => ({ ...c })), leads, programs, pointsLog, rewards: DEFAULT_REWARDS.map((r) => ({ ...r })), redemptions, referrals,
     packages: DEFAULT_PACKAGES.map((p) => ({ ...p })), contracts, sessionRatings, actionLog: [] };
 }
 
-module.exports = { demoSeed, productionSeed, DEFAULT_REWARDS, DEFAULT_PACKAGES, DEFAULT_CONTRACT_TERMS };
+module.exports = { demoSeed, productionSeed, DEFAULT_REWARDS, DEFAULT_PACKAGES, DEFAULT_COURSES, DEFAULT_CONTRACT_TERMS };

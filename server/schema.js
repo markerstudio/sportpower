@@ -389,6 +389,43 @@ const SCHEMA = {
     indexes: [['month'], ['branchId']],
   },
 
+  /* ============================================================
+     الدورات — ما تسوّقه سبورت باور من دورات (لأصحاب الأكاديميات
+     والمدربين) على الموقع العام، تُدار من الإدارة كما تُدار الباقات.
+     الباقات (tiers) والمحاور (modules) مصفوفتان داخل الصف: لا جداول
+     فرعية لبيانات تُعرض معًا دائمًا وتُحرَّر معًا.
+     ============================================================ */
+  courses: {
+    columns: {
+      slug: col('text', { notNull: true, unique: true }),
+      title: col('text', { notNull: true }),
+      titleEn: col('text'),
+      tagline: col('text'),
+      taglineEn: col('text'),
+      summary: col('text'),
+      summaryEn: col('text'),
+      audience: col('text'),
+      audienceEn: col('text'),
+      format: col('text'),        // online | in-person | hybrid
+      lessons: col('int'),
+      durationText: col('text'),
+      durationTextEn: col('text'),
+      startDate: col('text'),
+      currency: col('text'),
+      /* [{ key, name, nameEn, price, features: [..], featuresEn: [..], highlight }] */
+      tiers: col('json'),
+      /* [{ title, titleEn, text, textEn }] */
+      modules: col('json'),
+      /* أساليب أو شارات تُعرض تحت المحاور — مثل A.E.P · F.T.S · P&M */
+      methods: col('text'),
+      published: col('bool', { default: 'false' }),
+      sort: col('int'),
+      createdBy: col('int'),
+      createdAt: col('text'),
+    },
+    indexes: [['published'], ['sort']],
+  },
+
   leads: {
     columns: {
       contactDate: col('text'),
@@ -405,8 +442,13 @@ const SCHEMA = {
       traineeId: col('int', { ref: ref('users', 'setnull') }),
       createdBy: col('int'),
       closedAt: col('text'),
+      /* من الموقع العام: البريد اختياري، والدورة والباقة إن كان الاهتمام
+         بدورة لا باشتراك تدريب. الموقع يُنشئ الرقم بلا مستخدم (createdBy فارغ). */
+      email: col('text'),
+      courseId: col('int', { ref: ref('courses', 'setnull') }),
+      tier: col('text'),
     },
-    indexes: [['contactDate'], ['stage'], ['branchId']],
+    indexes: [['contactDate'], ['stage'], ['branchId'], ['courseId']],
   },
 
   programs: {
@@ -596,7 +638,7 @@ const CREATE_ORDER = [
   // legacyDebts قبل payments: الدفعة تشير إليه بمفتاح أجنبي
   'subscriptions', 'legacyDebts', 'payments', 'sessions', 'appointments', 'inbody', 'traineePhotos', 'mealPlans',
   'notifications', 'tokens', 'rateLimits', 'trainerLogs', 'tasks', 'targets', 'frozen',
-  'subEvents', 'expenses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
+  'subEvents', 'expenses', 'courses', 'leads', 'programs', 'traineeGoals', 'pointsLog', 'redemptions',
   'referrals', 'contracts', 'sessionRatings', 'traineeFlags', 'actionLog',
 ];
 

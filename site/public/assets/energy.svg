@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none" stroke="#79BE43" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+  <!-- طاقات — sports bottle -->
+  <path d="M66 22h28"/>
+  <path d="M70 22v12h20V22"/>
+  <path d="M70 34c-9 6-16 14-16 26v58c0 11 7 20 26 20s26-9 26-20V60c0-12-7-20-16-26"/>
+  <path d="M54 74h52"/>
+  <path d="M54 104h52"/>
+  <path d="M88 84l-12 14h16l-12 14" stroke-width="6"/>
+</svg>

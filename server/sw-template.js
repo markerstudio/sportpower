@@ -21,6 +21,7 @@ const CORE = [
   '/js/views-ops.js',
   '/js/views-growth.js',
   '/js/views-clients.js',
+  '/js/views-site.js',
   '/js/views-actions.js',
   '/js/app.js',
   '/assets/logo-color.svg',

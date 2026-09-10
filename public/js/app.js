@@ -84,6 +84,7 @@ const NAV = {
     ['#/kpi', 'الأهداف وKPI', 'target'],
     ['#/sales', 'متابعة المبيعات', 'wa'],
     ['#/packages', 'الباقات والعقود', 'tag'],
+    ['#/courses', 'الدورات والموقع', 'file'],
     ['#/ratings', 'تقييمات المتدربين', 'star'],
     ['#/loyalty', 'الولاء والإحالات', 'gift'],
     ['#/frozen', 'المجمدون', 'snow'],
@@ -113,6 +114,7 @@ const NAV = {
     ['#/kpi', 'الأهداف وKPI', 'target'],
     ['#/sales', 'متابعة المبيعات', 'wa'],
     ['#/packages', 'الباقات والعقود', 'tag'],
+    ['#/courses', 'الدورات والموقع', 'file'],
     ['#/loyalty', 'الولاء والإحالات', 'gift'],
     ['#/calendar', 'التقويم والمواعيد', 'calendar'],
     ['#/subscriptions', 'الاشتراكات والحصص', 'card'],
@@ -166,6 +168,7 @@ const ROUTE_ROLES = {
   '#/points': ['trainee'],
   '#/actions': ['admin', 'accountant', 'trainer'],
   '#/packages': ['admin', 'accountant', 'trainer'],
+  '#/courses': ['admin', 'accountant'],
   '#/ratings': ['admin'],
   '#/my-kpi': ['trainer', 'accountant', 'nutritionist', 'admin'],
 };
@@ -193,6 +196,7 @@ const TITLES = {
   '#/actions': 'مركز القرارات — القرارات اليومية',
   '#/goals': 'أهداف المشتركين',
   '#/packages': 'الباقات والعقود', '#/ratings': 'تقييمات المتدربين (سرّي)',
+  '#/courses': 'الدورات على الموقع الإلكتروني',
   '#/my-kpi': 'أهدافي وKPI',
 };
 
@@ -440,6 +444,7 @@ async function route() {
     '#/points': viewMyPoints,
     '#/actions': viewActionCenter,
     '#/packages': viewPackages,
+    '#/courses': viewCourses,
     '#/my-kpi': viewMyKpi,
     '#/ratings': viewRatings,
   };
