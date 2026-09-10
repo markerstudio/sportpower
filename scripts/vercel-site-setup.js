@@ -85,8 +85,9 @@ async function addDomain(project, name, redirect) {
 
 async function deploy(project, target) {
   if (!project.link || !project.link.repoId) { console.warn(`⚠ ${project.name} غير مرتبط بـGitHub — انشره من لوحة Vercel.`); return null; }
+  /* المعاينة = بلا target (Vercel لا يقبل 'preview' قيمةً صريحة) */
   const d = await api('POST', '/v13/deployments?forceNew=1', {
-    name: project.name, project: project.id, target,
+    name: project.name, project: project.id, ...(target === 'production' ? { target } : {}),
     gitSource: { type: 'github', repoId: project.link.repoId, ref: BRANCH },
   });
   ok(`نشر ${target} لـ${project.name} من ${BRANCH}: https://${d.url}`);
