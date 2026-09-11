@@ -101,15 +101,6 @@ html[lang="en"] .lang-toggle { font-family: var(--font-arabic); }
 .feature__tiers span { font-family: var(--font-latin); font-weight: 600; color: #c9d6d4; white-space: nowrap; }
 .feature__tiers small { display: block; font-family: var(--font-body); font-weight: 400; font-size: var(--text-xs); color: #9db3b0; }
 
-/* ---------- كيف تبدأ: ثلاثة صفوف بخطوط فاصلة ---------- */
-.how { padding: 80px 0 64px; }
-.how__rows { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 20px; border-top: 1px solid var(--border-strong); }
-.how__row { padding-top: 24px; }
-.how__when { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--accent-hover); margin-bottom: 8px; }
-[data-theme="dark"] .how__when { color: var(--accent); }
-.how__title { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-3xl); color: var(--text-strong); margin: 0 0 10px; line-height: 1.1; }
-.how__p { margin: 0; color: var(--text-body); line-height: var(--leading-relaxed); font-size: var(--text-sm); }
-
 /* ---------- الباقات ---------- */
 .packages-section { padding: 72px 0; background: var(--bg-muted); }
 [data-theme="dark"] .packages-section { background: var(--petrol-800); }
@@ -307,8 +298,6 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 /* ---------- استجابة ---------- */
 @media (max-width: 960px) {
   .faq-section__inner, .register-section__inner, .contact-section__inner { grid-template-columns: 1fr; gap: 36px; }
-  .how__rows { grid-template-columns: 1fr; gap: 0; }
-  .how__row { padding: 22px 0; border-bottom: 1px solid var(--border-subtle); }
   .packages-grid__row, .tiers, .modules { grid-template-columns: 1fr 1fr; }
   .shop-grid { grid-template-columns: 1fr 1fr; }
   .branch-row { grid-template-columns: 1fr 1fr; }
@@ -465,3 +454,165 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 /* تنويع صور بطاقات التدريب الشخصي في الصف الواحد */
 .packages-grid__row .pkg--personal:nth-child(3n+2) .pkg__media { background-image: url(/images/gym.webp); background-position: 55% 40%; }
 .packages-grid__row .pkg--personal:nth-child(3n+3) .pkg__media { background-image: url(/images/coach-smile.webp); background-position: 50% 25%; }
+
+/* ============================================================
+   رحلة الزائر: ترويسة مرقّمة، «خطتك في دقيقة»، الطرق الثلاث، والمسار
+   ============================================================ */
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ترويسة قسم مرقّمة */
+.sec-head { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; margin-bottom: 36px; }
+.sec-num { font-family: var(--font-latin); font-weight: 900; font-size: var(--text-sm); color: var(--accent-hover); letter-spacing: .08em; padding-top: 4px; display: block; margin-bottom: 10px; }
+.sec-head .sec-num { margin: 0; }
+.sec-num--light { color: var(--accent); }
+[data-theme="dark"] .sec-num { color: var(--accent); }
+
+/* سهم صغير أسفل الواجهة */
+.hero__scroll { position: absolute; z-index: 2; bottom: 22px; inset-inline-start: 50%; width: 22px; height: 36px; border: 1.5px solid rgba(255,255,255,.45); border-radius: 12px; display: grid; place-items: start center; padding-top: 6px; }
+.hero__scroll span { width: 3px; height: 7px; border-radius: 2px; background: var(--accent); animation: scroll-hint 1.8s var(--ease-out) infinite; }
+@keyframes scroll-hint { 0% { opacity: 0; transform: translateY(0); } 35% { opacity: 1; } 100% { opacity: 0; transform: translateY(12px); } }
+
+/* ---------- «خطتك في دقيقة» ---------- */
+.plan-section { padding: 88px 0; background: var(--bg-page); }
+[data-theme="dark"] .plan-section { background: var(--petrol-900); }
+.plan { display: grid; grid-template-columns: 260px 1fr; background: var(--petrol-900); color: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px rgba(12,30,30,.18); }
+[data-theme="dark"] .plan { box-shadow: none; border: 1px solid var(--petrol-500); }
+
+/* السلّم الجانبي */
+.plan__rail { list-style: none; margin: 0; padding: 28px 22px; display: grid; align-content: start; gap: 6px; background: rgba(255,255,255,.04); border-inline-end: 1px solid rgba(255,255,255,.08); }
+.plan__rail-item button { width: 100%; display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: center; padding: 12px 10px; background: transparent; border: 0; border-radius: 8px; text-align: start; cursor: pointer; color: #8fa5a3; font-family: var(--font-display); font-weight: 700; font-size: var(--text-sm); transition: background .2s, color .2s; }
+.plan__rail-item button:disabled { cursor: default; opacity: .55; }
+.plan__rail-item button:not(:disabled):hover { background: rgba(255,255,255,.05); color: #fff; }
+.plan__rail-n { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.22); display: grid; place-items: center; font-family: var(--font-latin); font-size: 12px; font-weight: 700; transition: background .2s, border-color .2s, color .2s; }
+.plan__rail-l { display: block; }
+.plan__rail-v { grid-column: 2; font-family: var(--font-body); font-weight: 600; font-size: var(--text-xs); color: var(--accent); margin-top: 2px; }
+.plan__rail-item.is-done .plan__rail-n { background: var(--accent); border-color: var(--accent); color: var(--petrol-900); }
+.plan__rail-item.is-done button { color: #dfe8e6; }
+.plan__rail-item.is-on button { background: rgba(121,190,67,.1); color: #fff; }
+.plan__rail-item.is-on .plan__rail-n { border-color: var(--accent); color: var(--accent); }
+
+/* المسرح */
+.plan__stage { padding: 34px 34px 30px; overflow: hidden; min-height: 340px; }
+.plan__stage .skeleton { background: rgba(255,255,255,.06); }
+.plan__view { animation: plan-in .4s var(--ease-out) both; }
+@keyframes plan-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.plan__of { font-family: var(--font-latin); font-weight: 600; font-size: var(--text-xs); color: var(--accent); margin: 0 0 10px; letter-spacing: .04em; }
+.plan__q { font-family: var(--font-display); font-weight: var(--weight-black); font-size: clamp(1.5rem, 2.6vw, 2.1rem); line-height: 1.2; margin: 0; color: #fff; }
+.plan__qs { margin: 8px 0 24px; color: #a9bcba; font-size: var(--text-sm); line-height: var(--leading-relaxed); max-width: 520px; }
+.plan__group + .plan__group { margin-top: 18px; }
+.plan__group-l { display: block; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: #8fa5a3; margin-bottom: 8px; }
+.plan__opts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.plan__opts--3 { grid-template-columns: repeat(3, 1fr); }
+.plan__opts--wrap { display: flex; flex-wrap: wrap; }
+.opt { text-align: start; padding: 14px 16px; border-radius: 10px; border: 1.5px solid rgba(255,255,255,.16); background: rgba(255,255,255,.03); color: #fff; cursor: pointer; font-family: var(--font-display); transition: border-color .18s, background .18s, transform .18s; }
+.plan__opts--wrap .opt { flex: 0 1 auto; padding: 11px 18px; border-radius: 999px; }
+.opt:hover { border-color: var(--accent); transform: translateY(-2px); }
+.opt:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.opt.is-on { background: var(--accent); border-color: var(--accent); color: var(--petrol-900); }
+.opt__t { display: block; font-weight: 800; font-size: var(--text-base); }
+.opt__s { display: block; font-family: var(--font-body); font-weight: 500; font-size: var(--text-xs); color: #a9bcba; margin-top: 3px; }
+.opt.is-on .opt__s { color: rgba(12,30,30,.72); }
+.plan__nav { margin-top: 22px; }
+.plan__back, .plan__restart { background: transparent; border: 0; color: #a9bcba; font-family: var(--font-display); font-weight: 700; font-size: var(--text-sm); cursor: pointer; padding: 6px 0; }
+.plan__back::before { content: "↩"; margin-inline-end: 8px; }
+.plan__back:hover, .plan__restart:hover { color: var(--accent); }
+
+/* النتيجة */
+.plan__chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 22px; }
+.plan__chips-l { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: #8fa5a3; margin-inline-end: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18); background: transparent; color: #dfe8e6; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); cursor: pointer; transition: border-color .18s, color .18s; }
+.chip i { font-style: normal; color: var(--accent); font-size: 11px; }
+.chip:hover { border-color: var(--accent); color: #fff; }
+.plan-card { display: grid; grid-template-columns: 220px 1fr; background: rgba(255,255,255,.04); border: 1px solid rgba(121,190,67,.4); border-radius: 12px; overflow: hidden; }
+.plan-card__media { background: var(--petrol-800) center / cover no-repeat; min-height: 100%; background-image: url(/images/coaching.webp); }
+.plan-card--group .plan-card__media { background-image: url(/images/hero.webp); }
+.plan-card--saver .plan-card__media { background-image: url(/images/gym.webp); }
+.plan-card__body { padding: 26px 28px; }
+.plan-card__kicker { margin: 0 0 6px; font-family: var(--font-display); font-weight: 800; font-size: var(--text-xs); color: var(--accent); }
+.plan-card__name { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-2xl); margin: 0 0 16px; color: #fff; line-height: 1.2; }
+.plan-card .pkg__meta { border-color: rgba(255,255,255,.14); margin-bottom: 16px; }
+.plan-card .pkg__meta span { color: #a9bcba; }
+.plan-card .pkg__meta span + span { border-color: rgba(255,255,255,.14); }
+.plan-card .pkg__meta b { color: #fff; }
+.plan-card__desc { margin: 0 0 16px; color: #c9d6d4; font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.plan-card__why { list-style: none; margin: 0 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.plan-card__why li { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--petrol-900); background: var(--accent); border-radius: 4px; padding: 5px 10px; }
+.plan-card__why li::before { content: "✓"; font-weight: 900; }
+.plan-card .pkg__features { color: #c9d6d4; margin-bottom: 20px; }
+.plan-card__cta { display: flex; gap: 10px; flex-wrap: wrap; }
+.plan-card__cta .btn--outline { color: #fff; border-color: rgba(255,255,255,.4); }
+.plan-card__cta .btn--outline:hover { color: var(--accent); border-color: var(--accent); }
+.plan__alts { margin-top: 26px; }
+.plan__alts-t { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: #8fa5a3; margin: 0 0 10px; }
+.plan__alts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.alt { display: block; padding: 14px 16px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; text-decoration: none; transition: border-color .18s, background .18s; }
+.alt:hover { border-color: var(--accent); background: rgba(121,190,67,.07); }
+.alt__cat { display: block; font-family: var(--font-display); font-weight: 700; font-size: var(--text-2xs); color: var(--accent); }
+.alt__name { display: block; font-family: var(--font-display); font-weight: 800; font-size: var(--text-base); color: #fff; margin: 3px 0; }
+.alt__meta { display: block; font-size: var(--text-xs); color: #a9bcba; }
+.plan__foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.1); }
+.plan__foot .btn--ghost { color: var(--accent); padding-inline: 0; }
+.plan .empty { border-color: rgba(255,255,255,.2); color: #c9d6d4; }
+
+/* ---------- ثلاث طرق للتدريب ---------- */
+.ways-section { padding: 88px 0; }
+.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); }
+.way { display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; transition: border-color .2s, transform .2s var(--ease-out); }
+.way:hover { border-color: var(--accent); transform: translateY(-3px); }
+.way__media { aspect-ratio: 16 / 9; background: var(--bg-muted) center / cover no-repeat; background-image: url(/images/coaching.webp); background-position: 50% 30%; }
+.way--group .way__media { background-image: url(/images/hero.webp); background-position: 50% 35%; }
+.way--saver .way__media { background-image: url(/images/gym.webp); background-position: 50% 45%; }
+.way__body { padding: 22px 24px 24px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.way__name { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-xl); color: var(--text-strong); margin: 0; }
+.way__desc { margin: 0; color: var(--text-body); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.way__meta { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--text-muted); flex: 1; }
+.way__btn { align-self: flex-start; margin-top: 8px; background: transparent; border: 0; padding: 0; cursor: pointer; font-family: var(--font-display); font-weight: 800; font-size: var(--text-sm); color: var(--accent-hover); }
+[data-theme="dark"] .way__btn { color: var(--accent); }
+.way__btn span { display: inline-block; transition: transform .2s var(--ease-out); }
+.way__btn:hover span { transform: translateX(6px); }
+[dir="rtl"] .way__btn:hover span { transform: translateX(-6px); }
+
+/* ---------- المسار بعد الاختيار ---------- */
+.path { background: var(--petrol-900); color: #fff; padding: 96px 0; }
+.path__inner { display: grid; grid-template-columns: 1fr 1.15fr; gap: 64px; align-items: start; }
+.path__head { position: sticky; top: 104px; }
+.path__head .section-title { color: #fff; }
+.path__cta { margin-top: 28px; }
+.path__steps { list-style: none; margin: 0; padding: 0; position: relative; }
+.path__steps::before { content: ""; position: absolute; inset-inline-start: 21px; top: 10px; bottom: 10px; width: 2px; background: rgba(255,255,255,.12); }
+.path__steps::after { content: ""; position: absolute; inset-inline-start: 21px; top: 10px; width: 2px; height: calc(var(--p, 0) * (100% - 20px)); background: var(--accent); transition: height .25s linear; }
+.path__step { position: relative; display: grid; grid-template-columns: 44px 1fr; gap: 20px; padding-bottom: 40px; }
+.path__step:last-child { padding-bottom: 0; }
+.path__n { position: relative; z-index: 1; width: 44px; height: 44px; border-radius: 50%; background: var(--petrol-900); border: 2px solid rgba(255,255,255,.18); display: grid; place-items: center; font-family: var(--font-latin); font-weight: 800; font-size: var(--text-sm); color: #8fa5a3; transition: border-color .3s, color .3s, background .3s; }
+.path__step.is-in .path__n { border-color: var(--accent); color: var(--accent); }
+.path__when { font-family: var(--font-display); font-weight: 700; font-size: var(--text-xs); color: var(--accent); }
+.path__t { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-2xl); margin: 4px 0 8px; color: #fff; line-height: 1.15; }
+.path__p { margin: 0; color: #c9d6d4; font-size: var(--text-sm); line-height: var(--leading-relaxed); max-width: 520px; }
+
+/* ---------- استجابة رحلة الزائر ---------- */
+@media (max-width: 960px) {
+  .plan { grid-template-columns: 1fr; }
+  .plan__rail { grid-auto-flow: column; grid-auto-columns: 1fr; padding: 14px; gap: 4px; border-inline-end: 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .plan__rail-item button { grid-template-columns: 1fr; justify-items: center; gap: 6px; padding: 8px 4px; text-align: center; }
+  .plan__rail-l { font-size: var(--text-2xs); }
+  .plan__rail-v { display: none; }
+  .plan__stage { padding: 26px 20px 24px; min-height: 0; }
+  .plan__opts--3 { grid-template-columns: 1fr; }
+  .plan-card { grid-template-columns: 1fr; }
+  .plan-card__media { aspect-ratio: 16 / 7; }
+  .plan__alts-row { grid-template-columns: 1fr; }
+  .ways { grid-template-columns: 1fr; }
+  .path__inner { grid-template-columns: 1fr; gap: 40px; }
+  .path__head { position: static; }
+  .sec-head { grid-template-columns: 1fr; gap: 10px; }
+}
+@media (max-width: 720px) {
+  .plan-section, .ways-section, .path { padding: 64px 0; }
+  .plan__stage { padding: 22px 16px 20px; }
+  .plan-card__body { padding: 20px; }
+  .plan__foot { justify-content: flex-start; }
+  .path__step { grid-template-columns: 36px 1fr; gap: 14px; }
+  .path__n { width: 36px; height: 36px; }
+  .path__steps::before, .path__steps::after { inset-inline-start: 17px; }
+}

@@ -1,4 +1,4 @@
-    <!-- ======================= الواجهة: صورة حقيقية + عنوان كبير ======================= -->
+    <!-- ======================= الواجهة ======================= -->
     <section class="hero hero--photo hero--home">
       <figure class="hero__photo" aria-hidden="false">
         <picture>
@@ -13,18 +13,94 @@
           <h1 class="hero__title" data-words><span>{{hero_title_1}}</span><br><span>{{hero_title_2}}</span><br><em>{{hero_title_em}}</em></h1>
           <p class="hero__lead">{{hero_lead}}</p>
           <div class="hero__cta">
-            <a class="btn btn--accent btn--lg" href="{{@/join}}">{{hero_cta}}</a>
-            <a class="btn btn--outline-light btn--lg" href="#packages">{{hero_cta2}}</a>
+            <a class="btn btn--accent btn--lg" href="#plan">{{hero_cta_plan}}</a>
+            <a class="btn btn--outline-light btn--lg" href="#path">{{hero_cta_path}}</a>
           </div>
         </div>
-        <div class="hero__loc" data-reveal="fade">
-          <div class="hero__loc-q">{{loc_q}}</div>
-          <div class="loc-choose loc-choose--dark" data-render="locations"></div>
+      </div>
+      <a class="hero__scroll" href="#plan" aria-hidden="true" tabindex="-1"><span></span></a>
+    </section>
+
+    <!-- ======================= 01 — خطتك في دقيقة ======================= -->
+    <section class="plan-section" id="plan">
+      <div class="container">
+        <div class="sec-head" data-reveal="up">
+          <span class="sec-num">01</span>
+          <div>
+            <div class="kicker">{{plan_kicker}}</div>
+            <h2 class="section-title">{{plan_title}}</h2>
+            <p class="section-lead">{{plan_lead}}</p>
+          </div>
+        </div>
+        <div class="plan" data-plan-app data-reveal="up">
+          <div class="plan__stage"><div class="skeleton skeleton--tall"></div></div>
         </div>
       </div>
     </section>
 
-    <!-- ======================= لماذا نحن: صورة الفريق + البيان ======================= -->
+    <!-- ======================= 02 — ثلاث طرق للتدريب ======================= -->
+    <section class="ways-section" id="ways">
+      <div class="container">
+        <div class="sec-head" data-reveal="up">
+          <span class="sec-num">02</span>
+          <div>
+            <div class="kicker">{{ways_kicker}}</div>
+            <h2 class="section-title">{{ways_title}}</h2>
+            <p class="section-lead">{{ways_lead}}</p>
+          </div>
+        </div>
+        <div class="ways" data-ways><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+      </div>
+    </section>
+
+    <!-- ======================= 03 — ماذا يحدث بعد ذلك ======================= -->
+    <section class="path" id="path">
+      <div class="container path__inner">
+        <div class="path__head" data-reveal="up">
+          <span class="sec-num sec-num--light">03</span>
+          <div class="kicker kicker--light">{{path_kicker}}</div>
+          <h2 class="section-title">{{path_title}}</h2>
+          <p class="section-lead">{{path_lead}}</p>
+          <a class="btn btn--accent btn--lg path__cta" href="#plan">{{hero_cta_plan}}</a>
+        </div>
+        <ol class="path__steps" data-rail>
+          <li class="path__step" data-reveal="up">
+            <span class="path__n">01</span>
+            <div class="path__body">
+              <span class="path__when">{{how1_when}}</span>
+              <h3 class="path__t">{{how1_t}}</h3>
+              <p class="path__p">{{how1_p}}</p>
+            </div>
+          </li>
+          <li class="path__step" data-reveal="up">
+            <span class="path__n">02</span>
+            <div class="path__body">
+              <span class="path__when">{{how2_when}}</span>
+              <h3 class="path__t">{{how2_t}}</h3>
+              <p class="path__p">{{how2_p}}</p>
+            </div>
+          </li>
+          <li class="path__step" data-reveal="up">
+            <span class="path__n">03</span>
+            <div class="path__body">
+              <span class="path__when">{{how3_when}}</span>
+              <h3 class="path__t">{{how3_t}}</h3>
+              <p class="path__p">{{how3_p}}</p>
+            </div>
+          </li>
+          <li class="path__step" data-reveal="up">
+            <span class="path__n">04</span>
+            <div class="path__body">
+              <span class="path__when">{{path4_when}}</span>
+              <h3 class="path__t">{{path4_t}}</h3>
+              <p class="path__p">{{path4_p}}</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ======================= 04 — لماذا نحن ======================= -->
     <section class="why" id="why">
       <div class="container why__inner">
         <figure class="why__photo" data-reveal="photo">
@@ -32,6 +108,7 @@
           <figcaption>{{why_photo_cap}}</figcaption>
         </figure>
         <div class="why__text" data-reveal="up">
+          <span class="sec-num">04</span>
           <div class="kicker">{{why_kicker}}</div>
           <h2 class="why__statement">{{why_statement}}</h2>
           <p class="why__lead">{{why_lead}}</p>
@@ -45,7 +122,41 @@
       </div>
     </section>
 
-    <!-- ======================= الدورة (من النظام) مع صورة المدرّب ======================= -->
+    <!-- ======================= 05 — الفروع ======================= -->
+    <section class="branches" id="branches">
+      <div class="container branches__inner">
+        <div class="branches__text">
+          <span class="sec-num">05</span>
+          <div class="kicker" data-reveal="fade">{{branches_eyebrow}}</div>
+          <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
+          <p class="section-lead" data-reveal="fade">{{branches_lead}}</p>
+          <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
+        </div>
+        <figure class="branches__photo" data-reveal="photo">
+          <img src="/images/gym.webp" alt="{{alt_gym}}" width="1400" height="933" loading="lazy" decoding="async">
+        </figure>
+      </div>
+    </section>
+
+    <!-- ======================= الفريق ======================= -->
+    <section class="team" id="team">
+      <div class="container">
+        <div class="team__head" data-reveal="up">
+          <div>
+            <div class="kicker">{{team_kicker}}</div>
+            <h2 class="section-title">{{team_title}}</h2>
+          </div>
+          <p class="section-lead">{{team_lead}}</p>
+        </div>
+        <div class="team__grid" data-stagger="photo">
+          <figure><img src="/images/coach-smile.webp" alt="{{alt_coach}}" width="1000" height="1000" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coaching.webp" alt="{{alt_coaching}}" width="1400" height="933" loading="lazy" decoding="async"></figure>
+          <figure><img src="/images/coach-w.webp" alt="{{alt_coach}}" width="800" height="1000" loading="lazy" decoding="async"></figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= الدورة (من النظام) ======================= -->
     <section class="feature" id="course">
       <img class="feature__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
       <div class="container feature__inner">
@@ -72,81 +183,6 @@
       </div>
     </section>
 
-    <!-- ======================= كيف تبدأ ======================= -->
-    <section class="how" id="system">
-      <div class="container">
-        <div class="kicker" data-reveal="fade">{{how_kicker}}</div>
-        <div class="how__rows">
-          <div class="how__row" data-reveal="up">
-            <div class="how__when">{{how1_when}}</div>
-            <h3 class="how__title">{{how1_t}}</h3>
-            <p class="how__p">{{how1_p}}</p>
-          </div>
-          <div class="how__row" data-reveal="up">
-            <div class="how__when">{{how2_when}}</div>
-            <h3 class="how__title">{{how2_t}}</h3>
-            <p class="how__p">{{how2_p}}</p>
-          </div>
-          <div class="how__row" data-reveal="up">
-            <div class="how__when">{{how3_when}}</div>
-            <h3 class="how__title">{{how3_t}}</h3>
-            <p class="how__p">{{how3_p}}</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ======================= الباقات بحسب الفرع (من النظام) ======================= -->
-    <section class="packages-section" id="packages">
-      <div class="container">
-        <div class="packages-head" data-reveal="up">
-          <div>
-            <div class="kicker">{{packages_eyebrow}}</div>
-            <h2 class="section-title"><span data-loc-title>{{packages_title}}</span></h2>
-            <p class="section-lead">{{packages_lead}}</p>
-          </div>
-          <div class="loc-choose loc-choose--compact" data-render="locations"></div>
-        </div>
-        <div class="packages-grid" data-render="packages" data-limit="3"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
-        <div class="packages-foot" data-reveal="fade">
-          <a class="btn btn--outline" href="{{@/packages}}">{{packages_all}}</a>
-        </div>
-      </div>
-    </section>
-
-    <!-- ======================= الفروع (من النظام) مع صورة الصالة ======================= -->
-    <section class="branches" id="branches">
-      <div class="container branches__inner">
-        <div class="branches__text">
-          <div class="kicker" data-reveal="fade">{{branches_eyebrow}}</div>
-          <h2 class="section-title" data-reveal="up">{{branches_title}}</h2>
-          <p class="section-lead" data-reveal="fade">{{branches_lead}}</p>
-          <div class="branch-rows" data-render="branches"><div class="skeleton-row"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
-        </div>
-        <figure class="branches__photo" data-reveal="photo">
-          <img src="/images/gym.webp" alt="{{alt_gym}}" width="1400" height="933" loading="lazy" decoding="async">
-        </figure>
-      </div>
-    </section>
-
-    <!-- ======================= الفريق: ثلاث صور ======================= -->
-    <section class="team" id="team">
-      <div class="container">
-        <div class="team__head" data-reveal="up">
-          <div>
-            <div class="kicker">{{team_kicker}}</div>
-            <h2 class="section-title">{{team_title}}</h2>
-          </div>
-          <p class="section-lead">{{team_lead}}</p>
-        </div>
-        <div class="team__grid" data-stagger="photo">
-          <figure><img src="/images/coach-smile.webp" alt="{{alt_coach}}" width="1000" height="1000" loading="lazy" decoding="async"></figure>
-          <figure><img src="/images/coaching.webp" alt="{{alt_coaching}}" width="1400" height="933" loading="lazy" decoding="async"></figure>
-          <figure><img src="/images/coach-w.webp" alt="{{alt_coach}}" width="800" height="1000" loading="lazy" decoding="async"></figure>
-        </div>
-      </div>
-    </section>
-
     <!-- ======================= الأسئلة الشائعة ======================= -->
     <section class="faq-section" id="faq">
       <div class="container faq-section__inner">
@@ -166,12 +202,12 @@
       </div>
     </section>
 
-    <!-- ======================= دعوة الانضمام فوق صورة ======================= -->
+    <!-- ======================= دعوة الانضمام ======================= -->
     <section class="join-cta join-cta--photo" id="join">
       <img class="join-cta__bg" src="/images/coaching.webp" alt="" width="1400" height="933" loading="lazy" decoding="async">
       <div class="join-cta__inner" data-reveal="up">
         <h2>{{cta_title}}<br>{{cta_title2}}</h2>
         <p>{{cta_p}}</p>
-        <a class="btn btn--accent btn--lg" href="{{@/join}}">{{cta_btn}}</a>
+        <a class="btn btn--accent btn--lg" href="#plan">{{hero_cta_plan}}</a>
       </div>
     </section>

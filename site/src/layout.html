@@ -40,6 +40,7 @@
       </a>
       <nav class="site-nav" id="siteNav" aria-label="{{menu}}">
         <a href="{{@/}}"{{#page_index}} aria-current="page"{{/page_index}}>{{nav_home}}</a>
+        <a href="{{@/}}#plan">{{nav_plan}}</a>
         <a href="{{@/packages}}"{{#page_packages}} aria-current="page"{{/page_packages}}>{{nav_packages}}</a>
         <a href="{{@/courses}}"{{#page_courses}} aria-current="page"{{/page_courses}}{{#page_course}} aria-current="page"{{/page_course}}>{{nav_courses}}</a>
         <a href="{{@/shop}}"{{#page_shop}} aria-current="page"{{/page_shop}}>{{nav_shop}}</a>
@@ -110,5 +111,6 @@
   <script src="/js/i18n.{{lang}}.js?v={{v}}"></script>
   <script src="/js/motion.js?v={{v}}"></script>
   <script src="/js/site.js?v={{v}}"></script>
+  <script src="/js/plan.js?v={{v}}"></script>
 </body>
 </html>
