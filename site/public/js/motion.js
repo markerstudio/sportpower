@@ -26,6 +26,29 @@
   onScroll();
   if (backTop) backTop.addEventListener('click', function () { window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' }); });
 
+  /* شريط تقدّم المسار: يمتلئ بحسب موضع القائمة من الشاشة */
+  var rails = [].slice.call(document.querySelectorAll('[data-rail]'));
+  if (rails.length && !reduce) {
+    var railTick = false;
+    var drawRails = function () {
+      if (railTick) return; railTick = true;
+      raf(function () {
+        rails.forEach(function (el) {
+          var b = el.getBoundingClientRect();
+          var mid = window.innerHeight * 0.62;
+          var p = (mid - b.top) / Math.max(b.height, 1);
+          el.style.setProperty('--p', String(Math.max(0, Math.min(1, p))));
+        });
+        railTick = false;
+      });
+    };
+    window.addEventListener('scroll', drawRails, { passive: true });
+    window.addEventListener('resize', drawRails);
+    drawRails();
+  } else if (rails.length) {
+    rails.forEach(function (el) { el.style.setProperty('--p', '1'); });
+  }
+
   var io = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
     entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); } });
   }, { threshold: 0.1, rootMargin: '0px 0px -5% 0px' }) : null;

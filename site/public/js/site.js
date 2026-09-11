@@ -84,7 +84,7 @@
       el.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-branch]'); if (!btn) return;
         setBranch(btn.getAttribute('data-branch'), data);
-        var target = el.closest('.hero') ? document.getElementById('packages') : null;
+        var target = el.closest('.hero') ? document.getElementById('plan') : null;
         if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
@@ -274,7 +274,10 @@
       (data.branches || []).forEach(function (b) { s.append(new Option(b.name, b.id)); });
       if (loc.id) s.value = String(loc.id);
     });
-    document.querySelectorAll('select[data-fill="goals"]').forEach(function (s) { (data.goals || []).forEach(function (g) { s.append(new Option(g.label, g.key)); }); });
+    document.querySelectorAll('select[data-fill="goals"]').forEach(function (s) {
+      (data.goals || []).forEach(function (g) { s.append(new Option(g.label, g.key)); });
+      var preGoal = qs.get('goal'); if (preGoal) s.value = preGoal;
+    });
     document.querySelectorAll('select[data-fill="courses"]').forEach(function (s) {
       var tierSel = s.form && s.form.querySelector('select[data-fill="tiers"]');
       var fillTiers = function () {
@@ -350,6 +353,20 @@
     window.addEventListener('scroll', tick, { passive: true }); tick();
   }
 
+  /* ---------- واجهة صغيرة تستعملها وحدة «خطتك» (plan.js) ---------- */
+  var siteData = null, readyFns = [], failFns = [];
+  window.SPSite = {
+    t: t, url: url, esc: esc, money: money, catLabel: catLabel, lang: lang,
+    branchOf: function (id) { return siteData ? branchOf(siteData, id) : null; },
+    regionOf: regionOf, regionLabel: regionLabel,
+    waNumber: function () { return siteData ? waNumber(siteData.contact || {}) : ''; },
+    getBranch: function () { return loc.id; },
+    setBranch: function (id) { setBranch(id, siteData); },
+    onBranch: function (fn) { listeners.push(fn); },
+    ready: function (fn) { if (siteData) fn(siteData); else readyFns.push(fn); },
+    fail: function (fn) { failFns.push(fn); },
+  };
+
   setupForms();
   loadSite().then(function (data) {
     /* إن جاء الزائر من رابط فيه فرع، أو اختار من قبل — وإلا يبقى الاختيار له */
@@ -375,9 +392,12 @@
     syncLocationUi(data);
     drawPackages();
     if (catTabs && catTabs.reposition) setTimeout(catTabs.reposition, 50);
+    siteData = data;
+    readyFns.splice(0).forEach(function (fn) { fn(data); });
     if (location.hash && location.hash !== '#choose') { var target = document.getElementById(location.hash.slice(1)); if (target) target.scrollIntoView(); }
   }).catch(function () {
-    document.querySelectorAll('[data-render="packages"],[data-render="courses"],[data-render="branches"],[data-render="locations"]').forEach(function (el) {
+    failFns.splice(0).forEach(function (fn) { fn(); });
+    document.querySelectorAll('[data-render="packages"],[data-render="courses"],[data-render="branches"],[data-render="locations"],[data-ways]').forEach(function (el) {
       el.innerHTML = '<p class="empty">' + esc(t('load_error')) + '</p>';
     });
   });
