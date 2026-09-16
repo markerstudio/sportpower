@@ -1,84 +1,132 @@
-    <section class="hero hero--course hero--figure">
-      <img class="hero__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+    <!-- الواجهة: صورة كاملة العرض بتراكب داكن، العنوان بكلمة أخيرة خضراء، وزر مستدير -->
+    <section class="hero hero--tot">
+      <figure class="hero__bg">
+        <picture>
+          <source media="(max-width: 760px)" srcset="/images/hero-m.webp">
+          <img src="/images/hero.webp" alt="{{alt_course_hero}}" width="1600" height="900" fetchpriority="high" decoding="async">
+        </picture>
+      </figure>
       <div class="hero__inner">
         <div class="hero__content">
-          <div class="hero__tags">
-            <span class="tag tag--accent">{{course_eyebrow}}</span>
-            {{#course.lessons}}<span class="tag tag--petrol">{{course.lessons}} {{lessons}}</span>{{/course.lessons}}
-            <span class="tag tag--petrol">{{course.formatLabel}}</span>
+          <div class="kicker kicker--latin kicker--light" data-reveal="fade">{{course_hero_kicker}}</div>
+          <h1 class="hero__title" data-words>{{#course.titleLead}}<span>{{course.titleLead}}</span> {{/course.titleLead}}<em>{{course.titleAccent}}</em></h1>
+          <p class="hero__lead">{{course_hero_lead}}</p>
+          <div class="hero__tags" data-reveal="fade">
+            {{#course.tagline}}<span class="tag tag--glass">{{course.tagline}}</span>{{/course.tagline}}
+            {{#course.lessons}}<span class="tag tag--glass">{{course.lessons}} {{lessons}}</span>{{/course.lessons}}
+            <span class="tag tag--glass">{{course.formatLabel}}</span>
+            {{#course.startDate}}<span class="tag tag--glass">{{starts}} {{course.startDate}}</span>{{/course.startDate}}
           </div>
-          <h1 class="hero__title" data-words><span>{{course.title}}</span></h1>
-          {{#course.tagline}}<p class="hero__tagline">{{course.tagline}}</p>{{/course.tagline}}
-          <p class="hero__lead">{{course.summary}}</p>
           <div class="hero__cta">
-            <a class="btn btn--accent btn--lg" href="#register">{{course_cta_btn}}</a>
-            {{#course.hasTiers}}<a class="btn btn--outline-light btn--lg" href="#tiers">{{course_tiers_eyebrow}}</a>{{/course.hasTiers}}
+            <a class="btn btn--accent btn--pill btn--lg" href="#register">{{course_register_btn}} <span class="btn__arrow" aria-hidden="true"></span></a>
+            {{#course.hasTiers}}<a class="btn btn--outline-light btn--pill btn--lg" href="#tiers">{{course_tiers_title}}</a>{{/course.hasTiers}}
           </div>
-          <div class="hero__stats">
-            {{#course.durationText}}<div><div class="stat__label">{{course.durationText}}</div></div>{{/course.durationText}}
-            {{#course.startDate}}<div><div class="stat__value">{{course.startDate}}</div><div class="stat__label">{{starts}}</div></div>{{/course.startDate}}
+          <div class="hero__proof" data-reveal="fade">
+            <span class="avatars" aria-hidden="true">
+              <img src="/images/coach-smile.webp" alt="" width="40" height="40" loading="lazy" decoding="async">
+              <img src="/images/coach-w.webp" alt="" width="40" height="40" loading="lazy" decoding="async">
+              <img src="/images/coach-s.webp" alt="" width="40" height="40" loading="lazy" decoding="async">
+            </span>
+            <span class="hero__proof-text">{{course_social_proof}}</span>
           </div>
         </div>
-        <figure class="hero__figure">
-          <img src="/images/instructor.webp" alt="{{alt_instructor}}" width="560" height="890" fetchpriority="high" decoding="async">
-          <figcaption>{{feat_figure_cap}}</figcaption>
-        </figure>
       </div>
+      <div class="hero__side" aria-hidden="true"><span>More coaches</span><span>Stronger communities</span></div>
     </section>
 
-    {{#course.audience}}
-    <section class="course-audience">
-      <div class="container"><p><strong>{{form_interest}}</strong> {{course.audience}}</p></div>
-    </section>
-    {{/course.audience}}
-
-    <section class="modules-section" id="modules">
+    <!-- ماذا ستتعلم: ستة محاور في شبكة ثلاثية بأيقونات وفواصل رفيعة -->
+    <section class="why-course" id="modules">
       <div class="container">
-        <div class="kicker">{{course_modules_eyebrow}}</div>
-        <h2 class="section-title">{{course_modules_title}}</h2>
-        <ol class="modules" data-stagger="up">
+        <div class="section-head section-head--center">
+          <div class="kicker kicker--latin kicker--center">{{course_why_kicker}}</div>
+          <h2 class="section-title">{{course_modules_title}}</h2>
+          <p class="section-lead">{{#course.summary}}{{course.summary}}{{/course.summary}}{{^course.summary}}{{course_modules_lead}}{{/course.summary}}</p>
+          {{#course.audience}}<p class="why-course__audience"><strong>{{course_audience_label}}</strong> {{course.audience}}</p>{{/course.audience}}
+        </div>
+        <ol class="learn-grid" data-stagger="up">
           {{#course.modules}}
-          <li class="card module">
-            <span class="module__num">{{num}}</span>
-            <div><h3>{{title}}</h3>{{#text}}<p>{{text}}</p>{{/text}}</div>
+          <li class="learn">
+            <span class="learn__icon">{{{icon}}}</span>
+            <h3 class="learn__title"><span class="learn__num">{{num}}</span>{{title}}</h3>
+            {{#text}}<p class="learn__text">{{text}}</p>{{/text}}
           </li>
           {{/course.modules}}
         </ol>
-        {{#course.methods.length}}
-        <div class="methods" data-reveal="up">
-          <span class="methods__label">{{course_methods_label}}</span>
-          <span class="methods__items" dir="ltr">{{#course.methods}}<span class="methods__item">{{.}}</span>{{/course.methods}}</span>
-        </div>
-        {{/course.methods.length}}
-        <div class="course-goal" data-reveal="up">
-          <h3>{{course_goal_title}}</h3>
-          <p>{{course_goal_p}}</p>
-        </div>
       </div>
     </section>
 
+    <!-- أساليب التدريب: صورة على طرف وبطاقات الأساليب على الطرف الآخر -->
+    {{#course.methods.length}}
+    <section class="methods-section on-dark" id="methods">
+      <div class="methods-section__inner">
+        <figure class="methods-section__photo" data-reveal="photo">
+          <img src="/images/coaching.webp" alt="{{alt_course_methods}}" width="1400" height="933" loading="lazy" decoding="async">
+          <span class="stack-words" aria-hidden="true"><span>Educate</span><span>Empower</span><span>Expand</span></span>
+        </figure>
+        <div class="methods-section__body">
+          <div class="kicker kicker--latin kicker--accent">{{course_methods_kicker}}</div>
+          <h2 class="section-title">{{course_methods_title}}</h2>
+          <p class="section-lead">{{course_methods_lead}}</p>
+          <div class="method-grid" data-stagger="up">
+            {{#course.methodItems}}
+            <article class="method">
+              <span class="method__icon">{{{icon}}}</span>
+              <h3 class="method__name" dir="ltr">{{name}}</h3>
+              {{#desc}}<p class="method__desc">{{desc}}</p>{{/desc}}
+            </article>
+            {{/course.methodItems}}
+          </div>
+        </div>
+      </div>
+    </section>
+    {{/course.methods.length}}
+
+    <!-- الهدف: عبارة واحدة على خلفية داكنة -->
+    <section class="goal on-dark">
+      <img class="goal__mark" src="/assets/mark-green.svg" alt="" aria-hidden="true">
+      <div class="container goal__inner">
+        <div class="goal__text" data-reveal="up">
+          <div class="kicker kicker--latin kicker--center kicker--light">{{course_goal_kicker}}</div>
+          <p class="goal__statement">{{course_goal_p}}</p>
+        </div>
+        <span class="stack-words stack-words--goal" aria-hidden="true"><span>Train</span><span>Lead</span><span>Build</span><span>Grow</span></span>
+      </div>
+    </section>
+
+    <!-- الباقات: فضية فاتحة، ذهبية داكنة، بريميوم خضراء داكنة -->
     {{#course.hasTiers}}
-    <section class="tiers-section on-dark" id="tiers">
+    <section class="tiers-section" id="tiers">
       <div class="container">
-        <div class="tiers-head">
-          <div class="kicker kicker--light">{{course_tiers_eyebrow}}</div>
+        <div class="section-head section-head--center">
+          <div class="kicker kicker--latin kicker--center">{{course_tiers_kicker}}</div>
           <h2 class="section-title">{{course_tiers_title}}</h2>
           <p class="section-lead">{{course_tiers_lead}}</p>
         </div>
         <div class="tiers" data-stagger="up">
           {{#course.tiers}}
           <article class="tier {{tierClass}}{{#highlight}} tier--highlight{{/highlight}}">
-            <div class="tier__badge" aria-hidden="true">{{#highlight}}♛{{/highlight}}{{^highlight}}★{{/highlight}}</div>
             {{#highlight}}<div class="tier__ribbon">{{best_value}}</div>{{/highlight}}
             <h3 class="tier__name">{{name}}</h3>
+            <div class="tier__price"><span class="tier__amount">{{priceText}}</span><span class="tier__cur">{{course.currencyLabel}}</span></div>
             <ul class="tier__features">
               {{#features}}<li>{{.}}</li>{{/features}}
             </ul>
-            <div class="tier__price"><span class="tier__amount">{{priceText}}</span> <span class="tier__cur">{{course.currencyLabel}}</span></div>
-            <a class="btn btn--lg btn--full tier__btn" href="#register" data-pick-tier="{{key}}">{{register_interest}}</a>
+            <a class="btn btn--pill btn--full tier__btn" href="#register" data-pick-tier="{{key}}">{{course_register_btn}} <span class="btn__arrow" aria-hidden="true"></span></a>
           </article>
           {{/course.tiers}}
         </div>
+
+        <aside class="talk" data-reveal="up">
+          <div class="talk__icon">
+            <span class="talk__circle"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6.5" width="12.5" height="11" rx="2.2"/><path d="M15.5 10.5 21 7.5v9l-5.5-3"/></svg></span>
+            <span class="talk__label">{{talk_kicker}}</span>
+          </div>
+          <div class="talk__text">
+            <h3>{{talk_title}}</h3>
+            <p>{{talk_p}}</p>
+          </div>
+          <a class="btn btn--petrol btn--pill btn--lg talk__btn" href="#register">{{talk_btn}} <span class="btn__arrow" aria-hidden="true"></span></a>
+        </aside>
       </div>
     </section>
     {{/course.hasTiers}}
@@ -111,6 +159,12 @@
           <p class="form-note">{{form_privacy}}</p>
         </form>
       </div>
+    </section>
+
+    <!-- الشعار الختامي -->
+    <section class="motto">
+      <p class="motto__ar">« {{course_motto}} »</p>
+      <p class="motto__en">{{course_motto_sub}}</p>
     </section>
 
     <div class="sticky-cta" data-sticky-cta>
