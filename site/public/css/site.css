@@ -288,7 +288,7 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 .hero--photo .hero__title { font-size: clamp(2.6rem, 6.8vw, 4.6rem); line-height: 1.08; }
 .hero--photo .hero__lead { color: #dfe8e6; max-width: 520px; }
 .hero__photo { position: absolute; inset-block: 0; inset-inline-end: 0; width: 54%; margin: 0; }
-.hero__photo img, .hero__photo picture { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 88% 30%; }
+.hero__photo img, .hero__photo picture { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 42%; }
 .hero__photo::before { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 [dir="rtl"] .hero__photo::before { background: linear-gradient(to left, var(--petrol-700) 0%, rgba(21,49,49,.55) 22%, rgba(21,49,49,0) 55%), linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 32%); }
 [dir="ltr"] .hero__photo::before { background: linear-gradient(to right, var(--petrol-700) 0%, rgba(21,49,49,.55) 22%, rgba(21,49,49,0) 55%), linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 32%); }
@@ -330,8 +330,8 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 .pkg { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pkg__media { position: relative; aspect-ratio: 16 / 8; background: var(--petrol-800) center / cover no-repeat; }
 .pkg--personal .pkg__media { background-image: url(/images/coaching.webp); background-position: 50% 30%; }
-.pkg--group .pkg__media { background-image: url(/images/hero.webp); background-position: 50% 35%; }
-.pkg--saver .pkg__media { background-image: url(/images/gym.webp); background-position: 50% 45%; }
+.pkg--group .pkg__media { background-image: url(/images/team.webp); background-position: 50% 40%; }
+.pkg--saver .pkg__media { background-image: url(/images/coach-s.webp); background-position: 50% 30%; }
 .pkg__media::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(12,30,30,.78), rgba(12,30,30,0) 60%); }
 .pkg__cat { position: absolute; z-index: 1; bottom: 12px; inset-inline-start: 16px; font-family: var(--font-display); font-weight: 800; font-size: var(--text-sm); color: #fff; padding-inline-start: 10px; border-inline-start: 3px solid var(--accent); }
 .pkg__body { padding: 20px 22px 22px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
@@ -340,12 +340,9 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 
 /* ---------- الفروع مع صورة الصالة ---------- */
 .branches { padding: 88px 0; }
-.branches__inner { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: start; }
-.branches__photo { margin: 0; position: sticky; top: 96px; }
-.branches__photo img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; object-position: 60% 40%; }
+/* الفروع بلا صورة جانبية: القائمة بعرض القسم (الصور الحقيقية لا تتكرر في الصفحة) */
+.branches__inner { max-width: 900px; }
 .branch-rows { margin-top: 28px; border-top: 1px solid var(--border-strong); }
-.branch-row { grid-template-columns: 1.1fr 1.3fr auto; }
-.branch-row a.tel { grid-column: 1; }
 
 /* ---------- الفريق: ثلاث/أربع صور ---------- */
 .team { padding: 0 0 96px; }
@@ -382,11 +379,9 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
   .hero__photo { position: relative; width: auto; height: min(62vw, 460px); inset: auto; }
   [dir="rtl"] .hero__photo::before, [dir="ltr"] .hero__photo::before { background: linear-gradient(to top, var(--petrol-700) 0%, rgba(21,49,49,0) 45%); }
   .hero--photo .hero__content { margin-top: -40px; }
-  .why__inner, .branches__inner, .team__head { grid-template-columns: 1fr; gap: 40px; }
+  .why__inner, .team__head { grid-template-columns: 1fr; gap: 40px; }
   .team__head { gap: 12px; }
   .team__head .section-lead { justify-self: start; }
-  .branches__photo { position: static; }
-  .branches__photo img { aspect-ratio: 16 / 10; }
   .hero--figure .hero__inner { grid-template-columns: 1fr; }
   .hero--figure .hero__content { padding-bottom: 0; }
   .hero__figure { max-width: 320px; margin-inline: auto; }
@@ -410,7 +405,7 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 }
 
 /* تنويع صور بطاقات التدريب الشخصي في الصف الواحد */
-.packages-grid__row .pkg--personal:nth-child(3n+2) .pkg__media { background-image: url(/images/gym.webp); background-position: 55% 40%; }
+.packages-grid__row .pkg--personal:nth-child(3n+2) .pkg__media { background-image: url(/images/coach-w.webp); background-position: 50% 25%; }
 .packages-grid__row .pkg--personal:nth-child(3n+3) .pkg__media { background-image: url(/images/coach-smile.webp); background-position: 50% 25%; }
 
 /* ============================================================
@@ -484,8 +479,8 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 .chip:hover { border-color: var(--accent); color: #fff; }
 .plan-card { display: grid; grid-template-columns: 220px 1fr; background: rgba(255,255,255,.04); border: 1px solid rgba(121,190,67,.4); border-radius: 12px; overflow: hidden; }
 .plan-card__media { background: var(--petrol-800) center / cover no-repeat; min-height: 100%; background-image: url(/images/coaching.webp); }
-.plan-card--group .plan-card__media { background-image: url(/images/hero.webp); }
-.plan-card--saver .plan-card__media { background-image: url(/images/gym.webp); }
+.plan-card--group .plan-card__media { background-image: url(/images/team.webp); }
+.plan-card--saver .plan-card__media { background-image: url(/images/coach-s.webp); background-position: 50% 30%; }
 .plan-card__body { padding: 26px 28px; }
 .plan-card__kicker { margin: 0 0 6px; font-family: var(--font-display); font-weight: 800; font-size: var(--text-xs); color: var(--accent); }
 .plan-card__name { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-2xl); margin: 0 0 16px; color: #fff; line-height: 1.2; }
@@ -519,8 +514,8 @@ select.field__select { appearance: none; background-image: linear-gradient(45deg
 .way { display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; transition: border-color .2s, transform .2s var(--ease-out); }
 .way:hover { border-color: var(--accent); transform: translateY(-3px); }
 .way__media { aspect-ratio: 16 / 9; background: var(--bg-muted) center / cover no-repeat; background-image: url(/images/coaching.webp); background-position: 50% 30%; }
-.way--group .way__media { background-image: url(/images/hero.webp); background-position: 50% 35%; }
-.way--saver .way__media { background-image: url(/images/gym.webp); background-position: 50% 45%; }
+.way--group .way__media { background-image: url(/images/team.webp); background-position: 50% 40%; }
+.way--saver .way__media { background-image: url(/images/coach-s.webp); background-position: 50% 30%; }
 .way__body { padding: 22px 24px 24px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .way__name { font-family: var(--font-display); font-weight: var(--weight-black); font-size: var(--text-xl); color: var(--text-strong); margin: 0; }
 .way__desc { margin: 0; color: var(--text-body); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
