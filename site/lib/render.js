@@ -13,6 +13,7 @@
    ============================================================ */
 const fs = require('fs');
 const path = require('path');
+const { MODULE_ICONS, METHOD_ICONS, methodKey } = require('./icons');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -130,9 +131,17 @@ function baseContext(lang, config, page, extra = {}) {
   };
 }
 
+/* العنوان في الواجهة: الكلمة الأخيرة بلون الهوية (كما في التصميم) */
+function splitTitle(title) {
+  const words = String(title || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return { titleLead: '', titleAccent: words[0] || '' };
+  return { titleLead: words.slice(0, -1).join(' '), titleAccent: words[words.length - 1] };
+}
+
 /* تحويل عنصرٍ من واجهة النظام (دورة/باقة) إلى نصوص لغة الصفحة */
 function localizeCourse(c, lang) {
   const en = lang === 'en';
+  const t = i18n[lang];
   const pick = (ar, enV) => (en && enV ? enV : ar || enV || '');
   const tiers = (c.tiers || []).map((t) => ({
     ...t,
@@ -141,6 +150,7 @@ function localizeCourse(c, lang) {
     priceText: Number(t.price).toLocaleString('en-US'),
     tierClass: 'tier--' + (['silver', 'gold', 'premium'].includes(t.key) ? t.key : 'silver'),
   }));
+  const methods = (c.methods || '').split(/[·,]/).map((s) => s.trim()).filter(Boolean);
   return {
     ...c,
     title: pick(c.title, c.titleEn), tagline: pick(c.tagline, c.taglineEn),
@@ -148,8 +158,11 @@ function localizeCourse(c, lang) {
     durationText: pick(c.durationText, c.durationTextEn),
     formatLabel: i18n[lang]['format_' + (c.format || 'hybrid')] || c.format,
     currencyLabel: i18n[lang]['cur_' + (c.currency || 'ILS')] || c.currency,
-    methods: (c.methods || '').split(/[·,]/).map((s) => s.trim()).filter(Boolean),
-    modules: (c.modules || []).map((m, i) => ({ ...m, num: String(i + 1).padStart(2, '0'), title: pick(m.title, m.titleEn), text: pick(m.text, m.textEn) })),
+    ...splitTitle(pick(c.title, c.titleEn)),
+    methods,
+    /* بطاقات الأساليب: الوصف والأيقونة بحسب الاسم (A.E.P / F.T.S / P&M)، وبلا وصف لما عداها */
+    methodItems: methods.map((name) => { const k = methodKey(name); return { name, desc: t['method_' + k] || '', icon: METHOD_ICONS[k] || METHOD_ICONS.default }; }),
+    modules: (c.modules || []).map((m, i) => ({ ...m, num: String(i + 1).padStart(2, '0'), title: pick(m.title, m.titleEn), text: pick(m.text, m.textEn), icon: MODULE_ICONS[i % MODULE_ICONS.length] })),
     tiers,
     hasTiers: tiers.length > 0,
     url: localUrl('/courses/' + c.slug, lang),

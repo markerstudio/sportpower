@@ -62,8 +62,17 @@ test('course page: localized from the system payload, tiers and modules rendered
   assert.deepEqual(en.tiers[0].features, ['أ']);
   assert.equal(en.tiers[1].tierClass, 'tier--premium');
   assert.deepEqual(en.methods, ['A.E.P', 'F.T.S', 'P&M']);
+  assert.equal(en.titleLead, 'From'); assert.equal(en.titleAccent, 'Coach', 'last word of the title is the accented one');
+  assert.equal(en.methodItems[0].desc, i18n.en.method_aep, 'known methods get a description from i18n');
+  assert.equal(en.methodItems[2].desc, i18n.en.method_pm);
+  assert.deepEqual(localizeCourse({ ...course, methods: 'X.Y' }, 'ar').methodItems.map((m) => m.desc), [''], 'unknown method: no description, no crash');
+  assert.match(localizeCourse(course, 'ar').modules[0].icon, /^<svg /, 'modules carry an inline icon');
+  assert.equal(localizeCourse({ ...course, title: 'واحد' }, 'ar').titleAccent, 'واحد', 'one-word title is all accent');
   const html = renderPage('course', 'ar', config, { course: localizeCourse(course, 'ar'), title: 'x', page_course: true });
   assert.match(html, /tier--premium tier--highlight/);
+  assert.match(html, /<h1 class="hero__title" data-words><span>من<\/span> <em>مدرب<\/em><\/h1>/);
+  assert.match(html, /class="method__name" dir="ltr">A\.E\.P</);
+  assert.match(html, /learn__num">01</);
   assert.match(html, /10,000/);
   assert.match(html, /<option value="gold">Gold — 7,200 شيكل<\/option>/);
   assert.match(html, /P&amp;M/);
